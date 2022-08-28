@@ -1,0 +1,24 @@
+[package]
+name = "a2kit"
+version = "0.0.1"
+edition = "2021"
+readme = "README.md"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tree-sitter = "0.20.8"
+tree-sitter-applesoft = "2.0.0"
+tree-sitter-integerbasic = "1.0.1"
+clap = {version="3.1.5",features=["cargo"]}
+regex = "*"
+log = "*"
+predicates = "*"
+assert_cmd = "*"
+tempfile = "*"
+thiserror = "*"
+atty = "0.2"
+colored = "2"
+a2kit_macro = { path = "../a2kit_macro" }
+a2kit_macro_derive = { path = "../a2kit_macro/a2kit_macro_derive" }
