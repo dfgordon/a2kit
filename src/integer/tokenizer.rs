@@ -64,15 +64,12 @@ impl walker::Visit for Tokenizer
 		}
 		// Persistent spaces
 		if curs.node().kind()=="string" {
-			let mut curs2 = curs.clone();
-			for node in curs.node().children(&mut curs2) {
-				// n.b. quote and unquote are tokens
-				if let Some(tok) = self.tok_map.get(node.kind()) {
-					self.tokenized_line.push(*tok);
-				} else {
-					self.tokenized_line.append(&mut self.text(node).as_bytes().to_vec().iter().map(|b| b+128).collect());
-				}
-			}
+			// formerly tried iterating over children, but children() seemed to skip anonymous nodes
+			let cleaned = self.text(curs.node()).to_uppercase().trim().as_bytes().to_vec();
+			let mut neg: Vec<u8> = cleaned.iter().map(|b| b+128).collect();
+			neg[0] = 0x28;
+			neg[cleaned.len()-1] = 0x29;
+			self.tokenized_line.append(&mut neg);
 			return walker::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="comment_text" {
@@ -109,7 +106,7 @@ impl Tokenizer
 	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
 		self.tokenized_line = Vec::new();
-		let tree = parser.parse(self.line.clone(),None).expect("Error parsing file");
+		let tree = parser.parse(&self.line,None).expect("Error parsing file");
 		self.walk(tree);
 		if self.tokenized_line.len()>126 {
 			panic!("integer BASIC line too long");
@@ -126,7 +123,7 @@ impl Tokenizer
 			if line.len()==0 {
 				continue;
 			}
-			self.line = line.to_string();
+			self.line = String::from(line) + "\n";
 			self.tokenize_line(&mut parser);
 			self.tokenized_program.append(&mut self.tokenized_line);
 		}

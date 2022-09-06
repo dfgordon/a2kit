@@ -1,7 +1,7 @@
 use tree_sitter;
 use colored::*;
 use thiserror::Error;
-use std::path::Path;
+use std::fmt::Write as FormattedWriter;
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -85,12 +85,16 @@ impl Visit for SyntaxCheckVisitor {
 /// detect syntax errors in any language.  This is meant to be pipelined,
 /// i.e., it will return either the source code or an error.  If an error
 /// is returned the caller may choose to panic to stop the pipeline.
-pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<String,LanguageError>
+/// N.b. there is extra behavior in the event either stdin or stdout are the console.
+pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,String),LanguageError>
 {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(lang).expect("Error loading grammar");
     let mut visitor = SyntaxCheckVisitor::new(String::new());
     let mut code = String::new();
+    let mut res = String::new();
+    let mut bottom_line = String::new();
+    // if stdin is the console, collect line entry specially
     if atty::is(atty::Stream::Stdin)
     {
         eprintln!("Line entry interface.");
@@ -106,7 +110,7 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<String,L
             if line=="bye\n" {
                 break;
             }
-            code += &line;
+            code += &(line + "\n");
         }
     }
     else
@@ -116,14 +120,27 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<String,L
     let mut iter = code.lines();
     while let Some(line) = iter.next()
     {
-        let tree = parser.parse(line.clone(),None).expect("Error parsing file");
+        let tree = parser.parse(String::from(line) + "\n",None).expect("Error parsing file");
         visitor.code = String::from(line);
-        visitor.walk(tree);
+        if line.len()>0 {
+            // if stdout is the console, format some, and include the s-expression per line
+            if atty::is(atty::Stream::Stdout) {
+                if res.len()==0 {
+                    res += "\n";
+                }
+                res += &(line.to_string() + "\n" + &tree.root_node().to_sexp() + "\n");
+            } else {
+                res += &(line.to_string() + "\n");
+            }
+            visitor.walk(tree);
+        }
     }
-    eprintln!("There were {} errors in stdin",visitor.err_count);
     if visitor.err_count==0 {
-        return Ok(code);
+        writeln!(bottom_line,"\u{2713} {}","Syntax OK".to_string().green()).expect("formatting error");
+        return Ok((res,bottom_line));
     } else {
+        // following message is not used, perhaps pack it into the error type?
+        writeln!(res,"\u{2717} {} ({})","Syntax Errors".to_string().red(),visitor.err_count).expect("formatting error");
         return Err(LanguageError::Syntax);
     }
 }

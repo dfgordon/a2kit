@@ -67,7 +67,7 @@ mod output_tests {
 	}
 	#[test]
 	fn multi_line() {
-		let test_code = "10 HOME\n20 PRINT \"HELLO\"";
+		let test_code = "10 HOME\n20 PRI NT \"HELLO\"  ";
 		let expected = "07080A00970014081400BA2248454C4C4F22000000";
 		super::test_tokenizer(test_code, expected);
 	}

@@ -90,6 +90,12 @@ fn string_to_file_name(s: &String) -> [u8;30] {
 // these are mostly fixed length structures where the DiskStruct
 // trait can be automatically derived.
 
+// Note on large volumes:
+// We can extend VTOC.bitmap to 200 bytes, allowing for VTOC.tracks = 50.
+// We can extend VTOC.sectors to 32, because the bitmap allocates 32 bits per track.
+// This gives 50*32*256 = 409600, i.e., a 400K disk.
+// Large DOS volumes were supported on 800K floppies and hard drives by a few third parties.
+
 #[derive(DiskStruct)]
 struct VTOC {
     pad1: u8,
@@ -292,13 +298,14 @@ impl Disk
     pub fn format(&mut self,vol:u8,bootable:bool) {
         // First write the Volume Table of Contents (VTOC)
 
+        self.vtoc.pad1 = 4;
         self.vtoc.vol = vol;
-        self.vtoc.last_direction = 255;
-        self.vtoc.last_track = 255;
+        self.vtoc.last_track = 18;
+        self.vtoc.last_direction = 1;
         self.vtoc.max_pairs = 0x7a;
         self.vtoc.track1 = 17;
         self.vtoc.sector1 = 15;
-        self.vtoc.version = 4;
+        self.vtoc.version = 3;
         self.vtoc.bytes = [0,1];
         self.vtoc.sectors = 16;
         self.vtoc.tracks = 35;
@@ -605,13 +612,13 @@ impl Disk
         return self.sequential_write(name, &file.to_bytes(), Type::Text as u8);
     }
     /// Create a disk from a DOS ordered disk image buffer
-    pub fn from_do_img(do_img: &Vec<u8>) -> Self {
+    pub fn from_do_img(do_img: &Vec<u8>) -> Result<Self,DOS33Error> {
         let mut disk = Self::new();
         let tlen = 35 as usize;
         let slen = 16 as usize;
         let blen = 256 as usize;
         if do_img.len()!=tlen*slen*blen {
-            panic!("disk image is the wrong size {}, expected {}",do_img.len(),tlen*slen*blen);
+            return Err(DOS33Error::EndOfData);
         }
         for track in 0..tlen {
             for sector in 0..slen {
@@ -621,7 +628,10 @@ impl Disk
             }
         }
         disk.vtoc = VTOC::from_bytes(&disk.tracks[17][0].to_vec());
-        return disk;
+        if disk.vtoc.bytes != [0,1] || disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
+            return Err(DOS33Error::VolumeMismatch);
+        }
+        return Ok(disk);
     }
     /// Return a DOS ordered disk image buffer of this disk
     pub fn to_do_img(&self) -> Vec<u8> {

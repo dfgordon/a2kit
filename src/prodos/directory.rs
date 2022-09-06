@@ -1,0 +1,407 @@
+
+use chrono::{Datelike,Timelike};
+use std::fmt;
+use std::collections::HashMap;
+use regex::Regex;
+use super::types::*;
+
+// a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
+// This spares us having to manually write code to copy bytes in and out for every new structure.
+// The auto-derivation is not used for structures with variable length fields (yet).
+// For fixed length structures, update_from_bytes will panic if lengths do not match.
+use a2kit_macro::DiskStruct;
+use a2kit_macro_derive::DiskStruct;
+
+fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
+    let now = match time {
+        Some(t) => t,
+        _ => chrono::Local::now().naive_local()
+    };
+    let (_is_common_era,year) = now.year_ce();
+    let packed_date = (now.day() + (now.month() << 5) + ((year-2000) << 9)) as u16;
+    let packed_time = (now.minute() + (now.hour() << 8)) as u16;
+    let bytes_date = u16::to_le_bytes(packed_date);
+    let bytes_time = u16::to_le_bytes(packed_time);
+    return [bytes_date[0],bytes_date[1],bytes_time[0],bytes_time[1]];
+}
+
+fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
+    let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
+    let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
+    let year = 2000 + (date >> 9);
+    let month = (date >> 5) & 15;
+    let day = date & 31;
+    let hour = (time >> 8) & 255;
+    let minute = time & 255;
+    return chrono::NaiveDate::from_ymd(year as i32,month as u32,day as u32).
+        and_hms(hour as u32,minute as u32,0);
+}
+
+/// Convert filename bytes to a string.
+/// Must pass the stor_len_nibs field into nibs.
+fn file_name_to_string(nibs: u8, fname: [u8;15]) -> String {
+    let name_len = nibs & 0x0f;
+    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
+    if let Ok(result) = String::from_utf8(fname[0..name_len as usize].to_vec()) {
+        if fname_patt.is_match(&result) {
+            return result;
+        }
+    }
+    panic!("encountered a bad file name on disk");
+}
+/// Convert storage type and String to (stor_len_nibs,fname).
+fn string_to_file_name(stype: &StorageType, s: &String) -> (u8,[u8;15]) {
+    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
+    if !fname_patt.is_match(&s.to_uppercase()) {
+        panic!("attempt to create a bad file name");
+    }
+    let new_nibs = ((*stype as u8) << 4) + s.len() as u8;
+    let mut ans: [u8;15] = [0;15];
+    let mut i = 0;
+    for char in s.to_uppercase().chars() {
+        char.encode_utf8(&mut ans[i..]);
+        i += 1;
+    }
+    return (new_nibs,ans);
+}
+
+pub fn is_file_match<T: HasName>(valid_types: &Vec<StorageType>,name: &String,obj: &T) -> bool {
+    let (nibs_disk,fname_disk) = obj.fname();
+    for typ in valid_types {
+        let (nibs,fname) = string_to_file_name(typ, name);
+        let l = (nibs & 0x0f) as usize;
+        if nibs==nibs_disk && fname[0..l]==fname_disk[0..l] {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Block   | Contents
+// -----------------------------
+// 0       | Loader
+// 1       | Loader
+// 2       | Volume Directory Key
+// 3 - n   | Volume Directory
+// n+1 - p | Volume Bitmap
+
+pub trait Header {
+    fn fileCount(&self) -> u16;
+}
+pub trait Directory {
+    fn name(&self) -> String;
+    fn entries(&self) -> Vec<Entry>;
+    fn next(&self) -> u16;
+    fn set_links(&mut self,prev: u16,next: u16);
+}
+
+pub trait HasName {
+    fn fname(&self) -> (u8,[u8;15]);
+    fn name(&self) -> String;
+}
+
+/// KeyBlock has a generic header type, which can be either
+/// VolDirHeader or SubDirHeader
+#[derive(Clone,Copy)]
+pub struct KeyBlock<T> {
+    prev_block: [u8;2],
+    next_block: [u8;2],
+    pub header: T,
+    entries: [Entry;12]
+}
+
+#[derive(Clone,Copy)]
+pub struct EntryBlock {
+    prev_block: [u8;2],
+    next_block: [u8;2],
+    entries: [Entry;13]
+}
+
+#[derive(DiskStruct,Clone,Copy)]
+pub struct VolDirHeader {
+    stor_len_nibs: u8,
+    name: [u8;15],
+    pad1: [u8;8],
+    time: [u8;4],
+    vers: u8,
+    min_vers: u8,
+    access: u8,
+    entry_len: u8,
+    entries_per_block: u8,
+    file_count: [u8;2],
+    pub bitmap_ptr: [u8;2],
+    total_blocks: [u8;2]
+}
+
+#[derive(DiskStruct,Clone,Copy)]
+pub struct SubDirHeader {
+    stor_len_nibs: u8,
+    name: [u8;15],
+    pad1: [u8;8],
+    time: [u8;4],
+    vers: u8,
+    min_vers: u8,
+    access: u8,
+    entry_len: u8,
+    entries_per_block: u8,
+    file_count: [u8;2],
+    parent_ptr: [u8;2],
+    parent_entry_num: u8,
+    parent_entry_len: u8
+}
+
+#[derive(DiskStruct,Clone,Copy)]
+pub struct Entry {
+    stor_len_nibs: u8,
+    name: [u8;15],
+    file_type: u8,
+    key_ptr: [u8;2],
+    blocks_used: [u8;2],
+    eof: [u8;3],
+    time: [u8;4],
+    vers: u8,
+    min_vers: u8,
+    access: u8,
+    aux_type: [u8;2],
+    last_mod: [u8;4],
+    header_ptr: [u8;2]
+}
+
+impl VolDirHeader {
+    pub fn format(&mut self, blocks: u16, vol_name: &String, time: Option<chrono::NaiveDateTime>) {
+        let (nibs,fname) = string_to_file_name(&StorageType::VolDirHeader, vol_name);
+        self.stor_len_nibs = nibs;
+        self.name = fname;
+        self.pad1 = [0,0,31,45,48,3,0,0]; // values come from comparing with CiderPress images
+        self.time = pack_time(time);
+        self.vers = 0;
+        self.min_vers = 0;
+        self.access = 1+2+32+64+128; // enable all R W B RN D
+        self.entry_len = 0x27;
+        self.entries_per_block = 13;
+        self.file_count = [0,0];
+        self.bitmap_ptr = [6,0];
+        self.total_blocks = u16::to_le_bytes(blocks);
+    }
+}
+
+impl Entry {
+    pub fn is_active(&self) -> bool {
+        return self.stor_len_nibs>0;
+    }
+    pub fn get_ptr(&self) -> [u8;2] {
+        return self.key_ptr;
+    }
+}
+
+/// Allows the entry to be displayed to the console using `println!`.  This also
+/// derives `to_string`, so the structure can be converted to `String`.
+/// Intended use is for CATALOG.
+impl fmt::Display for Entry {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP);
+        let mut create_time = "<NO DATE>".to_string();
+        let mut mod_time = "<NO DATE>".to_string();
+        if self.time!=[0,0,0,0] {
+            create_time = unpack_time(self.time).format("%d-%b-%y %H:%M").to_string();
+        }
+        if self.last_mod!=[0,0,0,0] {
+            mod_time = unpack_time(self.last_mod).format("%d-%b-%y %H:%M").to_string();
+        }
+        let mut write_protect = "*".to_string();
+        if self.access & 0x02 == 0x02 {
+            write_protect = " ".to_string();
+        }
+        //"NAME","TYPE","BLOCKS","MODIFIED","CREATED","ENDFILE","SUBTYPE");
+        write!(f,"{}{:15} {:4} {:6} {:16} {:16} {:7} {:7}",
+            write_protect,
+            self.name(),
+            typ_map.get(&self.file_type).expect("unexpected file type"),
+            u16::from_le_bytes(self.blocks_used),
+            mod_time,
+            create_time,
+            u32::from_le_bytes([self.eof[0],self.eof[1],self.eof[2],0]),
+            u16::from_le_bytes(self.aux_type)
+        )
+    }
+}
+
+impl Header for VolDirHeader {
+    fn fileCount(&self) -> u16 {
+        return u16::from_le_bytes(self.file_count);
+    }
+}
+impl Header for SubDirHeader {
+    fn fileCount(&self) -> u16 {
+        return u16::from_le_bytes(self.file_count);
+    }
+}
+impl<T: Header + HasName> Directory for KeyBlock<T> {
+    fn name(&self) -> String {
+        return self.header.name();
+    }
+    fn next(&self) -> u16 {
+        return u16::from_le_bytes(self.next_block);
+    }
+    fn entries(&self) -> Vec<Entry> {
+        let mut ans = Vec::<Entry>::new();
+        for i in 0..self.entries.len() {
+            ans.push(Entry::from_bytes(&self.entries[i].to_bytes()));
+        }
+        return ans;
+    }
+    fn set_links(&mut self,prev: u16,next: u16) {
+        self.prev_block = u16::to_le_bytes(prev);
+        self.next_block = u16::to_le_bytes(next);
+    }
+}
+
+impl Directory for EntryBlock {
+    fn name(&self) -> String {
+        panic!("only the key block has a name");
+    }
+    fn next(&self) -> u16 {
+        return u16::from_le_bytes(self.next_block);
+    }
+    fn entries(&self) -> Vec<Entry> {
+        let mut ans = Vec::<Entry>::new();
+        for i in 0..self.entries.len() {
+            ans.push(Entry::from_bytes(&self.entries[i].to_bytes()));
+        }
+        return ans;
+    }
+    fn set_links(&mut self,prev: u16,next: u16) {
+        self.prev_block = u16::to_le_bytes(prev);
+        self.next_block = u16::to_le_bytes(next);
+    }
+}
+
+impl<T: DiskStruct> DiskStruct for KeyBlock<T> {
+    fn new() -> Self {
+        Self {
+            prev_block: [0;2],
+            next_block: [0;2],
+            header: T::new(),
+            entries: [
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+            ]
+        }
+    }
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut ans: Vec<u8> = Vec::new();
+        ans.append(&mut self.prev_block.to_vec());
+        ans.append(&mut self.next_block.to_vec());
+        ans.append(&mut self.header.to_bytes());
+        for i in 0..12 {
+            ans.append(&mut self.entries[i].to_bytes());
+        }
+        return ans;
+    }
+    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+        self.prev_block = [bytes[0],bytes[1]];
+        self.next_block = [bytes[2],bytes[3]];
+        let mut offset = 4;
+        self.header.update_from_bytes(&bytes[offset..self.header.len()+offset].to_vec());
+        offset += self.header.len();
+        for i in 0..12 {
+            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()].to_vec());
+            offset += self.entries[i].len();
+        }
+    }
+    fn from_bytes(bytes: &Vec<u8>) -> Self {
+        let mut ans = Self::new();
+        ans.update_from_bytes(bytes);
+        return ans;
+    }
+    fn len(&self) -> usize {
+        return 511;
+    }
+}
+
+impl DiskStruct for EntryBlock {
+    fn new() -> Self {
+        Self {
+            prev_block: [0;2],
+            next_block: [0;2],
+            entries: [
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+                Entry::new(),
+            ]
+        }
+    }
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut ans: Vec<u8> = Vec::new();
+        ans.append(&mut self.prev_block.to_vec());
+        ans.append(&mut self.next_block.to_vec());
+        for i in 0..13 {
+            ans.append(&mut self.entries[i].to_bytes());
+        }
+        return ans;
+    }
+    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+        self.prev_block = [bytes[0],bytes[1]];
+        self.next_block = [bytes[2],bytes[3]];
+        let mut offset = 4;
+        for i in 0..12 {
+            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()].to_vec());
+            offset += self.entries[i].len();
+        }
+    }
+    fn from_bytes(bytes: &Vec<u8>) -> Self {
+        let mut ans = Self::new();
+        ans.update_from_bytes(bytes);
+        return ans;
+    }
+    fn len(&self) -> usize {
+        return 511;
+    }
+}
+
+impl HasName for Entry {
+    fn fname(&self) -> (u8,[u8;15]) {
+        return (self.stor_len_nibs,self.name);
+    }
+    fn name(&self) -> String {
+        return file_name_to_string(self.stor_len_nibs, self.name);
+    }
+}
+
+impl HasName for VolDirHeader {
+    fn fname(&self) -> (u8,[u8;15]) {
+        return (self.stor_len_nibs,self.name);
+    }
+    fn name(&self) -> String {
+        return file_name_to_string(self.stor_len_nibs, self.name);
+    }
+}
+
+impl HasName for SubDirHeader {
+    fn fname(&self) -> (u8,[u8;15]) {
+        return (self.stor_len_nibs,self.name);
+    }
+    fn name(&self) -> String {
+        return file_name_to_string(self.stor_len_nibs, self.name);
+    }
+}

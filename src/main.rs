@@ -6,6 +6,7 @@ mod walker;
 mod applesoft;
 mod integer;
 mod dos33;
+mod prodos;
 
 const RCH: &str = "unreachable was reached";
 
@@ -88,7 +89,12 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
     .after_long_help(long_help)
     .subcommand(Command::new("create")
         .arg(arg!(-v --volume <VOLUME> "volume name or number"))
-        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do"]))
+        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do","po"]))
+        .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values([
+            "5.25in",
+            "3.5in",
+            "hdmax"]).required(false)
+            .default_value("5.25in"))
         .about("create a blank disk image"))
     .subcommand(Command::new("verify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
@@ -104,6 +110,7 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("add file to disk image, n.b. disk image is not stdout"))
     .subcommand(Command::new("catalog")
+        .arg(arg!(<PATH> "path of directory inside disk image").required(false))
         .about("display disk image catalog"))
     .subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
@@ -133,7 +140,19 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
                 }
             },
             DiskImageType::PO => {
-                return Err(Box::new(CommandError::UnsupportedItemType));
+                let kind = cmd.value_of("kind").expect(RCH);
+                let (blocks,floppy) = match kind {
+                    "5.25in" => (280,true),
+                    "3.5in" => (1600,true),
+                    "hdmax" => (65535,false),
+                    _ => (280,true)
+                };
+                let mut disk = prodos::Disk::new(blocks);
+                disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
+                let buf = disk.to_po_img();
+                eprintln!("Writing {} bytes",buf.len());
+                std::io::stdout().write_all(&buf).expect("write to stdout failed");
+                return Ok(());
             }
             DiskImageType::WOZ => {
                 return Err(Box::new(CommandError::UnsupportedItemType));
@@ -146,12 +165,26 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
         if atty::is(atty::Stream::Stdin) {
             panic!("redirect a disk image to stdin");
         }
-        //let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_in_img = match cmd.value_of("PATH") {
+            Some(path) => path.to_string(),
+            _ => "/".to_string()
+        };
         let mut disk_img_data = Vec::new();
         std::io::stdin().read_to_end(&mut disk_img_data).expect("failed to read input stream");
-        let disk = dos33::Disk::from_do_img(&disk_img_data);
-        disk.catalog_to_stdout();
-        return Ok(())
+        if let Ok(disk) = dos33::Disk::from_do_img(&disk_img_data) {
+            disk.catalog_to_stdout();
+            if path_in_img!="/" {
+                eprintln!("WARNING: path argument was ignored");
+            }
+            return Ok(())
+        }
+        if let Ok(disk) = prodos::Disk::from_po_img(&disk_img_data) {
+            return match disk.catalog_to_stdout(&path_in_img) {
+                Ok(()) => Ok(()),
+                Err(e) => Err(Box::new(e))
+            }
+        }
+        return Err(Box::new(CommandError::UnsupportedItemType));
     }
     
     // Verify
@@ -165,8 +198,9 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
                 _ => panic!("unexpected language")
             };
             match res {
-                Ok(source) => {
-                    println!("{}",source);
+                Ok(res) => {
+                    println!("{}",res.0);
+                    eprintln!("{}",res.1);
                     return Ok(());
                 },
                 Err(e) => {
@@ -290,7 +324,7 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
         let mut disk = dos33::Disk::new();
         match disk_img_data {
             Ok(v) => {
-                disk = dos33::Disk::from_do_img(&v);
+                disk = dos33::Disk::from_do_img(&v).expect("disk error");
             },
             Err(_e) => {
                 eprintln!("disk image not found, creating blank");
@@ -328,7 +362,7 @@ Tokenize to image: `a2kit tokenize -a 2049 -t atxt < prog.bas \\
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
         let mut disk_img_data = Vec::new();
         std::io::stdin().read_to_end(&mut disk_img_data).expect("failed to read input stream");
-        let disk = dos33::Disk::from_do_img(&disk_img_data);
+        let disk = dos33::Disk::from_do_img(&disk_img_data).expect("disk error");
         let object = match typ {
             Ok(ItemType::ApplesoftTokens) => disk.load(&path_in_img).expect("disk image error"),
             Ok(ItemType::IntegerTokens) => disk.load(&path_in_img).expect("disk image error"),

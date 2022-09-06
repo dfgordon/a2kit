@@ -13,7 +13,7 @@ fn parse_simple_file() -> Result<(), Box<dyn std::error::Error>> {
             .stdin(Stdio::from(fd))
             .assert()
             .success()
-            .stderr(predicate::str::contains("There were 0 errors"));
+            .stderr(predicate::str::contains("Syntax OK"));
     }
     Ok(())
 }

@@ -114,7 +114,7 @@ impl Tokenizer
     }
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
 		self.tokenized_line = Vec::new();
-		let tree = parser.parse(self.line.clone(),None).expect("Error parsing file");
+		let tree = parser.parse(&self.line,None).expect("Error parsing file");
 		self.walk(tree);
 		let next_addr = self.curr_addr + self.tokenized_line.len() as u16 + 3;
 		let by: [u8;2] = u16::to_le_bytes(next_addr);
@@ -133,7 +133,7 @@ impl Tokenizer
 			if line.len()==0 {
 				continue;
 			}
-			self.line = line.to_string();
+			self.line = String::from(line) + "\n";
 			self.tokenize_line(&mut parser);
 			self.tokenized_program.append(&mut self.tokenized_line);
 		}
