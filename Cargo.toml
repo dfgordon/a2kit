@@ -21,5 +21,7 @@ tempfile = "*"
 thiserror = "*"
 atty = "0.2"
 colored = "2"
+num-traits = "*"
+num-derive = "*"
 a2kit_macro = { path = "../a2kit_macro" }
 a2kit_macro_derive = { path = "../a2kit_macro/a2kit_macro_derive" }

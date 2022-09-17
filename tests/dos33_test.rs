@@ -1,12 +1,13 @@
 // test of dos33 disk image module
 use std::path::Path;
-use a2kit::dos33::{self, DOS33Error};
+use a2kit::dos33;
+use a2kit::disk_base::{ItemType,A2Disk};
 
 #[test]
 fn test_format() {
     let mut disk = dos33::Disk::new();
     disk.format(254,true);
-    let actual = disk.to_do_img();
+    let actual = disk.to_img();
     let expected = std::fs::read(Path::new("tests").join("dos33-boot.do")).expect("failed to read test image file");
     // check this sector by sector otherwise we get a big printout
     for track in 0..35 {
@@ -30,8 +31,8 @@ fn test_write() {
     disk.bsave(&"thechip".to_string(),&[6,5,0,2].to_vec(),768).expect("error");
     disk.save(&"hello".to_string(),
         &basic_toks,
-        dos33::Type::Applesoft).expect("error");
-    let actual = disk.to_do_img();
+        ItemType::ApplesoftTokens).expect("error");
+    let actual = disk.to_img();
     let expected = std::fs::read(Path::new("tests").join("dos33-smallfiles.do")).expect("failed to read test image file");
     // check this sector by sector otherwise we get a big printout
     for track in 0..35 {
@@ -59,8 +60,8 @@ fn test_out_of_space() {
     disk.bsave(&"f3".to_string(),&big,0x800).expect("error");
     match disk.bsave(&"f4".to_string(),&big,0x800) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
-        Err(e) => match e {
-            DOS33Error::DiskFull => assert!(true),
+        Err(e) => match e.to_string().as_str() {
+            "DISK FULL" => assert!(true),
             _ => assert!(false,"unexpected error")
         }
     }

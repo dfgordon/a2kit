@@ -2,16 +2,18 @@
 //! This manipulates disk images containing one standard bootable
 //! or non-bootable DOS 3.3 small volume (140K).
 //! 
-//! * Image types: DOS ordered images (.DO)
+//! * Image types: DOS ordered images (.DO,.DSK)
 //! * The library mimics the workings of DOS, i.e., there is something akin to the RWTS
 //! subroutine, and there are functions that mirror commands such as SAVE, BSAVE etc..
 //! * The library will try to emulate the order in which DOS would access sectors, but
 //! this is not intended to be exact.
 
-use thiserror::Error;
+use thiserror;
 use std::collections::HashMap;
+use std::str::FromStr;
 mod boot;
 pub mod types;
+use crate::disk_base;
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -22,7 +24,7 @@ use a2kit_macro_derive::DiskStruct;
 
 /// Enumerates DOS errors.  The `Display` trait will print equivalent DOS message such as `FILE NOT FOUND`.  Following DOS errors are omitted:
 /// LANGUAGE NOT AVAILABLE, WRITE PROTECTED, SYNTAX ERROR, NO BUFFERS AVAILABLE, PROGRAM TOO LARGE, NOT DIRECT COMMAND
-#[derive(Error,Debug)]
+#[derive(thiserror::Error,Debug)]
 pub enum DOS33Error {
     #[error("RANGE ERROR")]
     Range,
@@ -437,11 +439,11 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    fn sequential_read(&self,name: &String) -> Result<Vec<u8>,DOS33Error> {
+    fn sequential_read(&self,name: &String) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         // resulting vector will be padded modulo 256
         let mut next_tslist = self.get_tslist_sector(name);
         if next_tslist==[0,0] {
-            return Err(DOS33Error::FileNotFound);
+            return Err(Box::new(DOS33Error::FileNotFound));
         }
         let mut ans: Vec<u8> = Vec::new();
         let mut buf = vec![0;256];
@@ -465,7 +467,7 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    fn sequential_write(&mut self,name: &String, file_bytes: &Vec<u8>, type_code: u8) -> Result<usize,DOS33Error> {
+    fn sequential_write(&mut self,name: &String, file_bytes: &Vec<u8>, type_code: u8) -> Result<usize,Box<dyn std::error::Error>> {
         let named_ts = self.get_tslist_sector(name);
         if named_ts==[0,0] {
             // this is a new file
@@ -473,7 +475,7 @@ impl Disk
             let data_sectors = 1 + file_bytes.len()/bytes;
             let tslist_sectors = 1 + data_sectors/self.vtoc.max_pairs as usize;
             if data_sectors + tslist_sectors > self.num_free_sectors() {
-                return Err(DOS33Error::DiskFull);
+                return Err(Box::new(DOS33Error::DiskFull));
             }
 
             // we are doing this
@@ -535,11 +537,36 @@ impl Disk
             panic!("file exists, overwriting is not supported");
         }
     }
-    /// List all the files on disk to standard output, mirrors `CATALOG`
-    pub fn catalog_to_stdout(&self) {
+    /// Test the image for compatibility and return Some(disk) or None.
+    pub fn from_img(img: &Vec<u8>) -> Option<Self> {
+        let mut disk = Self::new();
+        let tlen = 35 as usize;
+        let slen = 16 as usize;
+        let blen = 256 as usize;
+        if img.len()!=tlen*slen*blen {
+            return None;
+        }
+        for track in 0..tlen {
+            for sector in 0..slen {
+                for byte in 0..blen {
+                    disk.tracks[track][sector][byte] = img[byte+sector*blen+track*slen*blen];
+                }
+            }
+        }
+        disk.vtoc = VTOC::from_bytes(&disk.tracks[17][0].to_vec());
+        if disk.vtoc.bytes != [0,1] || disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
+            return None;
+        }
+        return Some(disk);
+    }
+}
+
+impl disk_base::A2Disk for Disk {
+    fn catalog_to_stdout(&self, path: &String) {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
+        println!();
         println!("DISK VOLUME {}",self.vtoc.vol);
         println!();
         for _try in 0..100 {
@@ -563,13 +590,16 @@ impl Disk
             }
             ts = [dir.next_track,dir.next_sector];
             if ts == [0,0] {
+                println!();
                 return;
             }
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Read a binary file from the disk, mirrors `BLOAD`.  Returns the starting address and data in a tuple.
-    pub fn bload(&self,name: &String) -> Result<(u16,Vec<u8>),DOS33Error> {
+    fn create(&mut self,path: &String,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
+        return Err(Box::new(DOS33Error::IOError));
+    }
+    fn bload(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.sequential_read(name) {
             Ok(v) => {
                 let ans = types::BinaryData::from_bytes(&v);
@@ -578,63 +608,52 @@ impl Disk
             Err(e) => Err(e)
         }
     }
-    /// Write a binary file to the disk, mirrors `BSAVE`
-    pub fn bsave(&mut self,name: &String, dat: &Vec<u8>,start_addr: u16) -> Result<usize,DOS33Error> {
+    fn bsave(&mut self,name: &String, dat: &Vec<u8>,start_addr: u16) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::BinaryData::pack(&dat,start_addr);
         return self.sequential_write(name, &file.to_bytes(), Type::Binary as u8);
     }
-    /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
-    /// Detokenization is handled in a different module.
-    pub fn load(&self,name: &String) -> Result<Vec<u8>,DOS33Error> {
+    fn load(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.sequential_read(name) {
-            Ok(v) => Ok(types::TokenizedProgram::from_bytes(&v).program),
+            Ok(v) => Ok((0,types::TokenizedProgram::from_bytes(&v).program)),
             Err(e) => Err(e)
         }
     }
-    /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
-    /// Tokenization is handled in a different module.
-    pub fn save(&mut self,name: &String, dat: &Vec<u8>, typ: Type) -> Result<usize,DOS33Error> {
+    fn save(&mut self,name: &String, dat: &Vec<u8>, typ: disk_base::ItemType) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::TokenizedProgram::pack(&dat);
-        return self.sequential_write(name, &file.to_bytes(), typ as u8);
+        let fs_type = match typ {
+            disk_base::ItemType::ApplesoftTokens => Type::Applesoft,
+            disk_base::ItemType::IntegerTokens => Type::Integer,
+            _ => panic!("attempt to SAVE non-BASIC data type")
+        };
+        return self.sequential_write(name, &file.to_bytes(), fs_type as u8);
     }
-    /// Read sequential text file from the disk, mirrors `READ`, text remains in A2 format.  `SequentialText` can be used for conversions.
-    pub fn read_text(&self,name: &String) -> Result<Vec<u8>,DOS33Error> {
+    fn read_text(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.sequential_read(name) {
             Ok(v) => {
-                Ok(types::SequentialText::from_bytes(&v).text)
+                Ok((0,types::SequentialText::from_bytes(&v).text))
             },
             Err(e) => Err(e)
         }
     }
-    /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.  `SequentialText` can be used for conversions.
-    pub fn write_text(&mut self,name: &String, dat: &Vec<u8>) -> Result<usize,DOS33Error> {
+    fn write_text(&mut self,name: &String, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::SequentialText::pack(&dat);
         return self.sequential_write(name, &file.to_bytes(), Type::Text as u8);
     }
-    /// Create a disk from a DOS ordered disk image buffer
-    pub fn from_do_img(do_img: &Vec<u8>) -> Result<Self,DOS33Error> {
-        let mut disk = Self::new();
-        let tlen = 35 as usize;
-        let slen = 16 as usize;
-        let blen = 256 as usize;
-        if do_img.len()!=tlen*slen*blen {
-            return Err(DOS33Error::EndOfData);
-        }
-        for track in 0..tlen {
-            for sector in 0..slen {
-                for byte in 0..blen {
-                    disk.tracks[track][sector][byte] = do_img[byte+sector*blen+track*slen*blen];
-                }
-            }
-        }
-        disk.vtoc = VTOC::from_bytes(&disk.tracks[17][0].to_vec());
-        if disk.vtoc.bytes != [0,1] || disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
-            return Err(DOS33Error::VolumeMismatch);
-        }
-        return Ok(disk);
+    fn decode_text(&self,dat: &Vec<u8>) -> String {
+        let file = types::SequentialText::pack(&dat);
+        return file.to_string();
     }
-    /// Return a DOS ordered disk image buffer of this disk
-    pub fn to_do_img(&self) -> Vec<u8> {
+    fn encode_text(&self,s: &String) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        let file = types::SequentialText::from_str(&s);
+        match file {
+            Ok(txt) => Ok(txt.to_bytes()),
+            Err(e) => Err(Box::new(e))
+        }
+    }
+    fn standardize(&mut self,ref_con: u16) {
+        // nothing to do
+    }
+    fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();
         for track in 0..self.vtoc.tracks as usize {
             for sector in 0..self.vtoc.sectors as usize {

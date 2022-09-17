@@ -107,7 +107,7 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,
             let mut line = String::new();
             io::stderr().flush().expect("could not flush stderr");
             io::stdin().read_line(&mut line).expect("could not read stdin");
-            if line=="bye\n" {
+            if line=="bye\n" || line=="bye\r\n" {
                 break;
             }
             code += &(line + "\n");

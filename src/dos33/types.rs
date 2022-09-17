@@ -34,6 +34,7 @@ impl DiskStruct for TokenizedProgram {
         if end_byte > dat.len() {
             panic!("inconsistent tokenized program length");
         }
+        // TODO: do we need to add trailing zeros (end_byte leaves them out?)
         return Self {
             length: [dat[0],dat[1]],
             program: dat[2..end_byte].to_vec().clone()
@@ -76,50 +77,48 @@ impl SequentialText {
 }
 
 /// Allows the structure to be created from string slices using `from_str`.
-/// This is not quite trivial: A2 text is negative ASCII and uses carriage returns only.
+/// This replaces LF/CRLF with CR and flips positive ASCII. Negative ASCII is an error.
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let pos: Vec<u8> = s.as_bytes().to_vec();
-        let mut neg: Vec<u8> = Vec::new();
-        for i in 0..pos.len() {
-            if neg.len()>0 && neg[neg.len()-1]==0x8d && pos[i]==0x0a {
+        let src: Vec<u8> = s.as_bytes().to_vec();
+        let mut ans: Vec<u8> = Vec::new();
+        for i in 0..src.len() {
+            if ans.len()>0 && ans[ans.len()-1]==0x8d && src[i]==0x0a {
                 continue;
             }
-            if pos[i]==0x0a || pos[i]==0x0d {
-                neg.push(0x8d);
-            }
-            if pos[i]<128 {
-                neg.push(pos[i]+0x80);
+            if src[i]==0x0a || src[i]==0x0d {
+                ans.push(0x8d);
+            } else if src[i]<128 {
+                ans.push(src[i]+0x80);
             } else {
                 return Err(std::fmt::Error);
             }
         }
         return Ok(Self {
-            text: neg.clone(),
+            text: ans.clone(),
             terminator: 0
         });
     }
 }
 
 /// Allows the text to be displayed to the console using `println!`.  This also
-/// derives `to_string`, so the structure can be converted to `String`.  This
-/// is not quite trivial: A2 text is negative ASCII and uses carriage returns only.
+/// derives `to_string`, so the structure can be converted to `String`.
+/// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut pos: Vec<u8> = Vec::new();
-        let neg: Vec<u8> = self.text.clone();
-        for i in 0..neg.len() {
-            if neg[i]==0x8d {
-                pos.push(0x0a);
-            }
-            if neg[i]>127 {
-                pos.push(neg[i]-0x80);
+        let mut ans: Vec<u8> = Vec::new();
+        let src: Vec<u8> = self.text.clone();
+        for i in 0..src.len() {
+            if src[i]==0x8d {
+                ans.push(0x0a);
+            } else if src[i]>127 {
+                ans.push(src[i]-0x80);
             } else {
-                return Err(std::fmt::Error);
+                ans.push(0);
             }
         }
-        let res = String::from_utf8(pos);
+        let res = String::from_utf8(ans);
         match res {
             Ok(s) => write!(f,"{}",s),
             Err(_) => write!(f,"err")
