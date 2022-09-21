@@ -14,3 +14,7 @@
 
 120 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
 130 print d$;"bsave sapling,a16384,l16384"
+
+200 print d$;"delete tree2"
+210 print d$;"rename sapling,sap"
+220 print d$;"rename tree1,mytree1"

@@ -14,6 +14,7 @@ mod directory;
 use types::*;
 use directory::*;
 use crate::disk_base;
+use crate::disk_base::TextEncoder;
 use crate::applesoft;
 
 pub struct Disk {
@@ -350,49 +351,51 @@ impl Disk {
         }
         return Err(Error::PathNotFound);
     }
-    fn process_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,dat: &mut SparseFileData,progress: &mut usize) {
+    fn process_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,dat: &mut disk_base::SparseData,count: &mut usize,eof: &mut usize) {
         self.read_block(buf,index_ptr as usize,0);
         let index_block = buf.clone();
         for idx in 0..256 {
             let ptr = u16::from_le_bytes([index_block[idx],index_block[idx+256]]);
             let mut bytes = 512;
-            if *progress + bytes > entry.eof() {
-                bytes = entry.eof() - *progress;
+            if *eof + bytes > entry.eof() {
+                bytes = entry.eof() - *eof;
             }
-            dat.index.push(ptr);
             if ptr>0 {
                 self.read_block(buf,ptr as usize,0);
-                dat.map.insert(ptr,buf[0..bytes].to_vec());
+                dat.chunks.insert(*count,buf[0..bytes].to_vec());
             }
-            *progress += bytes;
+            *count += 1;
+            *eof += bytes;
         }
     }
-    /// Read any file into the sparse file format.  Use `SparseFileData.sequence()` to flatten the result
+    /// Read any file into the sparse file format.  Use `SparseData.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,entry: &Entry) -> types::SparseFileData {
-        let mut dat = SparseFileData::new();
+    fn read_file(&self,entry: &Entry) -> disk_base::SparseData {
+        let mut dat = disk_base::SparseData::new(512);
         let mut buf: Vec<u8> = vec![0;512];
         let master_ptr = entry.get_ptr();
-        let mut progress: usize = 0;
+        let mut eof: usize = 0;
+        let mut count: usize = 0;
         match entry.storage_type() {
             StorageType::Seedling => {
                 self.read_block(&mut buf, master_ptr as usize, 0);
-                dat.index.push(master_ptr);
-                dat.map.insert(master_ptr, buf[0..entry.eof()].to_vec());
+                dat.chunks.insert(0, buf[0..entry.eof()].to_vec());
                 return dat;
             },
             StorageType::Sapling => {
-                self.process_index_block(&entry, master_ptr, &mut buf, &mut dat, &mut progress);
+                self.process_index_block(&entry, master_ptr, &mut buf, &mut dat, &mut count, &mut eof);
                 return dat;
             },
             StorageType::Tree => {
-                // TODO: find out how the master block is packed
                 self.read_block(&mut buf,master_ptr as usize,0);
                 let master_block = buf.clone();
                 for idx in 0..256 {
                     let ptr = u16::from_le_bytes([master_block[idx],master_block[idx+256]]);
                     if ptr>0 {
-                        self.process_index_block(entry, ptr, &mut buf, &mut dat, &mut progress);
+                        self.process_index_block(entry, ptr, &mut buf, &mut dat, &mut count, &mut eof);
+                    } else {
+                        count += 256;
+                        eof += 256*512;
                     }
                 }
                 return dat;
@@ -436,7 +439,9 @@ impl Disk {
     /// Write any sparse or sequential file.  Use `SparseFileData::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
     /// The entry must already exist and point to the next available block.
-    fn write_file(&mut self,loc: EntryLocation,dat: &SparseFileData) -> Result<usize,Error> {
+    /// The creator of `SparseFileData` must ensure that the first block is allocated.
+    /// This writes blocks more often than necessary, would be inadequate for an actual disk.
+    fn write_file(&mut self,loc: EntryLocation,dat: &disk_base::SparseData) -> Result<usize,Error> {
         let mut storage = StorageType::Seedling;
         let mut master_buf: Vec<u8> = vec![0;512];
         let mut master_ptr: u16 = 0;
@@ -448,144 +453,144 @@ impl Disk {
         let dir = self.get_directory(loc.block as usize);
         let mut entry = dir.entry_copies()[loc.idx0];
 
-        for count in 0..dat.index.len() {
+        for count in 0..dat.end() {
 
-            let shadow_block = dat.index[count];
-            let buf_maybe = dat.map.get(&shadow_block);
+            let buf_maybe = dat.chunks.get(&count);
 
             if master_count > 127 {
                 return Err(Error::DiskFull);
             }
 
-            // Check that enough free blocks are available to proceed with this stage
-            let mut blocks_needed = match storage {
+            // Check that enough free blocks are available to proceed with this stage.
+            // If this isn't done right we can get a panic later.
+            let blocks_needed = match storage {
                 StorageType::Seedling => {
-                    match count {
-                        i if i==0 => 1,
-                        _ => 2
+                    match (buf_maybe,count) {
+                        (_,i) if i==0 => 1, // data block
+                        (None,_) => 1, // index block
+                        (Some(_v),_) => 2 // index and data blocks
                     }
                 },
                 StorageType::Sapling => {
-                    match index_count {
-                        i if i<256 => 1,
-                        _ => 3
+                    match (buf_maybe,index_count) {
+                        (None,i) if i<256 => 0,
+                        (Some(_v),i) if i<256 => 1, // data block
+                        (None,_) => 1, // master block
+                        (Some(_v),_) => 3 // master, index, and data blocks
                     }
                 },
                 StorageType::Tree => {
-                    match index_count {
-                        i if i<256 => 1,
-                        _ => 2
+                    match (buf_maybe,index_count,index_ptr) {
+                        (None,_,_) => 0,
+                        (Some(_v),i,p) if i<256 && p>0 => 1, // data block
+                        (Some(_v),i,p) if i<256 && p==0 => 2, // index and data blocks
+                        (Some(_v),_,_) => 2 // index and data blocks
                     }
                 }
                 _ => panic!("unexpected storage type during write")
             };
-            if buf_maybe==None {
-                blocks_needed -= 1;
-            }
             if blocks_needed > self.num_free_blocks() {
                 return Err(Error::DiskFull);
             }
+
+            // Closure to write the data block.
+            // It is up to the creator of SparseFileData to ensure that the first block is not empty. 
+            let mut write_data_block_or_not = |disk: &mut Disk,ent: &mut Entry| {
+                let mut data_block: u16 = 0;
+                if let Some(buf) = buf_maybe {
+                    data_block = disk.get_available_block().unwrap();
+                    disk.write_block(&buf,data_block as usize,0);
+                    eof += match count {
+                        c if c+1 < dat.end() => 512,
+                        _ => buf.len()
+                    };
+                    ent.delta_blocks(1);
+                } else {
+                    eof += 512;
+                }
+                ent.set_eof(eof);
+                return data_block;
+            };
             
-            // promote the storage type if necessary
             match storage {
                 StorageType::Seedling => {
                     if count>0 {
-                        index_ptr = self.get_available_block().unwrap();
-                        self.allocate_block(index_ptr as usize);
-                        pack_index_ptr(&mut index_buf,entry.get_ptr(),0);
-                        index_count = 1;
                         storage = StorageType::Sapling;
                         entry.change_storage_type(storage);
-                        entry.set_ptr(index_ptr);
+                        index_ptr = self.get_available_block().unwrap();
+                        self.allocate_block(index_ptr as usize);
                         entry.delta_blocks(1);
+                        pack_index_ptr(&mut index_buf,entry.get_ptr(),0);
+                        entry.set_ptr(index_ptr);
+                        index_count += 1;
+                        let curr = write_data_block_or_not(self,&mut entry);
+                        pack_index_ptr(&mut index_buf, curr, index_count as usize);
+                        self.write_block(&index_buf, index_ptr as usize, 0);
+                        index_count += 1;
+                    } else {
+                        write_data_block_or_not(self,&mut entry);
+                        // index does not exist yet
                     }
                 },
                 StorageType::Sapling => {
                     if index_count > 255 {
-                        master_ptr = self.get_available_block().unwrap();
-                        self.allocate_block(master_ptr as usize);
-                        pack_index_ptr(&mut master_buf,index_ptr,0);
-                        master_count = 1;
-                        index_ptr = self.get_available_block().unwrap();
-                        self.allocate_block(index_ptr as usize);
-                        index_count = 0;
-                        index_buf = vec![0;512];
                         storage = StorageType::Tree;
                         entry.change_storage_type(storage);
+                        master_ptr = self.get_available_block().unwrap();
+                        self.allocate_block(master_ptr as usize);
                         entry.set_ptr(master_ptr);
-                        entry.delta_blocks(2);
+                        entry.delta_blocks(1);
+                        pack_index_ptr(&mut master_buf,index_ptr,0);
+                        master_count += 1;
+                        index_ptr = 0;
+                        index_count = 0;
+                        index_buf = vec![0;512];
+                        if buf_maybe!=None {
+                            index_ptr = self.get_available_block().unwrap();
+                            self.allocate_block(index_ptr as usize);
+                            entry.delta_blocks(1);
+                            let curr = write_data_block_or_not(self,&mut entry);
+                            pack_index_ptr(&mut index_buf, curr, 0);
+                            self.write_block(&index_buf,index_ptr as usize,0);
+                        } else {
+                            write_data_block_or_not(self,&mut entry);
+                        }
+                        index_count += 1;
+                    } else {
+                        let curr = write_data_block_or_not(self,&mut entry);
+                        pack_index_ptr(&mut index_buf,curr,index_count as usize);
+                        self.write_block(&index_buf,index_ptr as usize,0);
+                        index_count += 1;
                     }
                 },
                 StorageType::Tree => {
                     if index_count > 255 {
                         master_count += 1;
-                        index_ptr = self.get_available_block().unwrap();
-                        self.allocate_block(index_ptr as usize);
+                        index_ptr = 0;
                         index_count = 0;
                         index_buf = vec![0;512];
+                    }
+                    if index_ptr==0 && buf_maybe!=None {
+                        index_ptr = self.get_available_block().unwrap();
+                        self.allocate_block(index_ptr as usize);
                         entry.delta_blocks(1);
                     }
-                },
-                _ => panic!("unexpected storage type during write")
-            }
-
-            // write the data block
-            let curr = self.get_available_block().unwrap();
-            let mut curr_or_none = 0;
-            // It is up to the creator of SparseFileData to decide if the first block is treated as empty
-            if let Some(buf) = buf_maybe {
-                self.write_block(&buf,curr as usize,0);
-                eof += buf.len();
-                entry.delta_blocks(1);
-                curr_or_none = curr;
-            } else {
-                eof += 512;
-            }
-            entry.set_eof(eof);
-
-            // write the index data
-            match storage {
-                StorageType::Seedling => {
-                    // no index data
-                }
-                StorageType::Sapling => {
-                    pack_index_ptr(&mut index_buf, curr_or_none, index_count as usize);
-                    self.write_block(&index_buf, index_ptr as usize, 0);
-                    index_count += 1;
-                },
-                StorageType::Tree => {
+                    let curr = write_data_block_or_not(self,&mut entry);
+                    pack_index_ptr(&mut index_buf, curr, index_count as usize);
+                    if index_ptr > 0 {
+                        self.write_block(&index_buf,index_ptr as usize,0);
+                    }
                     pack_index_ptr(&mut master_buf, index_ptr, master_count as usize);
-                    pack_index_ptr(&mut index_buf, curr_or_none, index_count as usize);
                     self.write_block(&master_buf,master_ptr as usize,0);
-                    self.write_block(&index_buf,index_ptr as usize,0);
                     index_count += 1;
                 },
                 _ => panic!("unexpected storage type during write")
             }
 
-            // update the entry, do last to capture storage type changes
+            // update the entry, do last to capture all the changes
             self.write_entry(&loc,&entry);
         }
         return Ok(eof);
-    }
-    /// write a general sparse file
-    pub fn write_sparse(&mut self,path: &String, dat: &SparseFileData, ftype: FileType, aux: u16) -> Result<usize,Box<dyn std::error::Error>> {
-        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-            Ok((name,key_block,loc,new_block)) => {
-                // update the file count in the parent key block
-                let mut dir = self.get_directory(key_block as usize);
-                dir.inc_file_count();
-                self.write_block(&dir.to_bytes(),key_block as usize,0);
-                // write the entry into the parent directory (may not be key block)
-                self.write_entry(&loc,&Entry::create_file(&name, ftype, aux, new_block, key_block, None));
-                // write blocks
-                match self.write_file(loc,dat) {
-                    Ok(len) => Ok(len),
-                    Err(e) => Err(Box::new(e))
-                }
-            },
-            Err(e) => return Err(Box::new(e))
-        }
     }
     /// Return a disk object if the image data verifies as DOS ordered,
     /// otherwise return IOError.  N.b. `.dsk` images are often DOS
@@ -721,7 +726,7 @@ impl disk_base::A2Disk for Disk {
                 // write the entry into the parent directory (may not be key block)
                 self.write_entry(&loc,&Entry::create_file(&name, FileType::Binary,start_addr,new_block, key_block, None));
                 // write blocks
-                match self.write_file(loc,&SparseFileData::desequence(dat)) {
+                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
                     Ok(len) => Ok(len),
                     Err(e) => Err(Box::new(e))
                 }
@@ -758,7 +763,7 @@ impl disk_base::A2Disk for Disk {
                     _ => panic!("cannot write this type of program file")
                 }
                 // write blocks
-                match self.write_file(loc,&SparseFileData::desequence(dat)) {
+                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
                     Ok(len) => Ok(len),
                     Err(e) => Err(Box::new(e))
                 }
@@ -786,12 +791,35 @@ impl disk_base::A2Disk for Disk {
                 // write the entry into the parent directory (may not be key block)
                 self.write_entry(&loc,&Entry::create_file(&name, FileType::Text,0,new_block, key_block, None));
                 // write blocks
-                match self.write_file(loc,&SparseFileData::desequence(dat)) {
+                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
                     Ok(len) => Ok(len),
                     Err(e) => Err(Box::new(e))
                 }
             },
             Err(e) => return Err(Box::new(e))
+        }
+    }
+    fn write_records(&mut self,path: &String, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+        let encoder = Encoder::new(Some(0x0d));
+        if let Ok(sparse_data) = records.to_sparse_data(512,encoder) {
+            match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
+                Ok((name,key_block,loc,new_block)) => {
+                    // update the file count in the parent key block
+                    let mut dir = self.get_directory(key_block as usize);
+                    dir.inc_file_count();
+                    self.write_block(&dir.to_bytes(),key_block as usize,0);
+                    // write the entry into the parent directory (may not be key block)
+                    self.write_entry(&loc,&Entry::create_file(&name, FileType::Text,records.record_len as u16,new_block, key_block, None));
+                    // write blocks
+                    match self.write_file(loc,&sparse_data) {
+                        Ok(len) => Ok(len),
+                        Err(e) => Err(Box::new(e))
+                    }
+                },
+                Err(e) => return Err(Box::new(e))
+            }
+        } else {
+            Err(Box::new(Error::Syntax))
         }
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {

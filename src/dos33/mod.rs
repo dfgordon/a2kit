@@ -639,6 +639,9 @@ impl disk_base::A2Disk for Disk {
         let file = types::SequentialText::pack(&dat);
         return self.sequential_write(name, &file.to_bytes(), Type::Text as u8);
     }
+    fn write_records(&mut self,name: &String, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+        return Ok(0);
+    }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::pack(&dat);
         return file.to_string();

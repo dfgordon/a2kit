@@ -6,6 +6,7 @@ use thiserror::Error;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
+use crate::disk_base::TextEncoder;
 
 pub const TYPE_MAP: [(u8,&str);39] = [
     (0x00, "???"),
@@ -135,55 +136,53 @@ pub struct EntryLocation {
     pub idxv: usize
 }
 
-/// ProDOS files are in general sparse, i.e., index pointers are allowed to be null.
-/// Sequential files can be viewed as sparse files with no null-pointers.
-/// In this library, all files are based on a sparse file structure, with no loss in generality.
-/// The `SparseFileData` struct does not mirror the actual disk structure, which is imposed elsewhere.
-/// The index values and map keys are block pointers.  Before the file is written to disk, these may
-/// be "shadow blocks", i.e., arbitrary except that 0 indicates an empty record.
-pub struct SparseFileData {
-    pub index: Vec<u16>,
-    pub map: HashMap<u16,Vec<u8>>
+pub struct Encoder {
+    terminator: Option<u8>
 }
 
-impl SparseFileData {
-    pub fn new() -> Self {
+impl TextEncoder for Encoder {
+    fn new(terminator: Option<u8>) -> Self {
         Self {
-            index: Vec::new(),
-            map: HashMap::new()
+            terminator
         }
     }
-    /// pack the data sequentially, all information about empty records is lost
-    pub fn sequence(&self) -> Vec<u8> {
+    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
+        let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
-        let temp = self.index.clone();
-        for block in temp {
-            if block!=0 {
-                match self.map.get(&block) {
-                    Some(v) => ans.append(&mut v.clone()),
-                    _ => panic!("unmapped block in sparse file data")
-                };
+        for i in 0..src.len() {
+            if ans.len()>0 && ans[ans.len()-1]==0x0d && src[i]==0x0a {
+                continue;
+            }
+            if src[i]==0x0a || src[i]==0x0d {
+                ans.push(0x0d);
+            } else if src[i]<128 {
+                ans.push(src[i]);
+            } else {
+                return None;
             }
         }
-        return ans;
+        if let Some(terminator) = self.terminator {
+            if ans[ans.len()-1] != terminator {
+                ans.push(terminator);
+            }
+        }
+        return Some(ans);
     }
-    /// put any byte stream into a sparse data format
-    pub fn desequence(dat: &Vec<u8>) -> Self {
-        let mut mark = 0;
-        let mut shadow_block = 1;
-        let mut ans = Self::new();
-        loop {
-            let mut end = mark + 512;
-            if end > dat.len() {
-                end = dat.len();
+    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+        let mut ans: Vec<u8> = Vec::new();
+        for i in 0..src.len() {
+            if src[i]==0x0d {
+                ans.push(0x0a);
+            } else if src[i]<128 {
+                ans.push(src[i]);
+            } else {
+                ans.push(0);
             }
-            ans.index.push(shadow_block);
-            ans.map.insert(shadow_block,dat[mark..end].to_vec());
-            mark = end;
-            if mark == dat.len() {
-                return ans;
-            }
-            shadow_block += 1;
+        }
+        let res = String::from_utf8(ans);
+        match res {
+            Ok(s) => Some(s),
+            Err(_) => None
         }
     }
 }
@@ -210,24 +209,14 @@ impl SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let src: Vec<u8> = s.as_bytes().to_vec();
-        let mut ans: Vec<u8> = Vec::new();
-        for i in 0..src.len() {
-            if ans.len()>0 && ans[ans.len()-1]==0x0d && src[i]==0x0a {
-                continue;
-            }
-            if src[i]==0x0a || src[i]==0x0d {
-                ans.push(0x0d);
-            } else if src[i]<128 {
-                ans.push(src[i]);
-            } else {
-                return Err(std::fmt::Error);
-            }
+        let encoder = Encoder::new(None);
+        if let Some(dat) = encoder.encode(s) {
+            return Ok(Self {
+                text: dat.clone(),
+                terminator: 0
+            });
         }
-        return Ok(Self {
-            text: ans.clone(),
-            terminator: 0
-        });
+        Err(std::fmt::Error)
     }
 }
 
@@ -236,22 +225,11 @@ impl FromStr for SequentialText {
 /// This changes CR to LF, and nulls out negative ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ans: Vec<u8> = Vec::new();
-        let src: Vec<u8> = self.text.clone();
-        for i in 0..src.len() {
-            if src[i]==0x0d {
-                ans.push(0x0a);
-            } else if src[i]<128 {
-                ans.push(src[i]);
-            } else {
-                ans.push(0);
-            }
+        let encoder = Encoder::new(None);
+        if let Some(ans) = encoder.decode(&self.text) {
+            return write!(f,"{}",ans);
         }
-        let res = String::from_utf8(ans);
-        match res {
-            Ok(s) => write!(f,"{}",s),
-            Err(_) => write!(f,"err")
-        }
+        write!(f,"err")
     }
 }
 

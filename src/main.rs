@@ -1,6 +1,8 @@
 use clap::{arg,Command};
 use std::io::{Read,Write};
 use std::str::FromStr;
+#[cfg(windows)]
+use colored;
 mod walker;
 mod disk_base;
 mod applesoft;
@@ -14,6 +16,8 @@ const RCH: &str = "unreachable was reached";
 
 fn main() -> Result<(),Box<dyn std::error::Error>>
 {
+    #[cfg(windows)]
+    colored::control::set_virtual_terminal(true).unwrap();
     let long_help =
 "This tool is intended to be used with redirection and pipes.
 On Windows please use PowerShell.
@@ -132,7 +136,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             {
                 ItemType::ApplesoftText => walker::verify_stdin(tree_sitter_applesoft::language(),"]"),
                 ItemType::IntegerText => walker::verify_stdin(tree_sitter_integerbasic::language(),">"),
-                _ => panic!("unexpected language")
+                _ => return Err(Box::new(CommandError::UnsupportedItemType))
             };
             match res {
                 Ok(res) => {
@@ -152,7 +156,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
 
     if let Some(cmd) = matches.subcommand_matches("tokenize") {
         if atty::is(atty::Stream::Stdin) {
-            panic!("line entry is not supported for `tokenize`, please pipe something in");
+            eprintln!("line entry is not supported for `tokenize`, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
         let addr_opt = cmd.value_of("addr");
@@ -182,7 +187,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             },
             Ok(ItemType::IntegerText) => {
                 if let Some(_addr) = addr_opt {
-                    panic!("unnecessary address argument");
+                    eprintln!("unnecessary address argument");
+                    return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut program = String::new();
                 std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
@@ -210,7 +216,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
 
     if let Some(cmd) = matches.subcommand_matches("detokenize") {
         if atty::is(atty::Stream::Stdin) {
-            panic!("line entry is not supported for `detokenize`, please pipe something in");
+            eprintln!("line entry is not supported for `detokenize`, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
         return match typ
@@ -257,10 +264,12 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     // Put file inside disk image, or save to local
     if let Some(cmd) = matches.subcommand_matches("put") {
         if atty::is(atty::Stream::Stdin) {
-            panic!("cannot use `put` with console input, please pipe something in");
+            eprintln!("cannot use `put` with console input, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
         }
         if !atty::is(atty::Stream::Stdout) {
-            panic!("output is redirected, but `put` must end the pipeline");
+            eprintln!("output is redirected, but `put` must end the pipeline");
+            return Err(Box::new(CommandError::InvalidCommand));
         }
         let dest_path = String::from(cmd.value_of("file").expect(RCH));
         let maybe_typ = cmd.value_of("type");
@@ -275,7 +284,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                 let typ = ItemType::from_str(typ_str);
                 let load_address: u16 = match (cmd.value_of("addr"),&typ) {
                     (Some(a),_) => u16::from_str(a).expect("bad address"),
-                    (_ ,Ok(ItemType::Binary)) => panic!("binary file requires an address"),
+                    (_ ,Ok(ItemType::Binary)) => {
+                        eprintln!("binary file requires an address");
+                        return Err(Box::new(CommandError::InvalidCommand));
+                    },
                     _ => 768 as u16
                 };
                 let mut disk = a2kit::create_disk_from_file(img_path);
@@ -288,10 +300,15 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                             Ok(encoded) => disk.write_text(&dest_path,&encoded),
                             Err(e) => Err(e)
                         },
-                        _ => panic!("problem with utf8 while writing text file")
+                        _ => {
+                            eprintln!("problem with utf8 while writing text file");
+                            return Err(Box::new(CommandError::OutOfRange));
+                        }
                     },
                     Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
-                    _ => panic!("not supported")
+                    _ => {
+                        return Err(Box::new(CommandError::UnsupportedItemType));
+                    }
                 };
                 return match result {
                     Ok(_len) => {
@@ -320,7 +337,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     // Get file from local or from inside a disk image
     if let Some(cmd) = matches.subcommand_matches("get") {
         if !atty::is(atty::Stream::Stdin) {
-            panic!("input is redirected, but `get` must start the pipeline");
+            eprintln!("input is redirected, but `get` must start the pipeline");
+            return Err(Box::new(CommandError::InvalidCommand));
         }
         let dest_path = String::from(cmd.value_of("file").expect(RCH));
         let maybe_typ = cmd.value_of("type");
@@ -338,7 +356,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                     Ok(ItemType::Binary) => disk.bload(&dest_path),
                     Ok(ItemType::Text) => disk.read_text(&dest_path),
                     Ok(ItemType::Raw) => disk.read_text(&dest_path),
-                    _ => panic!("not supported")
+                    _ => {
+                        return Err(Box::new(CommandError::UnsupportedItemType));
+                    }
                 };
                 match maybe_object {
                     Ok(tuple) => {

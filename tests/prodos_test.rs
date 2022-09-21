@@ -3,7 +3,7 @@ use std::path::Path;
 use std::fmt::Write;
 use a2kit::prodos;
 use a2kit::applesoft;
-use a2kit::disk_base::{ItemType,A2Disk};
+use a2kit::disk_base::{ItemType,A2Disk,Records};
 use chrono;
 
 
@@ -25,7 +25,7 @@ fn compare_blocks(actual: &Vec<u8>,expected: &Vec<u8>,num: u16) {
 }
 
 #[test]
-fn test_format() {
+fn format() {
     let mut disk = prodos::Disk::new(280);
     disk.format(&String::from("NEW.DISK"),true,
         Some(chrono::NaiveDate::from_ymd(2022,08,31).and_hms(3, 48, 0)));
@@ -37,7 +37,7 @@ fn test_format() {
 }
 
 #[test]
-fn test_create_dirs() {
+fn create_dirs() {
     let mut disk = prodos::Disk::new(280);
     disk.format(&String::from("DIRTEST"),true,None);
     disk.create(&String::from("TEST"),None).expect("unreachable");
@@ -54,10 +54,27 @@ fn test_create_dirs() {
 }
 
 #[test]
-fn test_write() {
+fn read_small() {
     // test a disk we formatted ourselves, but saved some files in VII:
     // 1. BSAVE THECHIP,A$300,L$4    ($300: 6 5 0 2)
     // 2. SAVE HELLO    (10 PRINT "HELLO")
+    // TODO: add a small sequential text file
+    let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.po")).expect("failed to read test image file");
+    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    let binary_data = emulator_disk.bload(&"thechip".to_string()).expect("error");
+    assert_eq!(binary_data,(768,vec![6,5,0,2]));
+    let disk_tokens = emulator_disk.load(&"hello".to_string()).expect("error");
+    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
+    let lib_tokens = tokenizer.tokenize("10 print \"HELLO\"".to_string(),2049);
+    assert_eq!(disk_tokens,(0,lib_tokens));
+}
+
+#[test]
+fn write_small() {
+    // test a disk we formatted ourselves, but saved some files in VII:
+    // 1. BSAVE THECHIP,A$300,L$4    ($300: 6 5 0 2)
+    // 2. SAVE HELLO    (10 PRINT "HELLO")
+    // TODO: add a small sequential text file
     let mut disk = prodos::Disk::new(280);
     disk.format(&String::from("NEW.DISK"),true,None);
     disk.bsave(&"thechip".to_string(),&[6,5,0,2].to_vec(),768).expect("error");
@@ -73,7 +90,7 @@ fn test_write() {
 }
 
 #[test]
-fn test_out_of_space() {
+fn out_of_space() {
     let mut disk = prodos::Disk::new(280);
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("NEW.DISK"),true,None);
@@ -91,12 +108,53 @@ fn test_out_of_space() {
 }
 
 #[test]
-fn test_big_files() {
+fn read_big() {
+    // Test against a disk created in Virtual II using Copy2Plus and the below BASIC code.
+    // This tests a seedling, a sapling, and two trees (both sparse)
+    let img = std::fs::read(&Path::new("tests").join("prodos-bigfiles.dsk")).expect("failed to read test image file");
+    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    let mut buf: Vec<u8>;
+
+    // check the BASIC program, this is a seedling file
+    let basic_program = "
+    10 d$ = chr$(4)
+    20 print d$;\"open tree1,l128\"
+    30 print d$;\"write tree1,r2000\"
+    40 print \"HELLO FROM TREE 1\"
+    50 print d$;\"close tree1\"
+    60 print d$;\"open tree2,l127\"
+    70 print d$;\"write tree2,r2000\"
+    80 print \"HELLO FROM TREE 2\"
+    90 print d$;\"write tree2,r4000\"
+    100 print \"HELLO FROM TREE 2\"
+    110 print d$;\"close tree2\"
+    120 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
+    130 print d$;\"bsave sapling,a16384,l16384\"";
+    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
+    let mut lib_tokens = tokenizer.tokenize(basic_program.to_string(),2049);
+    let disk_tokens = emulator_disk.load(&"make.big".to_string()).expect("error");
+    lib_tokens.push(0xc4); // Virtual II added an extra byte, why?
+    assert_eq!(disk_tokens,(0,lib_tokens));
+
+    // TODO: read text records
+
+    // check a large binary, this is a non-sparse sapling
+    buf = vec![0;16384];
+    for i in 0..16384 {
+        buf[i] = (i%256) as u8;
+    }
+    let binary_data = emulator_disk.bload(&"sapling".to_string()).expect("dimg error");
+    assert_eq!(binary_data,(16384,buf));
+
+}
+
+#[test]
+fn write_big() {
     // Test against a disk created in Virtual II using Copy2Plus and the below BASIC code.
     // This tests a seedling, a sapling, and two trees (both sparse)
     let mut buf: Vec<u8>;
     let mut disk = prodos::Disk::new(280);
-    disk.format(&String::from("BIG"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None);
 
     // create and save the BASIC program, this is a seedling file
     let basic_program = "
@@ -108,49 +166,24 @@ fn test_big_files() {
     60 print d$;\"open tree2,l127\"
     70 print d$;\"write tree2,r2000\"
     80 print \"HELLO FROM TREE 2\"
-    90 print d$;\"close tree2\"
-    100 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
-    110 print d$;\"bsave sapling,a16384,l16384\"";
+    90 print d$;\"write tree2,r4000\"
+    100 print \"HELLO FROM TREE 2\"
+    110 print d$;\"close tree2\"
+    120 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
+    130 print d$;\"bsave sapling,a16384,l16384\"";
     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
     let mut tokens = tokenizer.tokenize(basic_program.to_string(),2049);
     tokens.push(0xc4); // Virtual II added an extra byte, why?
-    disk.save(&"makebig".to_string(),&tokens,ItemType::ApplesoftTokens).expect("dimg error");
-    let mut sparse: prodos::types::SparseFileData;
+    disk.save(&"make.big".to_string(),&tokens,ItemType::ApplesoftTokens).expect("dimg error");
 
-    // make sparse text file tree1 manually
-    sparse = prodos::types::SparseFileData::new();
-    buf = Vec::new();
-    sparse.index.push(1);
-    sparse.map.insert(1,vec![0;512]); // first block always written
-    for _i in 1..500 {
-        sparse.index.push(0); // 499 empty blocks
-    }
-    for c in "HELLO FROM TREE 1".as_bytes() {
-        buf.push(*c);
-    }
-    buf.push(0x0d);
-    sparse.index.push(2);
-    sparse.map.insert(2,buf.clone());
-    disk.write_sparse(&"tree1".to_string(), &sparse, a2kit::prodos::types::FileType::Text, 128).expect("dimg error");
-
-    // make sparse text file tree2 manually
-    sparse = prodos::types::SparseFileData::new();
-    buf = Vec::new();
-    sparse.index.push(1);
-    sparse.map.insert(1,vec![0;512]); // first block always written
-    for _i in 1..496 {
-        sparse.index.push(0); // 495 empty blocks
-    }
-    for _i in 0..48 {
-        buf.push(0); // record not aligned, need to pad block
-    }
-    for c in "HELLO FROM TREE 2".as_bytes() {
-        buf.push(*c);
-    }
-    buf.push(0x0d);
-    sparse.index.push(2);
-    sparse.map.insert(2,buf.clone());
-    disk.write_sparse(&"tree2".to_string(),&sparse,a2kit::prodos::types::FileType::Text,127).expect("dimg error");
+    // make tree files using random access text module
+    let mut records = a2kit::disk_base::Records::new(128);
+    records.add_record(2000, "HELLO FROM TREE 1");
+    disk.write_records(&"tree1".to_string(), &records).expect("dimg error");
+    records = a2kit::disk_base::Records::new(127);
+    records.add_record(2000, "HELLO FROM TREE 2");
+    records.add_record(4000, "HELLO FROM TREE 2");
+    disk.write_records(&"tree2".to_string(), &records).expect("dimg error");
 
     // write a large binary, this is a non-sparse sapling
     buf = vec![0;16384];
