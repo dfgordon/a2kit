@@ -20,7 +20,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     colored::control::set_virtual_terminal(true).unwrap();
     let long_help =
 "This tool is intended to be used with redirection and pipes.
-On Windows please use PowerShell.
+PowerShell may require you to wrap the pipeline in the native shell.
 
 Examples:
 create DOS image: `a2kit mkdsk -v 254 -t do > myimg.do`
@@ -48,6 +48,23 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
         .about("create a new directory inside a disk image"))
+    .subcommand(Command::new("delete")
+        .arg(arg!(-f --file <PATH> "path inside disk image to delete"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .about("delete a file or directory inside a disk image"))
+    .subcommand(Command::new("lock")
+        .arg(arg!(-f --file <PATH> "path inside disk image to lock"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .about("write protect a file or directory inside a disk image"))
+    .subcommand(Command::new("unlock")
+        .arg(arg!(-f --file <PATH> "path inside disk image to unlock"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .about("remove write protection from a file or directory inside a disk image"))
+    .subcommand(Command::new("rename")
+        .arg(arg!(-f --file <PATH> "path inside disk image to rename"))
+        .arg(arg!(-n --name <NAME> "new name"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .about("rename a file or directory inside a disk image"))
     .subcommand(Command::new("verify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
         .about("read from stdin and error check"))
@@ -82,7 +99,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             DiskImageType::DO => match u8::from_str(cmd.value_of("volume").expect(RCH)) {
                 Ok(vol) if vol>=1 && vol<=254 => {
                     let mut disk = dos33::Disk::new();
-                    disk.format(254,true);
+                    disk.format(254,true,17);
                     let buf = disk.to_img();
                     eprintln!("writing {} bytes",buf.len());
                     std::io::stdout().write_all(&buf).expect("write to stdout failed");
@@ -117,13 +134,12 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     // Catalog a disk image
     if let Some(cmd) = matches.subcommand_matches("catalog") {
         let path_in_img = match cmd.value_of("file") {
-            Some(path) => path.to_string(),
-            _ => "/".to_string()
+            Some(path) => path,
+            _ => "/"
         };
         if let Some(path_to_img) = cmd.value_of("dimg") {
-            let disk = a2kit::create_disk_from_file(&path_to_img);
-            disk.catalog_to_stdout(&path_in_img);
-            return Ok(());
+            let disk = a2kit::create_disk_from_file(path_to_img);
+            return disk.catalog_to_stdout(&path_in_img);
         }
         panic!("{}",RCH);
     }
@@ -168,7 +184,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                     let mut program = String::new();
                     std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-                    let object = tokenizer.tokenize(String::from(&program),addr);
+                    let object = tokenizer.tokenize(&program,addr);
                     if atty::is(atty::Stream::Stdout) {
                         let disp_lines = object.len()/8;
                         let remainder = object.len()%8;
@@ -261,6 +277,67 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         };
     }
 
+    // Delete a file or directory
+    if let Some(cmd) = matches.subcommand_matches("delete") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let mut disk = a2kit::create_disk_from_file(&path_to_img);
+        match disk.delete(&path_in_img) {
+            Ok(()) => {
+                let updated_img_data = disk.to_img();
+                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
+                return Ok(())
+            },
+            Err(e) => return Err(e)
+        };
+    }
+
+    // Lock a file or directory
+    if let Some(cmd) = matches.subcommand_matches("lock") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let mut disk = a2kit::create_disk_from_file(&path_to_img);
+        match disk.lock(&path_in_img) {
+            Ok(()) => {
+                let updated_img_data = disk.to_img();
+                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
+                return Ok(())
+            },
+            Err(e) => return Err(e)
+        };
+    }
+
+    // Unlock a file or directory
+    if let Some(cmd) = matches.subcommand_matches("unlock") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let mut disk = a2kit::create_disk_from_file(&path_to_img);
+        match disk.unlock(&path_in_img) {
+            Ok(()) => {
+                let updated_img_data = disk.to_img();
+                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
+                return Ok(())
+            },
+            Err(e) => return Err(e)
+        };
+    }
+
+    // Rename a file or directory
+    if let Some(cmd) = matches.subcommand_matches("rename") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let name = String::from(cmd.value_of("name").expect(RCH));
+        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let mut disk = a2kit::create_disk_from_file(&path_to_img);
+        match disk.rename(&path_in_img,&name) {
+            Ok(()) => {
+                let updated_img_data = disk.to_img();
+                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
+                return Ok(())
+            },
+            Err(e) => return Err(e)
+        };
+    }
+
     // Put file inside disk image, or save to local
     if let Some(cmd) = matches.subcommand_matches("put") {
         if atty::is(atty::Stream::Stdin) {
@@ -292,11 +369,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                 };
                 let mut disk = a2kit::create_disk_from_file(img_path);
                 let result = match typ {
-                    Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens),
-                    Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens),
-                    Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address),
+                    Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
+                    Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
+                    Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address,None),
                     Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
-                        Ok(s) => match disk.encode_text(&s.to_string()) {
+                        Ok(s) => match disk.encode_text(s) {
                             Ok(encoded) => disk.write_text(&dest_path,&encoded),
                             Err(e) => Err(e)
                         },

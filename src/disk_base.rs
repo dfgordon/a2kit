@@ -150,6 +150,7 @@ impl SparseData {
 
 /// This is an abstraction used in handling random access text files.
 /// Text encoding at this level is UTF8, it may be translated at lower levels.
+/// This will usually be translated into `SparseData` and then passed to disk routines.
 pub struct Records {
     /// The fixed length of all records in this collection
     pub record_len: usize,
@@ -167,11 +168,13 @@ impl Records {
     pub fn add_record(&mut self,num: usize,fields: &str) {
         self.map.insert(num,fields.to_string());
     }
-    pub fn to_sparse_data(&self,chunk_len: usize,encoder: impl TextEncoder) -> Result<SparseData,Box<dyn Error>> {
+    pub fn to_sparse_data(&self,chunk_len: usize,require_first: bool,encoder: impl TextEncoder) -> Result<SparseData,Box<dyn Error>> {
         let mut ans = SparseData::new(chunk_len);
         let mut total_end_logical_chunk = 0;
-        // always need to have the first chunk referenced
-        ans.chunks.insert(0,vec![0;chunk_len]);
+        // always need to have the first chunk referenced on ProDOS
+        if require_first {
+            ans.chunks.insert(0,vec![0;chunk_len]);
+        }
         // now insert the actual records, first chunk can always be overwritten
         for (rec_num,fields) in &self.map {
             match encoder.encode(fields) {
@@ -231,33 +234,41 @@ impl fmt::Display for Records {
 /// This provides a uniform interface applicable to DOS or ProDOS.
 pub trait A2Disk {
     /// List all the files on disk to standard output, mirrors `CATALOG`
-    fn catalog_to_stdout(&self, path: &String);
+    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn Error>>;
     /// Create a new directory
-    fn create(&mut self,path: &String,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>>;
+    fn create(&mut self,path: &str,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn Error>>;
+    /// Delete a file or directory
+    fn delete(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
+    /// Rename a file or directory
+    fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn Error>>;
+    /// write protect a file
+    fn lock(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
+    // remove write protection from a file
+    fn unlock(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
     /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
-    fn bload(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write a binary file to the disk, mirrors `BSAVE`
-    fn bsave(&mut self,name: &String, dat: &Vec<u8>,start_addr: u16) -> Result<usize,Box<dyn Error>>;
+    fn bsave(&mut self,name: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
     /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
     /// Detokenization is handled in a different module.  Returns (aux,data), aux = 0
-    fn load(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
     /// Tokenization is handled in a different module.
-    fn save(&mut self,name: &String, dat: &Vec<u8>, typ: ItemType) -> Result<usize,Box<dyn Error>>;
+    fn save(&mut self,name: &str, dat: &Vec<u8>, typ: ItemType,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
     /// Read sequential text file from the disk, mirrors `READ`, text remains in raw A2 format.
     /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
-    fn read_text(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
     /// Use `encode_text` to generate data from a UTF8 string.
-    fn write_text(&mut self,name: &String, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
+    fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
     /// Write records to a random access text file
-    fn write_records(&mut self,name: &String, records: &Records) -> Result<usize,Box<dyn Error>>;
+    fn write_records(&mut self,name: &str, records: &Records) -> Result<usize,Box<dyn Error>>;
     /// Create disk image bytestream appropriate for the file system on this disk.
     fn to_img(&self) -> Vec<u8>;
     /// Convert file system text to a UTF8 string
     fn decode_text(&self,dat: &Vec<u8>) -> String;
     /// Convert UTF8 string to file system text
-    fn encode_text(&self,s: &String) -> Result<Vec<u8>,Box<dyn Error>>;
+    fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn Error>>;
     /// Standardize for comparison with other sources of disk images
     fn standardize(&mut self,ref_con: u16);
 }

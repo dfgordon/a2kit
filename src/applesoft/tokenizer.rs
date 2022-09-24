@@ -124,7 +124,7 @@ impl Tokenizer
 		self.curr_addr = next_addr;
 	}
 	/// Tokenize a program contained in a UTF8 string, result is an array of bytes
-	pub fn tokenize(&mut self,program: String,start_addr: u16) -> Vec<u8> {
+	pub fn tokenize(&mut self,program: &str,start_addr: u16) -> Vec<u8> {
 		self.curr_addr = start_addr;
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();

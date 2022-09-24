@@ -53,7 +53,7 @@ fn file_name_to_string(nibs: u8, fname: [u8;15]) -> String {
     panic!("encountered a bad file name on disk");
 }
 /// Convert storage type and String to (stor_len_nibs,fname).
-fn string_to_file_name(stype: &StorageType, s: &String) -> (u8,[u8;15]) {
+fn string_to_file_name(stype: &StorageType, s: &str) -> (u8,[u8;15]) {
     let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
     if !fname_patt.is_match(&s.to_uppercase()) {
         panic!("attempt to create a bad file name");
@@ -101,12 +101,12 @@ pub trait Header {
 pub trait HasEntries {
     fn name(&self) -> String;
     fn file_count(&self) -> u16;
-    fn entry_copies(&self) -> Vec<Entry>;
+    fn entry_locations(&self,iblock: u16) -> Vec<EntryLocation>;
     fn prev(&self) -> u16;
     fn next(&self) -> u16;
     fn set_links(&mut self,prev: Option<u16>,next: Option<u16>);
-    fn set_entry(&mut self,idx: usize,entry: Entry);
-    fn idx_offset(&self) -> usize;
+    fn get_entry(&self,loc: &EntryLocation) -> Entry;
+    fn set_entry(&mut self,loc: &EntryLocation,entry: Entry);
 }
 
 pub trait HasName {
@@ -116,7 +116,6 @@ pub trait HasName {
 }
 
 pub trait Directory: DiskStruct + HasEntries {
-    /// get the parent entry location: n.b. idx0 will not be valid
     fn parent_entry_loc(&self) -> Option<EntryLocation>;
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
@@ -257,7 +256,7 @@ impl Entry {
         self.blocks_used = u16::to_le_bytes(new_val as u16);
     }
     fn create_generic(&mut self,
-        name: &String,
+        name: &str,
         stype: StorageType,
         ftype: FileType,
         aux: u16,
@@ -279,15 +278,18 @@ impl Entry {
         self.last_mod = pack_time(create_time);
         self.header_ptr = u16::to_le_bytes(header_ptr);
     }
-    pub fn create_subdir(name: &String,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
+    pub fn create_subdir(name: &str,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
         ans.create_generic(name,StorageType::SubDirEntry,FileType::Directory,0,key_ptr,header_ptr,create_time);
         return ans;
     }
-    pub fn create_file(name: &String,ftype: FileType,aux: u16,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
+    pub fn create_file(name: &str,ftype: FileType,aux: u16,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
         ans.create_generic(name,StorageType::Seedling,ftype,aux,key_ptr,header_ptr,create_time);
         return ans;
+    }
+    pub fn get_access(&self,what: Access) -> bool {
+        return self.access & what as u8 > 0;
     }
     pub fn set_access(&mut self,what: Access,which: bool) {
         if which {
@@ -295,6 +297,12 @@ impl Entry {
         } else {
             self.access &= u8::MAX ^ what as u8;
         }
+    }
+    pub fn rename(&mut self,name: &str) {
+        let stor = self.storage_type();
+        let (nibs,fname) = string_to_file_name(&stor, name);
+        self.stor_len_nibs = nibs;
+        self.name = fname;
     }
     pub fn standardize(&mut self) {
         self.create_time = [0,0,0,0];
@@ -305,10 +313,7 @@ impl Entry {
         // this clears any characters in the name beyond its length
         if self.is_active() {
             let name_str = file_name_to_string(self.stor_len_nibs,self.name);
-            let stor = self.storage_type();
-            let (nibs,fname) = string_to_file_name(&stor,&name_str);
-            self.stor_len_nibs = nibs;
-            self.name = fname;
+            self.rename(&name_str);
         } else {
             self.name = [0;15];
         }
@@ -424,10 +429,10 @@ impl<T: Header + HasName + DiskStruct> HasEntries for KeyBlock<T> {
     fn next(&self) -> u16 {
         return u16::from_le_bytes(self.next_block);
     }
-    fn entry_copies(&self) -> Vec<Entry> {
-        let mut ans = Vec::<Entry>::new();
+    fn entry_locations(&self,iblock: u16) -> Vec<EntryLocation> {
+        let mut ans = Vec::<EntryLocation>::new();
         for i in 0..self.entries.len() {
-            ans.push(Entry::from_bytes(&self.entries[i].to_bytes()));
+            ans.push(EntryLocation { block: iblock, idx: i+2 });
         }
         return ans;
     }
@@ -441,11 +446,11 @@ impl<T: Header + HasName + DiskStruct> HasEntries for KeyBlock<T> {
             None => self.next_block
         };
     }
-    fn set_entry(&mut self,idx: usize,entry: Entry) {
-        self.entries[idx] = entry;
+    fn get_entry(&self,loc: &EntryLocation) -> Entry {
+        return Entry::from_bytes(&self.entries[loc.idx-2].to_bytes());
     }
-    fn idx_offset(&self) -> usize {
-        2
+    fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
+        self.entries[loc.idx-2] = entry;
     }
 }
 
@@ -462,10 +467,10 @@ impl HasEntries for EntryBlock {
     fn next(&self) -> u16 {
         return u16::from_le_bytes(self.next_block);
     }
-    fn entry_copies(&self) -> Vec<Entry> {
-        let mut ans = Vec::<Entry>::new();
+    fn entry_locations(&self,iblock: u16) -> Vec<EntryLocation> {
+        let mut ans = Vec::<EntryLocation>::new();
         for i in 0..self.entries.len() {
-            ans.push(Entry::from_bytes(&self.entries[i].to_bytes()));
+            ans.push(EntryLocation { block: iblock, idx: i+1 });
         }
         return ans;
     }
@@ -479,11 +484,11 @@ impl HasEntries for EntryBlock {
             None => self.next_block
         };
     }
-    fn set_entry(&mut self,idx: usize,entry: Entry) {
-        self.entries[idx] = entry;
+    fn get_entry(&self,loc: &EntryLocation) -> Entry {
+        return Entry::from_bytes(&self.entries[loc.idx-1].to_bytes());
     }
-    fn idx_offset(&self) -> usize {
-        1
+    fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
+        self.entries[loc.idx-1] = entry;
     }
 }
 
@@ -643,7 +648,7 @@ impl Directory for KeyBlock<VolDirHeader> {
         self.header.inc_file_count();
     }
     fn dec_file_count(&mut self) {
-        self.header.inc_file_count();
+        self.header.dec_file_count();
     }
     fn standardize(&mut self) {
         self.header.standardize();
@@ -654,15 +659,14 @@ impl Directory for KeyBlock<SubDirHeader> {
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         return Some(EntryLocation {
             block: u16::from_le_bytes(self.header.parent_ptr),
-            idx0: usize::MAX,
-            idxv: self.header.parent_entry_num as usize
+            idx: self.header.parent_entry_num as usize
         });
     }
     fn inc_file_count(&mut self) {
         self.header.inc_file_count();
     }
     fn dec_file_count(&mut self) {
-        self.header.inc_file_count();
+        self.header.dec_file_count();
     }
     fn standardize(&mut self) {
         self.header.standardize();

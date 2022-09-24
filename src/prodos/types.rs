@@ -128,12 +128,10 @@ pub enum Error {
 }
 
 /// Convenience for locating an entry in a directory.
-/// `idx0` indexes the entry from 0
-/// `idxv` mirrors the internal indexing, which starts at 2 in a key block, and 1 in an entry block
+/// `idx` mirrors the internal indexing, which starts at 2 in a key block, and 1 in an entry block
 pub struct EntryLocation {
     pub block: u16,
-    pub idx0: usize,
-    pub idxv: usize
+    pub idx: usize
 }
 
 pub struct Encoder {

@@ -3,54 +3,21 @@
 //! or non-bootable DOS 3.3 small volume (140K).
 //! 
 //! * Image types: DOS ordered images (.DO,.DSK)
-//! * The library mimics the workings of DOS, i.e., there is something akin to the RWTS
-//! subroutine, and there are functions that mirror commands such as SAVE, BSAVE etc..
+//! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `A2Disk` trait
 //! * The library will try to emulate the order in which DOS would access sectors, but
 //! this is not intended to be exact.
 
-use thiserror;
 use std::collections::HashMap;
 use std::str::FromStr;
+use a2kit_macro::DiskStruct;
+
 mod boot;
 pub mod types;
+use types::*;
+use crate::disk_base::TextEncoder;
+mod directory;
+use directory::*;
 use crate::disk_base;
-
-// a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
-// This spares us having to manually write code to copy bytes in and out for every new structure.
-// The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
-use a2kit_macro_derive::DiskStruct;
-
-/// Enumerates DOS errors.  The `Display` trait will print equivalent DOS message such as `FILE NOT FOUND`.  Following DOS errors are omitted:
-/// LANGUAGE NOT AVAILABLE, WRITE PROTECTED, SYNTAX ERROR, NO BUFFERS AVAILABLE, PROGRAM TOO LARGE, NOT DIRECT COMMAND
-#[derive(thiserror::Error,Debug)]
-pub enum DOS33Error {
-    #[error("RANGE ERROR")]
-    Range,
-    #[error("END OF DATA")]
-    EndOfData,
-    #[error("FILE NOT FOUND")]
-    FileNotFound,
-    #[error("VOLUME MISMATCH")]
-    VolumeMismatch,
-    #[error("I/O ERROR")]
-    IOError,
-    #[error("DISK FULL")]
-    DiskFull,
-    #[error("FILE LOCKED")]
-    FileLocked,
-    #[error("FILE TYPE MISMATCH")]
-    FileTypeMismatch
-}
-
-/// Enumerates the four basic file types, the byte code can be obtained from an instance, e.g. `my_type as u8`
-pub enum Type {
-    Text = 0x00,
-    Integer = 0x01,
-    Applesoft = 0x02,
-    Binary = 0x04
-}
 
 fn file_name_to_string(fname: [u8;30]) -> String {
     // fname is negative ASCII padded to the end with spaces
@@ -65,7 +32,7 @@ fn file_name_to_string(fname: [u8;30]) -> String {
     panic!("encountered a bad file name");
 }
 
-fn string_to_file_name(s: &String) -> [u8;30] {
+fn string_to_file_name(s: &str) -> [u8;30] {
     // this assumes the String contains only ASCII characters, if not panic
     let mut ans: [u8;30] = [32;30]; // load with ascii spaces
     let mut i = 0;
@@ -86,117 +53,6 @@ fn string_to_file_name(s: &String) -> [u8;30] {
     return ans;
 }
 
-
-
-// Following are representations of disk directory structures
-// these are mostly fixed length structures where the DiskStruct
-// trait can be automatically derived.
-
-// Note on large volumes:
-// We can extend VTOC.bitmap to 200 bytes, allowing for VTOC.tracks = 50.
-// We can extend VTOC.sectors to 32, because the bitmap allocates 32 bits per track.
-// This gives 50*32*256 = 409600, i.e., a 400K disk.
-// Large DOS volumes were supported on 800K floppies and hard drives by a few third parties.
-
-#[derive(DiskStruct)]
-struct VTOC {
-    pad1: u8,
-    track1: u8,
-    sector1: u8,
-    version: u8,
-    pad2: [u8;2],
-    vol: u8,
-    pad3: [u8;32],
-    max_pairs: u8,
-    pad4: [u8;8],
-    last_track: u8,
-    last_direction: u8,
-    pad5: [u8;2],
-    tracks: u8,
-    sectors: u8,
-    bytes: [u8;2],
-    bitmap: [u8;140]
-}
-
-#[derive(DiskStruct)]
-struct TrackSectorList {
-    pad1: u8,
-    next_track: u8,
-    next_sector: u8,
-    pad2: [u8;2],
-    sector_base: [u8;2],
-    pad3: [u8;5],
-    pairs: [u8;244]
-}
-
-#[derive(DiskStruct)]
-struct DirectoryEntry {
-    tsl_track: u8,
-    tsl_sector: u8,
-    file_type: u8,
-    name: [u8;30],
-    sectors: [u8;2]
-}
-
-struct DirectorySector {
-    pad1: u8,
-    next_track: u8,
-    next_sector: u8,
-    pad2: [u8;8],
-    entries: [DirectoryEntry;7]
-}
-
-impl DiskStruct for DirectorySector {
-    fn new() -> Self {
-        Self {
-            pad1: 0,
-            next_track: 0,
-            next_sector: 0,
-            pad2: [0;8],
-            entries: [
-                DirectoryEntry::new(),
-                DirectoryEntry::new(),
-                DirectoryEntry::new(),
-                DirectoryEntry::new(),
-                DirectoryEntry::new(),
-                DirectoryEntry::new(),
-                DirectoryEntry::new()
-            ]
-        }
-    }
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut ans: Vec<u8> = Vec::new();
-        ans.push(self.pad1);
-        ans.push(self.next_track);
-        ans.push(self.next_sector);
-        ans.append(&mut self.pad2.to_vec());
-        for i in 0..7 {
-            ans.append(&mut self.entries[i].to_bytes());
-        }
-        return ans;
-    }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
-        self.pad1 = bytes[0];
-        self.next_track = bytes[1];
-        self.next_sector = bytes[2];
-        for i in 0..8 {
-            self.pad2[i] = bytes[i+3];
-        }
-        let mut offset = 0;
-        for i in 0..7 {
-            self.entries[i].update_from_bytes(&bytes[11+offset..11+offset+self.entries[i].len()].to_vec());
-            offset += self.entries[i].len();
-        }
-    }
-    fn from_bytes(bytes: &Vec<u8>) -> Self {
-        let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
-    }
-    fn len(&self) -> usize {
-        return 256;
-    }
-}
 
 /// The primary interface for disk operations.
 /// At present only BASIC-like commands (SAVE, BLOAD, etc.) are exposed.
@@ -235,6 +91,12 @@ impl Disk
         self.vtoc.bitmap[i+2] = slice[2];
         self.vtoc.bitmap[i+3] = slice[3];
         // save it in the actual VTOC image
+        let vtoc_bytes = self.vtoc.to_bytes();
+        for i in 0..vtoc_bytes.len() {
+            self.tracks[17][0][i] = vtoc_bytes[i];
+        }
+    }
+    fn update_last_track(&mut self,track: u8) {
         // The last_direction and last_track fields are not discussed in DOS manual.
         // This way of setting them is a guess based on emulator outputs.
         // If/how they are used in the free sector search is yet another question.
@@ -246,6 +108,7 @@ impl Disk
             self.vtoc.last_direction = 1;
             self.vtoc.last_track = track;
         }
+        // save it in the actual VTOC image
         let vtoc_bytes = self.vtoc.to_bytes();
         for i in 0..vtoc_bytes.len() {
             self.tracks[17][0][i] = vtoc_bytes[i];
@@ -297,12 +160,14 @@ impl Disk
         self.allocate_sector(track,sector);
     }
     /// Create a standard DOS 3.3 small volume (140K)
-    pub fn format(&mut self,vol:u8,bootable:bool) {
+    pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
         // First write the Volume Table of Contents (VTOC)
+        assert!(vol>0 && vol<255);
+        assert!(last_track_written>0 && last_track_written<35);
 
         self.vtoc.pad1 = 4;
         self.vtoc.vol = vol;
-        self.vtoc.last_track = 18;
+        self.vtoc.last_track = last_track_written;
         self.vtoc.last_direction = 1;
         self.vtoc.max_pairs = 0x7a;
         self.vtoc.track1 = 17;
@@ -365,7 +230,6 @@ impl Disk
         // Search algorithm outlined in DOS manual seems inconsistent with actual results from emulators.
         // This algorithm is a guess at how DOS is doing it, based on emulator outputs.
         // Fortunately we don't have to emulate this exactly for the disk to work.
-        assert!(self.vtoc.last_track!=self.vtoc.track1);
         let tvtoc: u8 = self.vtoc.track1;
         let tstart = match self.vtoc.last_track {
             x if x>=self.vtoc.tracks => tvtoc-1,
@@ -373,7 +237,6 @@ impl Disk
             x if x<tvtoc && prefer_jump => x-1,
             x => x
         };
-        assert!(tstart!=self.vtoc.track1);
         let tend = self.vtoc.tracks;
         // build search order
         let search_tracks: Vec<u8>;
@@ -400,10 +263,11 @@ impl Disk
         }
         return [0,0];
     }
+    /// Return a tuple with ([track,sector],entry index)
     fn get_next_directory_slot(&self) -> ([u8;2],u8) {
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
-        for _try in 0..100 {
+        for _try in 0..types::MAX_DIRECTORY_REPS {
             self.panic_if_ts_bad(ts[0], ts[1]);
             self.read_sector(&mut buf, ts, 0);
             let dir = DirectorySector::from_bytes(&buf);
@@ -419,11 +283,12 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    fn get_tslist_sector(&self,name: &String) -> [u8;2] {
+    /// Scan the directory sectors to find the tslist of the named file
+    fn get_tslist_sector(&self,name: &str) -> [u8;2] {
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
-        for _try in 0..100 {
+        for _try in 0..types::MAX_DIRECTORY_REPS {
             self.panic_if_ts_bad(ts[0], ts[1]);
             self.read_sector(&mut buf, ts, 0);
             let dir = DirectorySector::from_bytes(&buf);
@@ -439,103 +304,140 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    fn sequential_read(&self,name: &String) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    /// Read any file into the sparse file format.  Use `SparseData.sequence()` to flatten the result
+    /// when it is expected to be sequential.
+    fn read_file(&self,name: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
         // resulting vector will be padded modulo 256
         let mut next_tslist = self.get_tslist_sector(name);
         if next_tslist==[0,0] {
-            return Err(Box::new(DOS33Error::FileNotFound));
+            return Err(Box::new(Error::FileNotFound));
         }
-        let mut ans: Vec<u8> = Vec::new();
+        let mut ans = disk_base::SparseData::new(256);
         let mut buf = vec![0;256];
-        // loop over up to 10 track sector list sectors, if more something likely wrong
-        for _try in 0..10 {
+        // loop up to a maximum, if it is reached panic
+        for _try in 0..types::MAX_TSLIST_REPS {
+            let mut count: usize = 0;
             self.read_sector(&mut buf,next_tslist,0);
             let tslist = TrackSectorList::from_bytes(&buf);
             for p in 0..self.vtoc.max_pairs as usize {
                 let next = [tslist.pairs[p*2],tslist.pairs[p*2+1]];
-                if next[0]==0 {
-                    break;
+                if next[0]>0 {
+                    let mut full_buf: Vec<u8> = vec![0;256];
+                    self.read_sector(&mut full_buf,next,0);
+                    ans.chunks.insert(count,full_buf);
                 }
-                let mut full_buf: Vec<u8> = vec![0;256];
-                self.read_sector(&mut full_buf,next,0);
-                ans.append(&mut full_buf);
+                count += 1;
             }
             if tslist.next_track==0 {
                 return Ok(ans);
             }
             next_tslist = [tslist.next_track,tslist.next_sector];
         }
-        panic!("the disk image directory seems to be damaged");
+        panic!("the disk image track sector list seems to be damaged");
     }
-    fn sequential_write(&mut self,name: &String, file_bytes: &Vec<u8>, type_code: u8) -> Result<usize,Box<dyn std::error::Error>> {
+    /// Write any sparse or sequential file.  Use `SparseData::desequence` to put sequential data
+    /// into the sparse file format, with no loss of generality.
+    /// The creator of `SparseData` must ensure that the first sector is allocated.
+    /// Unlike DOS, nothing is written unless there is enough space for all the data.
+    fn write_file(&mut self,name: &str, dat: &disk_base::SparseData, type_code: u8) -> Result<usize,Box<dyn std::error::Error>> {
         let named_ts = self.get_tslist_sector(name);
         if named_ts==[0,0] {
             // this is a new file
-            let bytes = u16::from_le_bytes(self.vtoc.bytes) as usize;
-            let data_sectors = 1 + file_bytes.len()/bytes;
-            let tslist_sectors = 1 + data_sectors/self.vtoc.max_pairs as usize;
+            // unlike DOS, we do not write anything unless there is room
+            assert!(dat.chunks.len()>0);
+            let data_sectors = dat.chunks.len();
+            let tslist_sectors = 1 + (dat.end()-1)/self.vtoc.max_pairs as usize;
             if data_sectors + tslist_sectors > self.num_free_sectors() {
-                return Err(Box::new(DOS33Error::DiskFull));
+                return Err(Box::new(Error::DiskFull));
             }
 
             // we are doing this
-            let mut offset = 0;
             let mut sec_base = 0; // in units of pairs
             let mut p = 0; // pairs written in current tslist sector
-            let mut tslist: Vec<TrackSectorList> = Vec::new();
-            let tslist_start = self.get_next_free_sector(true);
-            self.allocate_sector(tslist_start[0], tslist_start[1]); // preallocate it without writing
-
-            // write the data while building TS list data and preallocating its spillover sectors
-            tslist.push(TrackSectorList::new());
-            for s in 0..data_sectors {
-                let next = self.get_next_free_sector(false);
-                let tssec = tslist.last_mut().unwrap();
-                tssec.sector_base = u16::to_le_bytes(sec_base as u16); // redundancy here
-                tssec.pairs[p*2] = next[0];
-                tssec.pairs[p*2+1] = next[1];
-                self.write_sector(&file_bytes,next,offset);
-                p += 1;
-                if p==self.vtoc.max_pairs as usize && s+1<data_sectors {
-                    // tslist spilled over to another sector
-                    let next_tslist_ts = self.get_next_free_sector(false);
-                    self.allocate_sector(next_tslist_ts[0], next_tslist_ts[1]); // preallocate it without writing
-                    tssec.next_track = next_tslist_ts[0];
-                    tssec.next_sector = next_tslist_ts[1];
-                    tslist.push(TrackSectorList::new());
-                    sec_base += self.vtoc.max_pairs as usize;
-                    p = 0;
-                }
-                offset += bytes;
-            }
-            
-            // write the track sector list
-            // we manipulate structures first, then write all at once
-            assert!(tslist.len()==tslist_sectors);
-            for s in 0..tslist_sectors {
-                let ts = match s {
-                    x if x==0 => tslist_start,
-                    _ => [tslist[s-1].next_track,tslist[s-1].next_sector]
-                };
-                self.write_sector(&tslist[s].to_bytes(), ts, 0);
-            }
+            let mut tslist = TrackSectorList::new();
+            let mut tslist_ts = self.get_next_free_sector(true);
+            self.allocate_sector(tslist_ts[0],tslist_ts[1]); // reserve this sector
+            self.update_last_track(tslist_ts[0]);
 
             // write the directory entry
             let (ts,e) = self.get_next_directory_slot();
             let mut dir_buf = vec![0;256];
             self.read_sector(&mut dir_buf, ts, 0);
             let mut dir = DirectorySector::from_bytes(&dir_buf);
-            dir.entries[e as usize].tsl_track = tslist_start[0];
-            dir.entries[e as usize].tsl_sector = tslist_start[1];
+            dir.entries[e as usize].tsl_track = tslist_ts[0];
+            dir.entries[e as usize].tsl_sector = tslist_ts[1];
             dir.entries[e as usize].file_type = type_code;
             dir.entries[e as usize].name = string_to_file_name(name);
             dir.entries[e as usize].sectors = [tslist_sectors as u8 + data_sectors as u8 ,0];
             self.write_sector(&dir.to_bytes(), ts, 0);
 
+            // write the data and TS list as we go
+            for s in 0..dat.end() {
+                if let Some(chunk) = dat.chunks.get(&s) {
+                    let data_ts = self.get_next_free_sector(false);
+                    tslist.pairs[p*2] = data_ts[0];
+                    tslist.pairs[p*2+1] = data_ts[1];
+                    self.write_sector(&tslist.to_bytes(), tslist_ts, 0);
+                    self.write_sector(chunk,data_ts,0);
+                    self.update_last_track(data_ts[0]);
+                } else {
+                    tslist.pairs[p*2] = 0;
+                    tslist.pairs[p*2+1] = 0;
+                    self.write_sector(&tslist.to_bytes(), tslist_ts, 0);
+                }
+                p += 1;
+                if p==self.vtoc.max_pairs as usize  && s+1!=dat.end() {
+                    // tslist spilled over to another sector
+                    let next_tslist_ts = self.get_next_free_sector(false);
+                    tslist.next_track = next_tslist_ts[0];
+                    tslist.next_sector = next_tslist_ts[1];
+                    self.write_sector(&tslist.to_bytes(),tslist_ts,0);
+                    self.update_last_track(tslist_ts[0]);
+                    tslist_ts = next_tslist_ts;
+                    sec_base += self.vtoc.max_pairs as usize;
+                    tslist = TrackSectorList::new();
+                    tslist.sector_base = u16::to_le_bytes(sec_base as u16);
+                    p = 0;
+                }
+            }
+            
             return Ok(data_sectors + tslist_sectors);
         } else {
-            panic!("file exists, overwriting is not supported");
+            return Err(Box::new(Error::WriteProtected));
         }
+    }
+    /// modify a file entry, optionally lock, unlock, and/or rename; attempt to rename already locked file will fail.
+    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>) -> Result<(),Box<dyn std::error::Error>> {
+        let mut buf: Vec<u8> = vec![0;256];
+        let fname = string_to_file_name(name);
+        let mut dir_ts = [self.vtoc.track1,self.vtoc.sector1];
+        for _try in 0..types::MAX_DIRECTORY_REPS {
+            self.panic_if_ts_bad(dir_ts[0], dir_ts[1]);
+            self.read_sector(&mut buf, dir_ts, 0);
+            let mut dir = DirectorySector::from_bytes(&buf);
+            for entry in dir.entries.as_mut() {
+                if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
+                    if entry.file_type > 127 && maybe_new_name!=None {
+                        return Err(Box::new(Error::WriteProtected));
+                    }
+                    entry.file_type = match maybe_lock {
+                        Some(true) => entry.file_type | 0x80,
+                        Some(false) => entry.file_type & 0x7f,
+                        None => entry.file_type
+                    };
+                    if let Some(new_name) = maybe_new_name {
+                        entry.name = string_to_file_name(new_name);
+                    }
+                    self.write_sector(&dir.to_bytes(),dir_ts,0);
+                    return Ok(());
+                }
+            }
+            dir_ts = [dir.next_track,dir.next_sector];
+            if dir_ts == [0,0] {
+                return Err(Box::new(Error::FileNotFound));
+            }
+        }
+        panic!("the disk image directory seems to be damaged");
     }
     /// Test the image for compatibility and return Some(disk) or None.
     pub fn from_img(img: &Vec<u8>) -> Option<Self> {
@@ -562,14 +464,14 @@ impl Disk
 }
 
 impl disk_base::A2Disk for Disk {
-    fn catalog_to_stdout(&self, path: &String) {
+    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
         println!();
         println!("DISK VOLUME {}",self.vtoc.vol);
         println!();
-        for _try in 0..100 {
+        for _try in 0..types::MAX_DIRECTORY_REPS {
             self.panic_if_ts_bad(ts[0], ts[1]);
             self.read_sector(&mut buf, ts, 0);
             let dir = DirectorySector::from_bytes(&buf);
@@ -591,62 +493,122 @@ impl disk_base::A2Disk for Disk {
             ts = [dir.next_track,dir.next_sector];
             if ts == [0,0] {
                 println!();
-                return;
+                return Ok(());
+            }
+        }
+        eprintln!("the disk image directory seems to be damaged");
+        return Err(Box::new(Error::IOError));
+    }
+    fn create(&mut self,_path: &str,_time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
+        return Err(Box::new(Error::SyntaxError));
+    }
+    fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        let mut buf: Vec<u8> = vec![0;256];
+        let fname = string_to_file_name(name);
+        let mut dir_ts = [self.vtoc.track1,self.vtoc.sector1];
+        for _try in 0..types::MAX_DIRECTORY_REPS {
+            self.panic_if_ts_bad(dir_ts[0], dir_ts[1]);
+            self.read_sector(&mut buf, dir_ts, 0);
+            let mut dir = DirectorySector::from_bytes(&buf);
+            for entry in dir.entries.as_mut() {
+                if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
+                    if entry.file_type > 127 {
+                        return Err(Box::new(Error::WriteProtected));
+                    }
+                    let mut tslist_ts = [entry.tsl_track,entry.tsl_sector];
+                    for _try2 in 0..types::MAX_TSLIST_REPS {
+                        self.read_sector(&mut buf, tslist_ts, 0);
+                        let tslist = TrackSectorList::from_bytes(&buf);
+                        for p in 0..self.vtoc.max_pairs as usize {
+                            if tslist.pairs[p*2]>0 && tslist.pairs[p*2]<255 {
+                                self.deallocate_sector(tslist.pairs[p*2], tslist.pairs[p*2+1]);
+                            }
+                        }
+                        self.deallocate_sector(tslist_ts[0], tslist_ts[1]);
+                        tslist_ts = [tslist.next_track,tslist.next_sector];
+                        if tslist_ts==[0,0] {
+                            entry.name[entry.name.len()-1] = entry.tsl_track;
+                            entry.tsl_track = 255;
+                            self.write_sector(&dir.to_bytes(),dir_ts,0);
+                            return Ok(());
+                        }
+                    }
+                    panic!("the disk image track sector list seems to be damaged");
+                }
+            }
+            dir_ts = [dir.next_track,dir.next_sector];
+            if dir_ts == [0,0] {
+                return Err(Box::new(Error::FileNotFound));
             }
         }
         panic!("the disk image directory seems to be damaged");
     }
-    fn create(&mut self,path: &String,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
-        return Err(Box::new(DOS33Error::IOError));
+    fn lock(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        return self.modify(name,Some(true),None);
     }
-    fn bload(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        match self.sequential_read(name) {
+    fn unlock(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        return self.modify(name,Some(false),None);
+    }
+    fn rename(&mut self,old_name: &str,new_name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        return self.modify(old_name,None,Some(new_name));
+    }
+    fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match self.read_file(name) {
             Ok(v) => {
-                let ans = types::BinaryData::from_bytes(&v);
+                let ans = types::BinaryData::from_bytes(&v.sequence());
                 Ok((u16::from_le_bytes(ans.start),ans.data))
             },
             Err(e) => Err(e)
         }
     }
-    fn bsave(&mut self,name: &String, dat: &Vec<u8>,start_addr: u16) -> Result<usize,Box<dyn std::error::Error>> {
+    fn bsave(&mut self,name: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::BinaryData::pack(&dat,start_addr);
-        return self.sequential_write(name, &file.to_bytes(), Type::Binary as u8);
+        let padded = match trailing {
+            Some(v) => [file.to_bytes(),v.clone()].concat(),
+            None => file.to_bytes()
+        };
+        return self.write_file(name, &disk_base::SparseData::desequence(256, &padded), Type::Binary as u8);
     }
-    fn load(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        match self.sequential_read(name) {
-            Ok(v) => Ok((0,types::TokenizedProgram::from_bytes(&v).program)),
+    fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match self.read_file(name) {
+            Ok(v) => Ok((0,types::TokenizedProgram::from_bytes(&v.sequence()).program)),
             Err(e) => Err(e)
         }
     }
-    fn save(&mut self,name: &String, dat: &Vec<u8>, typ: disk_base::ItemType) -> Result<usize,Box<dyn std::error::Error>> {
-        let file = types::TokenizedProgram::pack(&dat);
+    fn save(&mut self,name: &str, dat: &Vec<u8>, typ: disk_base::ItemType, trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+        let file = types::TokenizedProgram::pack(&dat,trailing);
         let fs_type = match typ {
             disk_base::ItemType::ApplesoftTokens => Type::Applesoft,
             disk_base::ItemType::IntegerTokens => Type::Integer,
             _ => panic!("attempt to SAVE non-BASIC data type")
         };
-        return self.sequential_write(name, &file.to_bytes(), fs_type as u8);
+        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()), fs_type as u8);
     }
-    fn read_text(&self,name: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        match self.sequential_read(name) {
+    fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match self.read_file(name) {
             Ok(v) => {
-                Ok((0,types::SequentialText::from_bytes(&v).text))
+                Ok((0,types::SequentialText::from_bytes(&v.sequence()).text))
             },
             Err(e) => Err(e)
         }
     }
-    fn write_text(&mut self,name: &String, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::SequentialText::pack(&dat);
-        return self.sequential_write(name, &file.to_bytes(), Type::Text as u8);
+        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()), Type::Text as u8);
     }
-    fn write_records(&mut self,name: &String, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
-        return Ok(0);
+    fn write_records(&mut self,name: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+        let encoder = Encoder::new(Some(0x8d));
+        if let Ok(sparse_data) = records.to_sparse_data(256,false,encoder) {
+            return self.write_file(name, &sparse_data,Type::Text as u8);
+        } else {
+            Err(Box::new(Error::SyntaxError))
+        }
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::pack(&dat);
         return file.to_string();
     }
-    fn encode_text(&self,s: &String) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
@@ -654,7 +616,8 @@ impl disk_base::A2Disk for Disk {
         }
     }
     fn standardize(&mut self,ref_con: u16) {
-        // nothing to do
+        self.vtoc.pad1 = 0;
+        self.write_sector(&self.vtoc.to_bytes(),[17,0],0);
     }
     fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();

@@ -160,6 +160,7 @@ impl Disk {
         return volume_dir.header;
     }
     /// Return the correct trait object assuming this block is a directory block.
+    /// May return a key block or an entry block.
     fn get_directory(&self,iblock: usize) -> Box<dyn Directory> {
         let mut buf: Vec<u8> = vec![0;512];
         self.read_block(&mut buf,iblock,0);
@@ -170,16 +171,29 @@ impl Disk {
             (false,false) => Box::new(EntryBlock::from_bytes(&buf))
         }
     }
+    /// Find the key block assuming this block is a directory block, and return the
+    /// block pointer and corresponding trait object in a tuple.
+    fn get_key_directory(&self,ptr: u16) -> (u16,Box<dyn Directory>) {
+        let mut curr = ptr;
+        for _try in 0..100 {
+            let test_dir = self.get_directory(curr as usize);
+            if test_dir.prev()==0 {
+                return (curr,test_dir);
+            }
+            curr = test_dir.prev();
+        }
+        panic!("too many blocks for this directory, disk likely damaged");
+    }
     /// Given an entry location get the entry from disk
     fn read_entry(&self,loc: &EntryLocation) -> Entry {
         let dir = self.get_directory(loc.block as usize);
-        return dir.entry_copies()[loc.idx0];
+        return dir.get_entry(loc);
     }
     /// Given a modified entry and location, write the change to disk.
     /// Any other unsaved changes in the block are lost.  Maybe this should go away.
     fn write_entry(&mut self,loc: &EntryLocation,entry: &Entry) {
         let mut dir = self.get_directory(loc.block as usize);
-        dir.set_entry(loc.idx0,*entry);
+        dir.set_entry(loc,*entry);
         let buf = dir.to_bytes();
         self.write_block(&buf,loc.block as usize,0);
     }
@@ -207,7 +221,7 @@ impl Disk {
                     dir = Box::new(EntryBlock::new());
                     dir.set_links(Some(curr),Some(0));
                     self.write_block(&dir.to_bytes(),avail as usize,0);
-                    return Ok(EntryLocation { block: avail, idx0: 0, idxv: 1});
+                    return Ok(EntryLocation { block: avail, idx: 1});
                 } else {
                     return Err(Error::DiskFull);
                 }
@@ -219,23 +233,20 @@ impl Disk {
     /// Get the next available entry location.
     /// Will try to expand the directory if necessary.
     fn get_available_entry(&mut self, key_block: u16) -> Result<EntryLocation,Error> {
-        let key = self.get_directory(key_block as usize);
-        let mut buf: Vec<u8> = vec![0;512];
-        let mut curr: EntryLocation = EntryLocation {block: key_block, idx0: 0, idxv: 2};
-        let mut next = key.next();
-        let mut entries = key.entry_copies();
+        let mut curr = key_block;
         for _try in 0..100 {
-            for entry in &entries {
-                if !entry.is_active() {
-                    return Ok(curr);
+            let mut dir = self.get_directory(curr as usize);
+            let mut locs = dir.entry_locations(curr);
+            for loc in locs {
+                if !dir.get_entry(&loc).is_active() {
+                    return Ok(loc);
                 }
-                curr.idx0 += 1;
-                curr.idxv += 1;
             }
-            if next==0 {
-                if let Some(mut parent_loc) = key.parent_entry_loc() {
+            curr = dir.next();
+            if curr==0 {
+                dir = self.get_directory(key_block as usize);
+                if let Some(mut parent_loc) = dir.parent_entry_loc() {
                     let parent_dir = self.get_directory(parent_loc.block as usize);
-                    parent_loc.idx0 = parent_loc.idxv - parent_dir.idx_offset();
                     return match self.expand_directory(&parent_loc) {
                         Ok(loc) => Ok(loc),
                         Err(e) => Err(e)
@@ -244,53 +255,32 @@ impl Disk {
                     // this is the volume directory which we cannot expand
                     return Err(Error::DirectoryFull);
                 }
-            } else {
-                self.read_block(&mut buf, next as usize, 0);
-                let dir = EntryBlock::from_bytes(&buf);
-                curr.block = next;
-                curr.idx0 = 0;
-                curr.idxv = 1;
-                next = dir.next();
-                entries = dir.entry_copies();
             }
         }
         panic!("too many blocks for this directory, disk likely damaged");
     }
     // Find specific entry in directory with the given key block
     fn search_entries(&self,stype: &Vec<StorageType>,name: &String,key_block: u16) -> Option<EntryLocation> {
-        let key = self.get_directory(key_block as usize);
-        let file_count = key.file_count();
-        let mut curr = EntryLocation {block: key_block,idx0: 0,idxv: 2};
-        let mut next = key.next();
-        let mut num_found = 0;
-        let mut entries = key.entry_copies();
-        while num_found < file_count {
-            for idx in 0..entries.len() {
-                let entry = &entries[idx];
-                if entry.is_active() {
-                    num_found += 1;
-                    if is_file_match::<Entry>(stype,name,entry) {
-                        return Some(curr);
-                    }
+        let mut curr = key_block;
+        for _try in 0..100 {
+            let mut dir = self.get_directory(curr as usize);
+            let mut locs = dir.entry_locations(curr);
+            for loc in locs {
+                let entry = dir.get_entry(&loc);
+                if entry.is_active() && is_file_match::<Entry>(stype,name,&entry) {
+                    return Some(loc);
                 }
-                curr.idx0 += 1;
-                curr.idxv += 1;
             }
-            if next==0 {
+            curr = dir.next();
+            if curr==0 {
                 return None;
             }
-            let dir = self.get_directory(next as usize);
-            curr.block = next;
-            curr.idx0 = 0;
-            curr.idxv = 1;
-            next = dir.next();
-            entries = dir.entry_copies();
         }
-        return None;
+        panic!("too many blocks for this directory, disk likely damaged");
     }
     /// put path as [volume,subdir,subdir,...,last] where last could be an empty string,
     /// which indicates this is a directory.  If last is not empty, it could be either directory or file.
-    fn normalize_path(&self,path: &String) -> Vec<String> {
+    fn normalize_path(&self,path: &str) -> Vec<String> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         let prefix = volume_dir.name();
         let mut path_nodes: Vec<String> = path.split("/").map(|s| s.to_string().to_uppercase()).collect();
@@ -301,7 +291,7 @@ impl Disk {
         }
         return path_nodes;
     }
-    fn search_volume(&self,file_types: &Vec<StorageType>,path: &String) -> Result<EntryLocation,Error> {
+    fn search_volume(&self,file_types: &Vec<StorageType>,path: &str) -> Result<EntryLocation,Error> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         let path_nodes = self.normalize_path(path);
         if &path_nodes[0]!=&volume_dir.name() {
@@ -336,11 +326,11 @@ impl Disk {
         }
         return Err(Error::PathNotFound);
     }
-    fn find_file(&self,path: &String) -> Result<EntryLocation,Error> {
+    fn find_file(&self,path: &str) -> Result<EntryLocation,Error> {
         return self.search_volume(&vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree],path);
     }
-    /// Get the directory as a tuple (block ptr,Directory trait object)
-    fn get_dir_key_block(&self,path: &String) -> Result<u16,Error> {
+    /// Find the directory and return the key block pointer
+    fn find_dir_key_block(&self,path: &str) -> Result<u16,Error> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         if path=="/" || path=="" || path==&("/".to_string()+&volume_dir.name()) {
             return Ok(VOL_KEY_BLOCK);
@@ -351,7 +341,8 @@ impl Disk {
         }
         return Err(Error::PathNotFound);
     }
-    fn process_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,dat: &mut disk_base::SparseData,count: &mut usize,eof: &mut usize) {
+    /// Read the data referenced by a single index block
+    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,dat: &mut disk_base::SparseData,count: &mut usize,eof: &mut usize) {
         self.read_block(buf,index_ptr as usize,0);
         let index_block = buf.clone();
         for idx in 0..256 {
@@ -366,6 +357,43 @@ impl Disk {
             }
             *count += 1;
             *eof += bytes;
+        }
+    }
+    /// Deallocate the index block and all data blocks referenced by it
+    fn deallocate_index_block(&mut self,index_ptr: u16,buf: &mut Vec<u8>) {
+        self.read_block(buf,index_ptr as usize,0);
+        let index_block = buf.clone();
+        for idx in 0..256 {
+            let ptr = u16::from_le_bytes([index_block[idx],index_block[idx+256]]);
+            if ptr>0 {
+                self.deallocate_block(ptr as usize);
+            }
+        }
+        self.deallocate_block(index_ptr as usize);
+    }
+    /// Deallocate all the blocks associated with any entry
+    fn deallocate_file_blocks(&mut self,entry: &Entry) {
+        let mut buf: Vec<u8> = vec![0;512];
+        let master_ptr = entry.get_ptr();
+        match entry.storage_type() {
+            StorageType::Seedling => {
+                self.deallocate_block(master_ptr as usize);
+            },
+            StorageType::Sapling => {
+                self.deallocate_index_block(master_ptr, &mut buf);
+            },
+            StorageType::Tree => {
+                self.read_block(&mut buf,master_ptr as usize,0);
+                let master_block = buf.clone();
+                for idx in 0..256 {
+                    let ptr = u16::from_le_bytes([master_block[idx],master_block[idx+256]]);
+                    if ptr>0 {
+                        self.deallocate_index_block(ptr, &mut buf);
+                    }
+                }
+                self.deallocate_block(master_ptr as usize);
+            }
+            _ => panic!("cannot read file of this type")
         }
     }
     /// Read any file into the sparse file format.  Use `SparseData.sequence()` to flatten the result
@@ -383,7 +411,7 @@ impl Disk {
                 return dat;
             },
             StorageType::Sapling => {
-                self.process_index_block(&entry, master_ptr, &mut buf, &mut dat, &mut count, &mut eof);
+                self.read_index_block(&entry, master_ptr, &mut buf, &mut dat, &mut count, &mut eof);
                 return dat;
             },
             StorageType::Tree => {
@@ -392,7 +420,7 @@ impl Disk {
                 for idx in 0..256 {
                     let ptr = u16::from_le_bytes([master_block[idx],master_block[idx+256]]);
                     if ptr>0 {
-                        self.process_index_block(entry, ptr, &mut buf, &mut dat, &mut count, &mut eof);
+                        self.read_index_block(entry, ptr, &mut buf, &mut dat, &mut count, &mut eof);
                     } else {
                         count += 256;
                         eof += 256*512;
@@ -404,7 +432,7 @@ impl Disk {
         }
     }
     /// Prepare a directory for a new file or subdirectory.  This will modify the disk only if the directory needs to grow.
-    fn prepare_to_write(&mut self,path: &String,types: &Vec<StorageType>) -> Result<(String,u16,EntryLocation,u16),Error> {
+    fn prepare_to_write(&mut self,path: &str,types: &Vec<StorageType>) -> Result<(String,u16,EntryLocation,u16),Error> {
         // following builds the subdirectory path
         let mut path_nodes = self.normalize_path(path);
         if path_nodes[path_nodes.len()-1].len()==0 {
@@ -418,7 +446,7 @@ impl Disk {
         }
         let subdir_path: String = path_nodes.iter().map(|s| "/".to_string() + s).collect::<Vec<String>>().concat();
         // find the parent key block, entry location, and new data block (or new key block if directory)
-        if let Ok(key_block) = self.get_dir_key_block(&subdir_path) {
+        if let Ok(key_block) = self.find_dir_key_block(&subdir_path) {
             if let Some(_loc) = self.search_entries(types, &name, key_block) {
                 return Err(Error::DuplicateFilename);
             }
@@ -436,10 +464,10 @@ impl Disk {
             return Err(Error::PathNotFound);
         }
     }
-    /// Write any sparse or sequential file.  Use `SparseFileData::desequence` to put sequential data
+    /// Write any sparse or sequential file.  Use `SparseData::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
     /// The entry must already exist and point to the next available block.
-    /// The creator of `SparseFileData` must ensure that the first block is allocated.
+    /// The creator of `SparseData` must ensure that the first block is allocated.
     /// This writes blocks more often than necessary, would be inadequate for an actual disk.
     fn write_file(&mut self,loc: EntryLocation,dat: &disk_base::SparseData) -> Result<usize,Error> {
         let mut storage = StorageType::Seedling;
@@ -451,7 +479,7 @@ impl Disk {
         let mut index_count: u16 = 0;
         let mut eof: usize = 0;
         let dir = self.get_directory(loc.block as usize);
-        let mut entry = dir.entry_copies()[loc.idx0];
+        let mut entry = dir.get_entry(&loc);
 
         for count in 0..dat.end() {
 
@@ -592,8 +620,33 @@ impl Disk {
         }
         return Ok(eof);
     }
+    /// modify a file entry, optionally lock, unlock, and/or rename; attempt to rename already locked file will fail.
+    fn modify(&mut self,loc: &EntryLocation,maybe_lock: Option<bool>,maybe_new_name: Option<&str>) -> Result<(),Box<dyn std::error::Error>> {
+        let dir = self.get_directory(loc.block as usize);
+        let mut entry = dir.get_entry(&loc);
+        if !entry.get_access(Access::Rename) && maybe_new_name!=None {
+            return Err(Box::new(Error::WriteProtected));
+        }
+        if let Some(lock) = maybe_lock {
+            if lock {
+                entry.set_access(Access::Destroy,false);
+                entry.set_access(Access::Rename,false);
+                entry.set_access(Access::Write,false);
+            } else {
+                entry.set_access(Access::Read,true);
+                entry.set_access(Access::Destroy,true);
+                entry.set_access(Access::Rename,true);
+                entry.set_access(Access::Write,true);
+            }
+        }
+        if let Some(new_name) = maybe_new_name {
+            entry.rename(new_name);
+        }
+        self.write_entry(loc, &entry);
+        return Ok(());
+    }
     /// Return a disk object if the image data verifies as DOS ordered,
-    /// otherwise return IOError.  N.b. `.dsk` images are often DOS
+    /// otherwise return None.  N.b. `.dsk` images are often DOS
     /// ordered even if the image contains a ProDOS volume.
     /// Only 280 block (5.25 inch floppy) images are accepted.
     pub fn from_do_img(dimg: &Vec<u8>) -> Option<Self> {
@@ -616,7 +669,7 @@ impl Disk {
         return None;
     }
     /// Return a disk object if the image data verifies as ProDOS ordered,
-    /// otherwise return IOError.  The image is allowed to be any integral
+    /// otherwise return None.  The image is allowed to be any integral
     /// number of blocks up to the maximum of 65535.
     pub fn from_po_img(dimg: &Vec<u8>) -> Option<Self> {
         let block_count = dimg.len()/512;
@@ -638,8 +691,8 @@ impl Disk {
 }
 
 impl disk_base::A2Disk for Disk {
-    fn catalog_to_stdout(&self, path: &String) {
-        match self.get_dir_key_block(path) {
+    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
+        match self.find_dir_key_block(path) {
             Ok(b) => {
                 let dir = self.get_directory(b as usize);
                 println!();
@@ -653,39 +706,24 @@ impl disk_base::A2Disk for Disk {
                     "NAME".bold(),"TYPE".bold(),"BLOCKS".bold(),
                     "MODIFIED".bold(),"CREATED".bold(),"ENDFILE".bold(),"SUBTYPE".bold());
                 println!();
-                for entry in dir.entry_copies() {
+                for loc in dir.entry_locations(b) {
+                    let entry = dir.get_entry(&loc);
                     if entry.is_active() {
                         println!("{}",entry);
                     }
                 }
-                let mut next = dir.next();
-                let mut buf: Vec<u8> = vec![0;512];
-                while next>0 {
-                    self.read_block(&mut buf,next as usize,0);
-                    let next_dir = EntryBlock::from_bytes(&buf);
-                    for entry in next_dir.entry_copies() {
-                        if entry.is_active() {
-                            println!("{}",entry);
-                        }
-                    }
-                    next = next_dir.next();
-                }
                 println!();
                 let total = self.blocks.len();
-                let mut free = 0;
-                for i in 0..total {
-                    if self.is_block_free(i) {
-                        free += 1;
-                    }
-                }
+                let free = self.num_free_blocks() as usize;
                 let used = total-free;
                 println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,total);
                 println!();
+                Ok(())
             }
-            Err(e) => panic!("{}",e)
+            Err(e) => Err(Box::new(e))
         }
     }
-    fn create(&mut self,path: &String,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
+    fn create(&mut self,path: &str,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
         match self.prepare_to_write(path, &vec![StorageType::SubDirEntry]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -699,14 +737,79 @@ impl disk_base::A2Disk for Disk {
                 self.write_entry(&loc,&entry);
                 // write the new directory's key block
                 let mut subdir = KeyBlock::<SubDirHeader>::new();
-                subdir.header.create(&name,loc.block,loc.idxv as u8,time);
+                subdir.header.create(&name,loc.block,loc.idx as u8,time);
                 self.write_block(&subdir.to_bytes(),new_block as usize,0);
                 Ok(())
             },
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn bload(&self,path: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn delete(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
+        if let Ok(loc) = self.find_file(path) {
+            let entry = self.read_entry(&loc);
+            if !entry.get_access(Access::Destroy) {
+                return Err(Box::new(Error::WriteProtected));
+            }
+            self.deallocate_file_blocks(&entry);
+            let mut dir = self.get_directory(loc.block as usize);
+            dir.set_entry(&loc,Entry::new());
+            self.write_block(&dir.to_bytes(),loc.block as usize,0);
+            let (key_ptr,mut key_dir) = self.get_key_directory(loc.block);
+            key_dir.dec_file_count();
+            self.write_block(&key_dir.to_bytes(),key_ptr as usize,0);
+            return Ok(());
+        }
+        if let Ok(ptr) = self.find_dir_key_block(path) {
+            let dir = self.get_directory(ptr as usize);
+            if let Some(mut parent_loc) = dir.parent_entry_loc() {
+                let mut parent_dir = self.get_directory(parent_loc.block as usize);
+                if dir.file_count()>0 {
+                    return Err(Box::new(Error::WriteProtected));
+                }
+                let mut next = ptr;
+                for _try in 0..100 {
+                    self.deallocate_block(next as usize);
+                    next = dir.next();
+                    if next==0 {
+                        parent_dir.set_entry(&parent_loc,Entry::new());
+                        parent_dir.dec_file_count();
+                        self.write_block(&parent_dir.to_bytes(),parent_loc.block as usize,0);
+                        return Ok(());
+                    }
+                }
+                panic!("too many blocks for this directory, disk likely damaged");
+            } else {
+                return Err(Box::new(Error::WriteProtected));
+            }
+        }
+        return Err(Box::new(Error::PathNotFound));
+    }
+    fn lock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
+        match self.find_file(path) {
+            Ok(loc) => {
+                self.modify(&loc,Some(true),None)
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
+    fn unlock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
+        match self.find_file(path) {
+            Ok(loc) => {
+                self.modify(&loc,Some(false),None)
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
+    fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        match self.find_file(path) {
+            Ok(loc) => {
+                self.modify(&loc,None,Some(name))
+            },
+            Err(e) => Err(Box::new(e))
+        }
+        // TODO: what if it is a directory?
+    }
+    fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -716,7 +819,11 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn bsave(&mut self,path: &String, dat: &Vec<u8>,start_addr: u16) -> Result<usize,Box<dyn std::error::Error>> {
+    fn bsave(&mut self,path: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+        let padded = match trailing {
+            Some(v) => [dat.clone(),v.clone()].concat(),
+            None => dat.clone()
+        };
         match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -726,7 +833,7 @@ impl disk_base::A2Disk for Disk {
                 // write the entry into the parent directory (may not be key block)
                 self.write_entry(&loc,&Entry::create_file(&name, FileType::Binary,start_addr,new_block, key_block, None));
                 // write blocks
-                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
+                match self.write_file(loc,&disk_base::SparseData::desequence(512,&padded)) {
                     Ok(len) => Ok(len),
                     Err(e) => Err(Box::new(e))
                 }
@@ -734,7 +841,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn load(&self,path: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -744,7 +851,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn save(&mut self,path: &String, dat: &Vec<u8>, typ: disk_base::ItemType) -> Result<usize,Box<dyn std::error::Error>> {
+    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: disk_base::ItemType, trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -771,7 +878,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn read_text(&self,path: &String) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -781,7 +888,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn write_text(&mut self,path: &String, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -799,9 +906,9 @@ impl disk_base::A2Disk for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn write_records(&mut self,path: &String, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_records(&mut self,path: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
-        if let Ok(sparse_data) = records.to_sparse_data(512,encoder) {
+        if let Ok(sparse_data) = records.to_sparse_data(512,true,encoder) {
             match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
                 Ok((name,key_block,loc,new_block)) => {
                     // update the file count in the parent key block
@@ -826,7 +933,7 @@ impl disk_base::A2Disk for Disk {
         let file = types::SequentialText::pack(&dat);
         return file.to_string();
     }
-    fn encode_text(&self,s: &String) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
@@ -837,14 +944,15 @@ impl disk_base::A2Disk for Disk {
         let mut curr = ref_con;
         while curr>0 {
             let mut dir = self.get_directory(curr as usize);
-            let mut entries = dir.entry_copies();
+            let locs = dir.entry_locations(curr);
             dir.standardize();
-            for i in 0..entries.len() {
-                entries[i].standardize();
-                if entries[i].storage_type()==StorageType::SubDirEntry {
-                    self.standardize(entries[i].get_ptr());
+            for loc in locs {
+                let mut entry = dir.get_entry(&loc);
+                entry.standardize();
+                if entry.storage_type()==StorageType::SubDirEntry {
+                    self.standardize(entry.get_ptr());
                 }
-                dir.set_entry(i, entries[i]);
+                dir.set_entry(&loc, entry);
             }
             self.write_block(&dir.to_bytes(),curr as usize,0);
             curr = dir.next();
@@ -865,9 +973,9 @@ impl disk_base::A2Disk for Disk {
 fn test_path_normalize() {
     let mut disk = Disk::new(280);
     disk.format(&String::from("NEW.DISK"),true,None);
-    assert_eq!(disk.normalize_path(&"DIR1".to_string()),["NEW.DISK","DIR1"]);
-    assert_eq!(disk.normalize_path(&"dir1/".to_string()),["NEW.DISK","DIR1",""]);
-    assert_eq!(disk.normalize_path(&"dir1/sub2".to_string()),["NEW.DISK","DIR1","SUB2"]);
-    assert_eq!(disk.normalize_path(&"/new.disk/dir1/sub2".to_string()),["NEW.DISK","DIR1","SUB2"]);
+    assert_eq!(disk.normalize_path("DIR1"),["NEW.DISK","DIR1"]);
+    assert_eq!(disk.normalize_path("dir1/"),["NEW.DISK","DIR1",""]);
+    assert_eq!(disk.normalize_path("dir1/sub2"),["NEW.DISK","DIR1","SUB2"]);
+    assert_eq!(disk.normalize_path("/new.disk/dir1/sub2"),["NEW.DISK","DIR1","SUB2"]);
 }
 

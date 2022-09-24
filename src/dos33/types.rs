@@ -1,6 +1,104 @@
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
+use crate::disk_base::TextEncoder;
+
+pub const MAX_DIRECTORY_REPS: usize = 100;
+pub const MAX_TSLIST_REPS: usize = 1000;
+
+/// Enumerates DOS errors.  The `Display` trait will print equivalent DOS message such as `FILE NOT FOUND`.  Following DOS errors are omitted:
+/// LANGUAGE NOT AVAILABLE, NO BUFFERS AVAILABLE, PROGRAM TOO LARGE, NOT DIRECT COMMAND
+#[derive(thiserror::Error,Debug)]
+pub enum Error {
+    #[error("RANGE ERROR")]
+    Range,
+    #[error("END OF DATA")]
+    EndOfData,
+    #[error("FILE NOT FOUND")]
+    FileNotFound,
+    #[error("VOLUME MISMATCH")]
+    VolumeMismatch,
+    #[error("I/O ERROR")]
+    IOError,
+    #[error("DISK FULL")]
+    DiskFull,
+    #[error("FILE LOCKED")]
+    FileLocked,
+    #[error("FILE TYPE MISMATCH")]
+    FileTypeMismatch,
+    #[error("WRITE PROTECTED")]
+    WriteProtected,
+    #[error("SYNTAX ERROR")]
+    SyntaxError
+}
+
+/// Enumerates the four basic file types, the byte code can be obtained from an instance, e.g. `my_type as u8`
+pub enum Type {
+    Text = 0x00,
+    Integer = 0x01,
+    Applesoft = 0x02,
+    Binary = 0x04
+}
+
+/// This is for convenience in testing.  Sometimes the emulator will pad the data with random bytes at the end.
+/// We need a way to append these bytes without changing the length calculation for comparisons.
+fn append_junk(dat: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Vec<u8> {
+    match trailing {
+        Some(v) => [dat.clone(),v.clone()].concat(),
+        None => dat.clone()
+    }
+}
+
+pub struct Encoder {
+    terminator: Option<u8>
+}
+
+impl TextEncoder for Encoder {
+    fn new(terminator: Option<u8>) -> Self {
+        Self {
+            terminator
+        }
+    }
+    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
+        let src: Vec<u8> = txt.as_bytes().to_vec();
+        let mut ans: Vec<u8> = Vec::new();
+        for i in 0..src.len() {
+            if ans.len()>0 && ans[ans.len()-1]==0x8d && src[i]==0x0a {
+                continue;
+            }
+            if src[i]==0x0a || src[i]==0x0d {
+                ans.push(0x8d);
+            } else if src[i]<128 {
+                ans.push(src[i]+0x80);
+            } else {
+                return None;
+            }
+        }
+        if let Some(terminator) = self.terminator {
+            if ans[ans.len()-1] != terminator {
+                ans.push(terminator);
+            }
+        }
+        return Some(ans);
+    }
+    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+        let mut ans: Vec<u8> = Vec::new();
+        for i in 0..src.len() {
+            if src[i]==0x8d {
+                ans.push(0x0a);
+            } else if src[i]>127 {
+                ans.push(src[i]-0x80);
+            } else {
+                ans.push(0);
+            }
+        }
+        let res = String::from_utf8(ans);
+        match res {
+            Ok(s) => Some(s),
+            Err(_) => None
+        }
+    }
+}
 
 /// Structured representation of the bytes on disk that are stored with a BASIC program.  Works with either Applesoft or Integer.
 pub struct TokenizedProgram {
@@ -10,10 +108,11 @@ pub struct TokenizedProgram {
 
 impl TokenizedProgram {
     /// Take unstructured bytes representing the tokens only (sans header) and pack it into the structure
-    pub fn pack(prog: &Vec<u8>) -> Self {
+    pub fn pack(prog: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Self {
+        let padded = append_junk(prog,trailing);
         Self {
             length: u16::to_le_bytes(prog.len() as u16),
-            program: prog.clone()
+            program: padded.clone()
         }
     }
 }
@@ -34,10 +133,9 @@ impl DiskStruct for TokenizedProgram {
         if end_byte > dat.len() {
             panic!("inconsistent tokenized program length");
         }
-        // TODO: do we need to add trailing zeros (end_byte leaves them out?)
         return Self {
             length: [dat[0],dat[1]],
-            program: dat[2..end_byte].to_vec().clone()
+            program: dat[2..end_byte+2].to_vec().clone()
         }
     }
     /// Return flattened bytes (typically written to disk)
@@ -81,24 +179,14 @@ impl SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let src: Vec<u8> = s.as_bytes().to_vec();
-        let mut ans: Vec<u8> = Vec::new();
-        for i in 0..src.len() {
-            if ans.len()>0 && ans[ans.len()-1]==0x8d && src[i]==0x0a {
-                continue;
-            }
-            if src[i]==0x0a || src[i]==0x0d {
-                ans.push(0x8d);
-            } else if src[i]<128 {
-                ans.push(src[i]+0x80);
-            } else {
-                return Err(std::fmt::Error);
-            }
+        let encoder = Encoder::new(None);
+        if let Some(dat) = encoder.encode(s) {
+            return Ok(Self {
+                text: dat.clone(),
+                terminator: 0
+            });
         }
-        return Ok(Self {
-            text: ans.clone(),
-            terminator: 0
-        });
+        Err(std::fmt::Error)
     }
 }
 
@@ -107,22 +195,11 @@ impl FromStr for SequentialText {
 /// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ans: Vec<u8> = Vec::new();
-        let src: Vec<u8> = self.text.clone();
-        for i in 0..src.len() {
-            if src[i]==0x8d {
-                ans.push(0x0a);
-            } else if src[i]>127 {
-                ans.push(src[i]-0x80);
-            } else {
-                ans.push(0);
-            }
+        let encoder = Encoder::new(None);
+        if let Some(ans) = encoder.decode(&self.text) {
+            return write!(f,"{}",ans);
         }
-        let res = String::from_utf8(ans);
-        match res {
-            Ok(s) => write!(f,"{}",s),
-            Err(_) => write!(f,"err")
-        }
+        write!(f,"err")
     }
 }
 
