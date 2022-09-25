@@ -8,4 +8,4 @@ For detailed information see the [wiki](https://github.com/dfgordon/a2kit/wiki).
 
 ## Status
 
-No release yet, but getting closer.  If you would like to try it you will have to clone both this project and `a2kit_macro`.  Then use [cargo](https://doc.rust-lang.org/cargo/index.html) to build it.
+Basic tests are passing, but there are some optimization issues, and a few capabilities to round out.  The CLI can be installed using [cargo](https://doc.rust-lang.org/cargo/index.html).  The library is accessible from [crates](https://crates.io/crates).

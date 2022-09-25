@@ -3,14 +3,12 @@ use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
-mod walker;
-mod disk_base;
-mod applesoft;
-mod integer;
-mod dos33;
-mod prodos;
-use a2kit::disk_base::{DiskImageType,ItemType,CommandError};
-use crate::disk_base::A2Disk;
+use a2kit::disk_base::{DiskImageType,ItemType,CommandError,A2Disk};
+use a2kit::dos33;
+use a2kit::prodos;
+use a2kit::walker;
+use a2kit::applesoft;
+use a2kit::integer;
 
 const RCH: &str = "unreachable was reached";
 
@@ -44,6 +42,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             "hdmax"]).required(false)
             .default_value("5.25in"))
         .about("write a blank disk image to stdout"))
+    .subcommand(Command::new("reorder")
+        .arg(arg!(-d --dimg <PATH> "path to disk image"))
+        .about("Put a disk image into its natural order"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
@@ -70,12 +71,12 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         .about("read from stdin and error check"))
     .subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .about("read from local or disk image, write to stdout"))
     .subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "destination path, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"))
@@ -92,7 +93,16 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         .about("read from stdin, detokenize, write to stdout"))
     .get_matches();
     
+    // Put a disk image into its natural ordering
+    if let Some(cmd) = matches.subcommand_matches("reorder") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let disk = a2kit::create_disk_from_file(&path_to_img);
+        std::io::stdout().write_all(&disk.to_img()).expect("write to stdout failed");
+        return Ok(());
+    }
+
     // Create a disk image
+    // TODO: allow creation of DOS ordered ProDOS
 
     if let Some(cmd) = matches.subcommand_matches("mkdsk") {
         match DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap() {
@@ -383,6 +393,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                         }
                     },
                     Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
+                    Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
                     _ => {
                         return Err(Box::new(CommandError::UnsupportedItemType));
                     }
@@ -433,6 +444,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                     Ok(ItemType::Binary) => disk.bload(&dest_path),
                     Ok(ItemType::Text) => disk.read_text(&dest_path),
                     Ok(ItemType::Raw) => disk.read_text(&dest_path),
+                    Ok(ItemType::Chunk) => disk.read_chunk(&dest_path),
                     _ => {
                         return Err(Box::new(CommandError::UnsupportedItemType));
                     }
@@ -443,17 +455,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                         if atty::is(atty::Stream::Stdout) {
                             match typ {
                                 Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
-                                _ => {
-                                    let disp_lines = object.len()/8;
-                                    let remainder = object.len()%8;
-                                    for i in 0..disp_lines {
-                                        println!("{:02X?}",&object[i*8..i*8+8]);
-                                    }
-                                    if remainder>0 {
-                                        println!("{:02X?}",&object[disp_lines*8..disp_lines*8+remainder]);
-                                    }        
-                                }
-                            }
+                                _ => a2kit::display_chunk(tuple.0,&object)
+                            };
                         } else {
                             match typ {
                                 Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
@@ -463,7 +466,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                         return Ok(())
                     },
                     Err(e) => return Err(e)
-                }        
+                }
             },
 
             // we are getting a local file

@@ -4,18 +4,21 @@
 //! * Image types: ProDOS ordered images, DOS ordered images (.DO,.PO,.DSK)
 //! * Single volume images only
 
-use a2kit_macro::DiskStruct;
-use std::str::FromStr;
-use colored::*;
 mod boot;
 mod disk525;
 pub mod types;
 mod directory;
+
+use a2kit_macro::DiskStruct;
+use std::str::FromStr;
+use std::fmt::Write;
+use colored::*;
 use types::*;
 use directory::*;
 use crate::disk_base;
 use crate::disk_base::TextEncoder;
 use crate::applesoft;
+use crate::create_disk_from_file;
 
 pub struct Disk {
     blocks: Vec<[u8;512]>,
@@ -236,7 +239,7 @@ impl Disk {
         let mut curr = key_block;
         for _try in 0..100 {
             let mut dir = self.get_directory(curr as usize);
-            let mut locs = dir.entry_locations(curr);
+            let locs = dir.entry_locations(curr);
             for loc in locs {
                 if !dir.get_entry(&loc).is_active() {
                     return Ok(loc);
@@ -245,8 +248,7 @@ impl Disk {
             curr = dir.next();
             if curr==0 {
                 dir = self.get_directory(key_block as usize);
-                if let Some(mut parent_loc) = dir.parent_entry_loc() {
-                    let parent_dir = self.get_directory(parent_loc.block as usize);
+                if let Some(parent_loc) = dir.parent_entry_loc() {
                     return match self.expand_directory(&parent_loc) {
                         Ok(loc) => Ok(loc),
                         Err(e) => Err(e)
@@ -263,8 +265,8 @@ impl Disk {
     fn search_entries(&self,stype: &Vec<StorageType>,name: &String,key_block: u16) -> Option<EntryLocation> {
         let mut curr = key_block;
         for _try in 0..100 {
-            let mut dir = self.get_directory(curr as usize);
-            let mut locs = dir.entry_locations(curr);
+            let dir = self.get_directory(curr as usize);
+            let locs = dir.entry_locations(curr);
             for loc in locs {
                 let entry = dir.get_entry(&loc);
                 if entry.is_active() && is_file_match::<Entry>(stype,name,&entry) {
@@ -369,6 +371,9 @@ impl Disk {
                 self.deallocate_block(ptr as usize);
             }
         }
+        // ProDOS evidently swaps the index block halves upon deletion (why?)
+        let swapped = [index_block[256..512].to_vec(),index_block[0..256].to_vec()].concat();
+        self.write_block(&swapped,index_ptr as usize,0);
         self.deallocate_block(index_ptr as usize);
     }
     /// Deallocate all the blocks associated with any entry
@@ -391,6 +396,9 @@ impl Disk {
                         self.deallocate_index_block(ptr, &mut buf);
                     }
                 }
+                // ProDOS evidently swaps the master index block halves upon deletion (why?)
+                let swapped = [master_block[256..512].to_vec(),master_block[0..256].to_vec()].concat();
+                self.write_block(&swapped,master_ptr as usize,0);
                 self.deallocate_block(master_ptr as usize);
             }
             _ => panic!("cannot read file of this type")
@@ -694,7 +702,7 @@ impl disk_base::A2Disk for Disk {
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_dir_key_block(path) {
             Ok(b) => {
-                let dir = self.get_directory(b as usize);
+                let mut dir = self.get_directory(b as usize);
                 println!();
                 if b==2 {
                     println!("{}{}","/".bright_blue().bold(),dir.name().bright_blue().bold());
@@ -706,11 +714,16 @@ impl disk_base::A2Disk for Disk {
                     "NAME".bold(),"TYPE".bold(),"BLOCKS".bold(),
                     "MODIFIED".bold(),"CREATED".bold(),"ENDFILE".bold(),"SUBTYPE".bold());
                 println!();
-                for loc in dir.entry_locations(b) {
-                    let entry = dir.get_entry(&loc);
-                    if entry.is_active() {
-                        println!("{}",entry);
+                let mut curr = b;
+                while curr>0 {
+                    dir = self.get_directory(curr as usize);
+                    for loc in dir.entry_locations(curr) {
+                        let entry = dir.get_entry(&loc);
+                        if entry.is_active() {
+                            println!("{}",entry);
+                        }
                     }
+                    curr = dir.next();
                 }
                 println!();
                 let total = self.blocks.len();
@@ -752,7 +765,7 @@ impl disk_base::A2Disk for Disk {
             }
             self.deallocate_file_blocks(&entry);
             let mut dir = self.get_directory(loc.block as usize);
-            dir.set_entry(&loc,Entry::new());
+            dir.delete_entry(&loc);
             self.write_block(&dir.to_bytes(),loc.block as usize,0);
             let (key_ptr,mut key_dir) = self.get_key_directory(loc.block);
             key_dir.dec_file_count();
@@ -760,20 +773,24 @@ impl disk_base::A2Disk for Disk {
             return Ok(());
         }
         if let Ok(ptr) = self.find_dir_key_block(path) {
-            let dir = self.get_directory(ptr as usize);
-            if let Some(mut parent_loc) = dir.parent_entry_loc() {
+            let mut dir = self.get_directory(ptr as usize);
+            if let Some(parent_loc) = dir.parent_entry_loc() {
                 let mut parent_dir = self.get_directory(parent_loc.block as usize);
                 if dir.file_count()>0 {
                     return Err(Box::new(Error::WriteProtected));
                 }
+                dir.delete();
+                self.write_block(&dir.to_bytes(),ptr as usize,0);
                 let mut next = ptr;
                 for _try in 0..100 {
                     self.deallocate_block(next as usize);
                     next = dir.next();
                     if next==0 {
-                        parent_dir.set_entry(&parent_loc,Entry::new());
-                        parent_dir.dec_file_count();
+                        parent_dir.delete_entry(&parent_loc);
                         self.write_block(&parent_dir.to_bytes(),parent_loc.block as usize,0);
+                        let (key_ptr,mut key_dir) = self.get_key_directory(parent_loc.block);
+                        key_dir.dec_file_count();
+                        self.write_block(&key_dir.to_bytes(),key_ptr as usize,0);
                         return Ok(());
                     }
                 }
@@ -929,6 +946,31 @@ impl disk_base::A2Disk for Disk {
             Err(Box::new(Error::Syntax))
         }
     }
+    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match usize::from_str(num) {
+            Ok(block) => {
+                let mut buf: Vec<u8> = vec![0;512];
+                if block>=self.blocks.len() {
+                    return Err(Box::new(Error::Range));
+                }
+                self.read_block(&mut buf,block,0);
+                Ok((0,buf))
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
+    fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+        match usize::from_str(num) {
+            Ok(block) => {
+                if dat.len() > 512 || block>=self.blocks.len() {
+                    return Err(Box::new(Error::Range));
+                }
+                self.write_block(dat,block,0);
+                Ok(dat.len())
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::pack(&dat);
         return file.to_string();
@@ -940,22 +982,42 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&mut self,ref_con: u16) {
+    fn standardize(&self,ref_con: u16) -> Vec<usize> {
+        let mut ans: Vec<usize> = Vec::new();
         let mut curr = ref_con;
         while curr>0 {
             let mut dir = self.get_directory(curr as usize);
             let locs = dir.entry_locations(curr);
-            dir.standardize();
+            ans = [ans,dir.standardize(curr as usize*512)].concat();
             for loc in locs {
                 let mut entry = dir.get_entry(&loc);
-                entry.standardize();
+                let offset = loc.block as usize*512 + 4 + (loc.idx-1)*0x27;
+                ans = [ans,entry.standardize(offset)].concat();
                 if entry.storage_type()==StorageType::SubDirEntry {
-                    self.standardize(entry.get_ptr());
+                    ans = [ans,self.standardize(entry.get_ptr())].concat();
                 }
-                dir.set_entry(&loc, entry);
             }
-            self.write_block(&dir.to_bytes(),curr as usize,0);
             curr = dir.next();
+        }
+        return ans;
+    }
+    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
+        let emulator_disk = create_disk_from_file(&path.to_str().expect("could not unwrap path"));
+        let mut expected = emulator_disk.to_img();
+        let mut actual = self.to_img();
+        for ignorable in ignore {
+            expected[*ignorable] = 0;
+            actual[*ignorable] = 0;
+        }
+        for block in 0..self.blocks.len() {
+            for row in 0..16 {
+                let mut fmt_actual = String::new();
+                let mut fmt_expected = String::new();
+                let offset = block*512 + row*32;
+                write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
+                write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
+                assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
+            }
         }
     }
     fn to_img(&self) -> Vec<u8> {

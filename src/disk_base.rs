@@ -44,6 +44,7 @@ pub enum ItemType {
     IntegerTokens,
     ApplesoftVars,
     IntegerVars,
+    Chunk
 }
 
 impl FromStr for DiskImageType {
@@ -71,6 +72,7 @@ impl FromStr for ItemType {
             "itok" => Ok(Self::IntegerTokens),
             "avar" => Ok(Self::ApplesoftVars),
             "ivar" => Ok(Self::IntegerVars),
+            "chunk" => Ok(Self::Chunk),
             _ => Err(CommandError::UnknownItemType)
         }
     }
@@ -246,29 +248,38 @@ pub trait A2Disk {
     // remove write protection from a file
     fn unlock(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
     /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
-    fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write a binary file to the disk, mirrors `BSAVE`
-    fn bsave(&mut self,name: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
+    fn bsave(&mut self,path: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
     /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
     /// Detokenization is handled in a different module.  Returns (aux,data), aux = 0
-    fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
     /// Tokenization is handled in a different module.
-    fn save(&mut self,name: &str, dat: &Vec<u8>, typ: ItemType,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
+    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn Error>>;
     /// Read sequential text file from the disk, mirrors `READ`, text remains in raw A2 format.
     /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
-    fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    fn read_text(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
     /// Use `encode_text` to generate data from a UTF8 string.
-    fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
+    fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
     /// Write records to a random access text file
-    fn write_records(&mut self,name: &str, records: &Records) -> Result<usize,Box<dyn Error>>;
+    fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,Box<dyn Error>>;
+    /// Get a chunk (block or sector) appropriate for this disk
+    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    /// Put a chunk (block or sector) appropriate for this disk
+    fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
     /// Create disk image bytestream appropriate for the file system on this disk.
     fn to_img(&self) -> Vec<u8>;
     /// Convert file system text to a UTF8 string
     fn decode_text(&self,dat: &Vec<u8>) -> String;
     /// Convert UTF8 string to file system text
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn Error>>;
-    /// Standardize for comparison with other sources of disk images
-    fn standardize(&mut self,ref_con: u16);
+    /// Standardize for comparison with other sources of disk images.
+    /// Returns a vector of offsets into the image that are to be zeroed or ignored.
+    /// Typically it is important to call this before deletions happen.
+    /// May be recursive, ref_con can be used to initialize each recursion.
+    fn standardize(&self,ref_con: u16) -> Vec<usize>;
+    /// Compare this disk with a reference disk for testing purposes.  Panics if comparison fails.
+    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>);
 }

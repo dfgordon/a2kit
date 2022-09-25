@@ -7,17 +7,20 @@
 //! * The library will try to emulate the order in which DOS would access sectors, but
 //! this is not intended to be exact.
 
+pub mod types;
+mod boot;
+mod directory;
+
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::fmt::Write;
 use a2kit_macro::DiskStruct;
 
-mod boot;
-pub mod types;
 use types::*;
 use crate::disk_base::TextEncoder;
-mod directory;
 use directory::*;
 use crate::disk_base;
+use crate::create_disk_from_file;
 
 fn file_name_to_string(fname: [u8;30]) -> String {
     // fname is negative ASCII padded to the end with spaces
@@ -604,6 +607,31 @@ impl disk_base::A2Disk for Disk {
             Err(Box::new(Error::SyntaxError))
         }
     }
+    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match usize::from_str(num) {
+            Ok(sector) => {
+                if sector > self.vtoc.tracks as usize*self.vtoc.sectors as usize {
+                    return Err(Box::new(Error::Range));
+                }
+                let mut buf: Vec<u8> = vec![0;256];
+                self.read_sector(&mut buf,[(sector/16) as u8,(sector%16) as u8],0);
+                Ok((0,buf))
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
+    fn write_chunk(&mut self,num: &str,dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+        match usize::from_str(num) {
+            Ok(sector) => {
+                if dat.len()>256 || sector > self.vtoc.tracks as usize*self.vtoc.sectors as usize {
+                    return Err(Box::new(Error::Range));
+                }
+                self.write_sector(&dat,[(sector/16) as u8,(sector%16) as u8],0);
+                Ok(dat.len())
+            },
+            Err(e) => Err(Box::new(e))
+        }
+    }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::pack(&dat);
         return file.to_string();
@@ -615,9 +643,29 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&mut self,ref_con: u16) {
-        self.vtoc.pad1 = 0;
-        self.write_sector(&self.vtoc.to_bytes(),[17,0],0);
+    fn standardize(&self,ref_con: u16) -> Vec<usize> {
+        return vec![17*16*256];
+    }
+    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
+        let emulator_disk = create_disk_from_file(&path.to_str().expect("could not unwrap path"));
+        let mut expected = emulator_disk.to_img();
+        let mut actual = self.to_img();
+        for ignorable in ignore {
+            expected[*ignorable] = 0;
+            actual[*ignorable] = 0;
+        }
+        for track in 0..self.vtoc.tracks as usize {
+            for sector in 0..self.vtoc.sectors as usize {
+                for row in 0..8 {
+                    let mut fmt_actual = String::new();
+                    let mut fmt_expected = String::new();
+                    let offset = track*16*256 + sector*256 + row*32;
+                    write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
+                    write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
+                    assert_eq!(fmt_actual,fmt_expected," at track {}, sector {}, row {}",track,sector,row)
+                }
+            }
+        }
     }
     fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();

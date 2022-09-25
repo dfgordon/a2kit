@@ -6,28 +6,6 @@ use a2kit::disk_base::TextEncoder;
 use a2kit::disk_base::{ItemType,A2Disk};
 use a2kit::applesoft;
 
-fn get_emulator_bytes(path: &std::path::Path) -> Vec<u8> {
-    let img = std::fs::read(path).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_disk_from_bytestream(&img);
-    emulator_disk.standardize(2);
-    return emulator_disk.to_img();
-}
-
-fn compare_sectors(actual: &Vec<u8>,expected: &Vec<u8>,start_track: usize) {
-    for track in start_track..35 {
-        for sector in 0..16 {
-            for row in 0..8 {
-                let mut fmt_actual = String::new();
-                let mut fmt_expected = String::new();
-                let offset = (track*16 + sector)*256 + row*32;
-                write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
-                write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
-                assert_eq!(fmt_actual,fmt_expected," at track {}, sector {}, row {}",track,sector,row)
-            }
-        }
-    }
-}
-
 #[test]
 fn format() {
     // DOS tracks can vary some depending on who did the formatting.
@@ -35,10 +13,7 @@ fn format() {
     // is left with value 18, *as if* a greeting program had been written there.
     let mut disk = dos33::Disk::new();
     disk.format(254,true,18);
-
-    let actual = disk.to_img();
-    let expected = std::fs::read(Path::new("tests").join("dos33-boot.do")).expect("failed to read test image file");
-    compare_sectors(&actual,&expected,0);
+    disk.compare(&Path::new("tests").join("dos33-boot.do"),&disk.standardize(0));
 }
 
 #[test]
@@ -99,11 +74,12 @@ fn write_small() {
     let encoder = dos33::types::Encoder::new(Some(0x8d));
     disk.write_text("thetext",&encoder.encode("HELLO FROM DOS 3.3").unwrap()).expect("error");
 
-    disk.standardize(0);
-
-    let actual = disk.to_img();
-    let expected = get_emulator_bytes(&Path::new("tests").join("dos33-smallfiles.dsk"));
-    compare_sectors(&actual,&expected,3);
+    let mut ignore = disk.standardize(0);
+    // loop to ignore boot tracks for this test
+    for i in 0..3*16*256 {
+        ignore.push(i);
+    }
+    disk.compare(&Path::new("tests").join("dos33-smallfiles.dsk"),&ignore);
 }
 
 #[test]
@@ -208,11 +184,7 @@ fn write_big() {
     }
     disk.bsave("sapling",&buf,16384,Some(&vec![0xc9])).expect("dimg error");
 
-    disk.standardize(0);
-
-    let actual = disk.to_img();
-    let expected = get_emulator_bytes(&Path::new("tests").join("dos33-bigfiles.do"));
-    compare_sectors(&actual,&expected,3);
+    disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&disk.standardize(0));
 }
 
 #[test]
@@ -267,9 +239,5 @@ fn rename_delete() {
     disk.rename("sapling","sap").expect("dimg error");
     disk.rename("tree1","mytree1").expect("dimg error");
 
-    disk.standardize(0);
-
-    let actual = disk.to_img();
-    let expected = get_emulator_bytes(&Path::new("tests").join("dos33-ren-del.do"));
-    compare_sectors(&actual,&expected,3);
+    disk.compare(&Path::new("tests").join("dos33-ren-del.do"),&disk.standardize(0));
 }

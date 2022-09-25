@@ -95,7 +95,7 @@ pub trait Header {
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
     fn set_access(&mut self,what: Access,which: bool);
-    fn standardize(&mut self);
+    fn standardize(&mut self,offset: usize) -> Vec<usize>;
 }
 
 pub trait HasEntries {
@@ -107,6 +107,7 @@ pub trait HasEntries {
     fn set_links(&mut self,prev: Option<u16>,next: Option<u16>);
     fn get_entry(&self,loc: &EntryLocation) -> Entry;
     fn set_entry(&mut self,loc: &EntryLocation,entry: Entry);
+    fn delete_entry(&mut self,loc: &EntryLocation);
 }
 
 pub trait HasName {
@@ -119,7 +120,8 @@ pub trait Directory: DiskStruct + HasEntries {
     fn parent_entry_loc(&self) -> Option<EntryLocation>;
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
-    fn standardize(&mut self);
+    fn standardize(&mut self,offset: usize) -> Vec<usize>;
+    fn delete(&mut self);
 }
 
 /// KeyBlock has a generic header type, which can be either
@@ -304,19 +306,18 @@ impl Entry {
         self.stor_len_nibs = nibs;
         self.name = fname;
     }
-    pub fn standardize(&mut self) {
-        self.create_time = [0,0,0,0];
-        self.last_mod = [0,0,0,0];
-        self.vers = 0;
-        self.min_vers = 0;
-        self.access = 1+2+32+64+128;
-        // this clears any characters in the name beyond its length
-        if self.is_active() {
-            let name_str = file_name_to_string(self.stor_len_nibs,self.name);
-            self.rename(&name_str);
-        } else {
-            self.name = [0;15];
+    pub fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        // relative to the entry start
+        let mut ans = vec![0x18,0x19,0x1a,0x1b,0x01c,0x1d,0x1e,0x21,0x22,0x23,0x24];
+        // ignore trailing characters in the name
+        let name_start = match self.is_active() {
+            true => 1 + file_name_to_string(self.stor_len_nibs,self.name).len(),
+            false => 1
+        };
+        for i in name_start..16 {
+            ans.push(i);
         }
+        ans.iter().map(|x| x + offset).collect()
     }
 }
 
@@ -369,18 +370,18 @@ impl Header for VolDirHeader {
             self.access &= u8::MAX ^ what as u8;
         }
     }
-    fn standardize(&mut self) {
-        self.pad1 = [0;8];
-        self.create_time = [0,0,0,0];
-        self.vers = 0;
-        self.min_vers = 0;
-        self.access = 1+2+32+64+128;
-        // this clears any characters in the name beyond its length
-        let name_str = file_name_to_string(self.stor_len_nibs,self.name);
-        let stor = self.storage_type();
-        let (nibs,fname) = string_to_file_name(&stor,&name_str);
-        self.stor_len_nibs = nibs;
-        self.name = fname;
+    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        // these are relative to the block start
+        let mut ans: Vec<usize> = Vec::new();
+        for i in 0x14..0x23 {
+            ans.push(i);
+        }
+        // ignore trailing characters in the name
+        let start = 1 + file_name_to_string(self.stor_len_nibs,self.name).len();
+        for i in start..16 {
+            ans.push(i);
+        }
+        ans.iter().map(|x| x + offset).collect()
 }
 }
 
@@ -401,18 +402,18 @@ impl Header for SubDirHeader {
             self.access &= u8::MAX ^ what as u8;
         }
     }
-    fn standardize(&mut self) {
-        self.pad1 = [0;8];
-        self.create_time = [0,0,0,0];
-        self.vers = 0;
-        self.min_vers = 0;
-        self.access = 1+2+32+64+128;
-        // this clears any characters in the name beyond its length
-        let name_str = file_name_to_string(self.stor_len_nibs,self.name);
-        let stor = self.storage_type();
-        let (nibs,fname) = string_to_file_name(&stor,&name_str);
-        self.stor_len_nibs = nibs;
-        self.name = fname;
+    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        // these are relative to the block start
+        let mut ans: Vec<usize> = Vec::new();
+        for i in 0x14..0x23 {
+            ans.push(i);
+        }
+        // ignore trailing characters in the name
+        let start = 1 + file_name_to_string(self.stor_len_nibs,self.name).len();
+        for i in start..16 {
+            ans.push(i);
+        }
+        ans.iter().map(|x| x + offset).collect()
 }
 }
 
@@ -452,6 +453,9 @@ impl<T: Header + HasName + DiskStruct> HasEntries for KeyBlock<T> {
     fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
         self.entries[loc.idx-2] = entry;
     }
+    fn delete_entry(&mut self,loc: &EntryLocation) {
+        self.entries[loc.idx-2].stor_len_nibs = 0;
+    }
 }
 
 impl HasEntries for EntryBlock {
@@ -489,6 +493,9 @@ impl HasEntries for EntryBlock {
     }
     fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
         self.entries[loc.idx-1] = entry;
+    }
+    fn delete_entry(&mut self,loc: &EntryLocation) {
+        self.entries[loc.idx-1].stor_len_nibs = 0;
     }
 }
 
@@ -650,8 +657,11 @@ impl Directory for KeyBlock<VolDirHeader> {
     fn dec_file_count(&mut self) {
         self.header.dec_file_count();
     }
-    fn standardize(&mut self) {
-        self.header.standardize();
+    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        self.header.standardize(offset)
+    }
+    fn delete(&mut self) {
+        panic!("attempt to delete volume directory")
     }
 }
 
@@ -668,8 +678,11 @@ impl Directory for KeyBlock<SubDirHeader> {
     fn dec_file_count(&mut self) {
         self.header.dec_file_count();
     }
-    fn standardize(&mut self) {
-        self.header.standardize();
+    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        self.header.standardize(offset)
+    }
+    fn delete(&mut self) {
+        self.header.stor_len_nibs = 0;
     }
 }
 
@@ -683,6 +696,10 @@ impl Directory for EntryBlock {
     fn dec_file_count(&mut self) {
         panic!("attempt to access header from EntryBlock");
     }
-    fn standardize(&mut self) {
+    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+        Vec::new()
+    }
+    fn delete(&mut self) {
+        panic!("attempt to delete entry block")
     }
 }
