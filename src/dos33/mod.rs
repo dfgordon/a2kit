@@ -502,7 +502,7 @@ impl disk_base::A2Disk for Disk {
         eprintln!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
-    fn create(&mut self,_path: &str,_time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
+    fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
         return Err(Box::new(Error::SyntaxError));
     }
     fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {

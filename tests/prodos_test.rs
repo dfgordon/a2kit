@@ -3,8 +3,7 @@ use std::path::Path;
 use std::fmt::Write;
 use a2kit::prodos;
 use a2kit::applesoft;
-use a2kit::disk_base::{ItemType,A2Disk,Records};
-use chrono;
+use a2kit::disk_base::{ItemType,A2Disk};
 
 #[test]
 fn format() {
@@ -17,11 +16,11 @@ fn format() {
 fn create_dirs() {
     let mut disk = prodos::Disk::new(280);
     disk.format(&String::from("DIRTEST"),true,None);
-    disk.create(&String::from("TEST"),None).expect("unreachable");
+    disk.create(&String::from("TEST")).expect("unreachable");
     for i in 1..55 {
         let mut path = "".to_string();
         write!(path,"TEST/T{}",i).expect("unreachable");
-        disk.create(&path,None).expect("unreachable");
+        disk.create(&path).expect("unreachable");
     }
     let ignore = disk.standardize(2);
     disk.compare(&Path::new("tests").join("prodos-mkdir.dsk"),&ignore);
@@ -196,11 +195,11 @@ fn fill_dirs() {
     tokens.push(0xc4); // extra and it was counted
     disk.save("setup",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
 
-    disk.create(&String::from("inner.dirs"),None).expect("unreachable");
+    disk.create(&String::from("inner.dirs")).expect("unreachable");
     for i in 1..55 {
         let mut path = "".to_string();
         write!(path,"inner.dirs/dir{}",i).expect("unreachable");
-        disk.create(&path,None).expect("unreachable");
+        disk.create(&path).expect("unreachable");
     }
 
     // make tree files using random access text module
@@ -248,11 +247,11 @@ fn rename_delete() {
     tokens.push(0xc4); // extra and it was counted
     disk.save("setup",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
 
-    disk.create(&String::from("inner.dirs"),None).expect("unreachable");
+    disk.create(&String::from("inner.dirs")).expect("unreachable");
     for i in 1..55 {
         let mut path = "".to_string();
         write!(path,"inner.dirs/dir{}",i).expect("unreachable");
-        disk.create(&path,None).expect("unreachable");
+        disk.create(&path).expect("unreachable");
     }
 
     // make tree files using random access text module

@@ -736,7 +736,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn create(&mut self,path: &str,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn std::error::Error>> {
+    fn create(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.prepare_to_write(path, &vec![StorageType::SubDirEntry]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -744,13 +744,13 @@ impl disk_base::A2Disk for Disk {
                 dir.inc_file_count();
                 self.write_block(&dir.to_bytes(),key_block as usize,0);
                 // write the entry into the parent directory (may not be key block)
-                let mut entry = Entry::create_subdir(&name,new_block,key_block,time);
+                let mut entry = Entry::create_subdir(&name,new_block,key_block,None);
                 entry.delta_blocks(1);
                 entry.set_eof(512);
                 self.write_entry(&loc,&entry);
                 // write the new directory's key block
                 let mut subdir = KeyBlock::<SubDirHeader>::new();
-                subdir.header.create(&name,loc.block,loc.idx as u8,time);
+                subdir.header.create(&name,loc.block,loc.idx as u8,None);
                 self.write_block(&subdir.to_bytes(),new_block as usize,0);
                 Ok(())
             },

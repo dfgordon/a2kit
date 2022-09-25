@@ -277,7 +277,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
         let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.create(&path_in_img,None) {
+        match disk.create(&path_in_img) {
             Ok(()) => {
                 let updated_img_data = disk.to_img();
                 std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");

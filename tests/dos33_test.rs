@@ -1,6 +1,5 @@
 // test of dos33 disk image module
 use std::path::Path;
-use std::fmt::Write;
 use a2kit::dos33;
 use a2kit::disk_base::TextEncoder;
 use a2kit::disk_base::{ItemType,A2Disk};

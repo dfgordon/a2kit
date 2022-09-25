@@ -4,6 +4,10 @@ version = "0.0.1"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
+description = "Apple II disk image and language utility"
+keywords = ["disk","image","retro","apple"]
+repository = "https://github.com/dfgordon/a2kit"
+homepage = "https://github.com/dfgordon/a2kit"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,16 +16,14 @@ tree-sitter = "0.20.8"
 tree-sitter-applesoft = "2.0.0"
 tree-sitter-integerbasic = "1.0.1"
 clap = {version="3.1.5",features=["cargo"]}
-chrono = "*"
-regex = "*"
-log = "*"
-predicates = "*"
-assert_cmd = "*"
-tempfile = "*"
-thiserror = "*"
+chrono = "0.4.20"
+regex = "1.5"
+predicates = "2.1.0"
+assert_cmd = "2.0.2"
+thiserror = "1.0.30"
 atty = "0.2"
 colored = "2"
-num-traits = "*"
-num-derive = "*"
-a2kit_macro = { path = "../a2kit_macro" }
-a2kit_macro_derive = { path = "../a2kit_macro/a2kit_macro_derive" }
+num-traits = "0.2.14"
+num-derive = "0.3.3"
+a2kit_macro = "0.1.0"
+a2kit_macro_derive = "0.1.0"

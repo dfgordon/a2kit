@@ -238,7 +238,7 @@ pub trait A2Disk {
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn Error>>;
     /// Create a new directory
-    fn create(&mut self,path: &str,time: Option<chrono::NaiveDateTime>) -> Result<(),Box<dyn Error>>;
+    fn create(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
     /// Delete a file or directory
     fn delete(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
     /// Rename a file or directory
