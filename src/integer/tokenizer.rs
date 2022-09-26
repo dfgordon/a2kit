@@ -138,10 +138,19 @@ impl Tokenizer
 			let line_num: u16 = img[addr] as u16 + img[addr+1] as u16*256;
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
-			while img[addr]!=1 {
+			for rep in 0..256 {
+				if img[addr]==1 {
+					code += "\n";
+					addr += 1;
+					break;
+				}
+				if rep==255 {
+					panic!("integer BASIC tokens appear to be broken");
+				}
 				if img[addr]<128 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
 						code += &(String::from(" ") + &tok.to_uppercase() + " ");
+						addr += 1;
 					} else {
 						panic!("unrecognized integer BASIC token encountered");
 					}
@@ -159,8 +168,6 @@ impl Tokenizer
 					}
 				}
 			}
-			code += "\n";
-			addr += 1;
 		}
 		return code;
 	}

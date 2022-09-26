@@ -190,20 +190,17 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         return match typ
         {
             Ok(ItemType::ApplesoftText) => {
-                if let Ok(addr) = u16::from_str_radix(addr_opt.expect("address needed to tokenize Applesoft"),10) {
+                if addr_opt==None {
+                    eprintln!("address needed to tokenize Applesoft");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                }
+                if let Ok(addr) = u16::from_str_radix(addr_opt.expect(RCH),10) {
                     let mut program = String::new();
                     std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                     let object = tokenizer.tokenize(&program,addr);
                     if atty::is(atty::Stream::Stdout) {
-                        let disp_lines = object.len()/8;
-                        let remainder = object.len()%8;
-                        for i in 0..disp_lines {
-                            println!("{:02X?}",&object[i*8..i*8+8]);
-                        }
-                        if remainder>0 {
-                            println!("{:02X?}",&object[disp_lines*8..disp_lines*8+remainder]);
-                        }
+                        a2kit::display_chunk(addr,&object);
                     } else {
                         std::io::stdout().write_all(&object).expect("could not write output stream");
                     }
@@ -221,14 +218,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
                 let object = tokenizer.tokenize(String::from(&program));
                 if atty::is(atty::Stream::Stdout) {
-                    let disp_lines = object.len()/8;
-                    let remainder = object.len()%8;
-                    for i in 0..disp_lines {
-                        println!("{:02X?}",&object[i*8..i*8+8]);
-                    }
-                    if remainder>0 {
-                        println!("{:02X?}",&object[disp_lines*8..disp_lines*8+remainder]);
-                    }
+                    a2kit::display_chunk(0,&object);
                 } else {
                     std::io::stdout().write_all(&object).expect("could not write output stream");
                 }
