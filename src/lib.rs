@@ -46,6 +46,10 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
             x if x<128 => x,
             _ => 46
         }).collect();
+        let neg_txt: Vec<u8> = slice.iter().map(|c| match *c {
+            x if x>=160 && x<255 => x - 128,
+            _ => 46
+        }).collect();
         print!("{:04X} : ",row_label);
         for byte in slice {
             print!("{:02X} ",byte);
@@ -53,7 +57,11 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         for _blank in slice_end..slice_start+16 {
             print!("   ");
         }
-        println!(" {}",String::from_utf8_lossy(&txt));
+        print!("+ {} ",String::from_utf8_lossy(&txt));
+        for _blank in slice_end..slice_start+16 {
+            print!(" ");
+        }
+        println!("- {}",String::from_utf8_lossy(&neg_txt));
         slice_start += 16;
         if slice_end==chunk.len() {
             break;

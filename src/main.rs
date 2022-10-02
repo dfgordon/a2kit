@@ -3,7 +3,7 @@ use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
-use a2kit::disk_base::{DiskImageType,ItemType,CommandError,A2Disk};
+use a2kit::disk_base::{DiskImageType,ItemType,CommandError,A2Disk,Records,SparseData};
 use a2kit::dos33;
 use a2kit::prodos;
 use a2kit::walker;
@@ -70,13 +70,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
         .about("read from stdin and error check"))
     .subcommand(Command::new("get")
-        .arg(arg!(-f --file <PATH> "source path, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk"]))
+        .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
+        .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"))
     .subcommand(Command::new("put")
-        .arg(arg!(-f --file <PATH> "destination path, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk"]))
+        .arg(arg!(-f --file <PATH> "destination path or chunk index, maybe inside disk image"))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"))
@@ -378,12 +379,32 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                             Err(e) => Err(e)
                         },
                         _ => {
-                            eprintln!("problem with utf8 while writing text file");
-                            return Err(Box::new(CommandError::OutOfRange));
+                            eprintln!("could not encode data as UTF8");
+                            return Err(Box::new(CommandError::InputFormatBad));
                         }
                     },
                     Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
                     Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
+                    Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
+                        Ok(s) => match Records::from_json(s) {
+                            Ok(recs) => disk.write_records(&dest_path,&recs),
+                            Err(e) => Err(e)
+                        },
+                        _ => {
+                            eprintln!("could not encode data as UTF8");
+                            return Err(Box::new(CommandError::InputFormatBad));
+                        }
+                    },
+                    Ok(ItemType::SparseData) => match std::str::from_utf8(&file_data) {
+                        Ok(s) => match SparseData::from_json(s) {
+                            Ok(chunks) => disk.write_any(&dest_path,&chunks),
+                            Err(e) => Err(e)
+                        },
+                        _ => {
+                            eprintln!("could not encode data as UTF8");
+                            return Err(Box::new(CommandError::InputFormatBad));
+                        }
+                    },
                     _ => {
                         return Err(Box::new(CommandError::UnsupportedItemType));
                     }
@@ -418,7 +439,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             eprintln!("input is redirected, but `get` must start the pipeline");
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let dest_path = String::from(cmd.value_of("file").expect(RCH));
+        let src_path = String::from(cmd.value_of("file").expect(RCH));
         let maybe_typ = cmd.value_of("type");
         let maybe_img = cmd.value_of("dimg");
 
@@ -428,13 +449,44 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
             (Some(typ_str),Some(img_path)) => {
                 let typ = ItemType::from_str(typ_str);
                 let disk = a2kit::create_disk_from_file(img_path);
+                // special handling for sparse data
+                if let Ok(ItemType::SparseData) = typ {
+                    return match disk.read_any(&src_path) {
+                        Ok(chunks) => {
+                            println!("{}",chunks.to_json(4));
+                            Ok(())
+                        },
+                        Err(e) => Err(e)
+                    }
+                }
+                // special handling for random access text
+                if let Ok(ItemType::Records) = typ {
+                    let record_length = match cmd.value_of("len") {
+                        Some(s) => {
+                            if let Ok(l) = usize::from_str(s) {
+                                l
+                            } else {
+                                0 as usize
+                            }
+                        },
+                        _ => 0 as usize
+                    };
+                    return match disk.read_records(&src_path,record_length) {
+                        Ok(recs) => {
+                            println!("{}",recs.to_json(4));
+                            Ok(())
+                        },
+                        Err(e) => Err(e)
+                    }
+                }
+                // other file types
                 let maybe_object = match typ {
-                    Ok(ItemType::ApplesoftTokens) => disk.load(&dest_path),
-                    Ok(ItemType::IntegerTokens) => disk.load(&dest_path),
-                    Ok(ItemType::Binary) => disk.bload(&dest_path),
-                    Ok(ItemType::Text) => disk.read_text(&dest_path),
-                    Ok(ItemType::Raw) => disk.read_text(&dest_path),
-                    Ok(ItemType::Chunk) => disk.read_chunk(&dest_path),
+                    Ok(ItemType::ApplesoftTokens) => disk.load(&src_path),
+                    Ok(ItemType::IntegerTokens) => disk.load(&src_path),
+                    Ok(ItemType::Binary) => disk.bload(&src_path),
+                    Ok(ItemType::Text) => disk.read_text(&src_path),
+                    Ok(ItemType::Raw) => disk.read_text(&src_path),
+                    Ok(ItemType::Chunk) => disk.read_chunk(&src_path),
                     _ => {
                         return Err(Box::new(CommandError::UnsupportedItemType));
                     }
@@ -461,7 +513,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
 
             // we are getting a local file
             (None,None) => {
-                let object = std::fs::read(&dest_path).expect("could not read file");
+                let object = std::fs::read(&src_path).expect("could not read file");
                 std::io::stdout().write_all(&object).expect("could not write stdout");
                 return Ok(())
             },

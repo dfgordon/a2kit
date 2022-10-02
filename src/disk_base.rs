@@ -10,6 +10,8 @@ use thiserror;
 use std::str::FromStr;
 use std::collections::HashMap;
 use std::fmt;
+use json;
+use hex;
 
 #[derive(thiserror::Error,Debug)]
 pub enum CommandError {
@@ -20,7 +22,9 @@ pub enum CommandError {
     #[error("Command could not be interpreted")]
     InvalidCommand,
     #[error("One of the parameters was out of range")]
-    OutOfRange
+    OutOfRange,
+    #[error("Input source could not be interpreted")]
+    InputFormatBad
 }
 
 #[derive(PartialEq)]
@@ -38,13 +42,16 @@ pub enum ItemType {
     Raw,
     Binary,
     Text,
+    Records,
+    SparseData,
     ApplesoftText,
     IntegerText,
     ApplesoftTokens,
     IntegerTokens,
     ApplesoftVars,
     IntegerVars,
-    Chunk
+    Chunk,
+    System
 }
 
 impl FromStr for DiskImageType {
@@ -66,6 +73,8 @@ impl FromStr for ItemType {
             "raw" => Ok(Self::Raw),
             "bin" => Ok(Self::Binary),
             "txt" => Ok(Self::Text),
+            "rec" => Ok(Self::Records),
+            "any" => Ok(Self::SparseData),
             "atxt" => Ok(Self::ApplesoftText),
             "itxt" => Ok(Self::IntegerText),
             "atok" => Ok(Self::ApplesoftTokens),
@@ -73,6 +82,7 @@ impl FromStr for ItemType {
             "avar" => Ok(Self::ApplesoftVars),
             "ivar" => Ok(Self::IntegerVars),
             "chunk" => Ok(Self::Chunk),
+            "sys" => Ok(Self::System),
             _ => Err(CommandError::UnknownItemType)
         }
     }
@@ -88,11 +98,16 @@ pub trait TextEncoder {
 /// This is an abstraction of a sparse file, that also can encompass sequential files.
 /// The data is in the form of quantized chunks,
 /// all of the same length. A chunk could be a sector or block, depending on file system.
+/// The chunks can be partially filled, e.g., `desequence` will not pad the last chunk.
 /// This is essentially `Records`, but for raw bytes.  Text should already be
 /// properly encoded by the time it gets put into the chunks.
 pub struct SparseData {
     /// The length of a chunk
     pub chunk_len: usize,
+    /// The file system type in some string representation
+    pub fs_type: String,
+    /// Auxiliary data in some string representation
+    pub aux: String,
     /// The key is an ordered chunk number starting at 0, no relation to any disk location.
     /// Contraints on the length of the data are undefined at this level.
     pub chunks: HashMap<usize,Vec<u8>>
@@ -102,6 +117,8 @@ impl SparseData {
     pub fn new(chunk_len: usize) -> Self {
         Self {
             chunk_len,
+            fs_type: String::from("bin"),
+            aux: String::from("0"),
             chunks: HashMap::new()
         }
     }
@@ -147,12 +164,85 @@ impl SparseData {
             idx += 1;
         }
     }
-}
+    pub fn new_type(&mut self,new_type: &str) -> &mut Self {
+        self.fs_type = new_type.to_string();
+        return self;
+    }
+    pub fn new_aux(&mut self,new_aux: &str) -> &mut Self {
+        self.aux = new_aux.to_string();
+        return self;
+    }
+    /// Get chunks from the JSON string representation
+    pub fn from_json(json_str: &str) -> Result<SparseData,Box<dyn Error>> {
+        match json::parse(json_str) {
+            Ok(parsed) => {
+                let maybe_type = parsed["a2kit_type"].as_str();
+                let maybe_len = parsed["chunk_length"].as_usize();
+                let maybe_fs_type = parsed["fs_type"].as_str();
+                let maybe_aux = parsed["aux"].as_str();
+                if let (Some(typ),Some(len),Some(fs_type),Some(aux)) = (maybe_type,maybe_len,maybe_fs_type,maybe_aux) {
+                    if typ=="any" {
+                        let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
+                        let map_obj = &parsed["chunks"];
+                        if map_obj.entries().len()==0 {
+                            eprintln!("no object entries in json records");
+                            return Err(Box::new(CommandError::InputFormatBad));
+                        }
+                        for (key,hex) in map_obj.entries() {
+                            let prev_len = chunks.len();
+                            if let Ok(num) = usize::from_str(key) {
+                                if let Some(hex_str) = hex.as_str() {
+                                    if let Ok(dat) = hex::decode(hex_str) {
+                                        chunks.insert(num,dat);
+                                    }
+                                }
+                            }
+                            if chunks.len()==prev_len {
+                                eprintln!("could not read hex string from chunk");
+                                return Err(Box::new(CommandError::InputFormatBad));
+                            }
+                        }
+                        return Ok(Self {
+                            chunk_len: len,
+                            fs_type: fs_type.to_string(),
+                            aux: aux.to_string(),
+                            chunks
+                        });    
+                    } else {
+                        eprintln!("json metadata type mismatch");
+                        return Err(Box::new(CommandError::InputFormatBad));
+                    }
+                }
+                eprintln!("json records missing metadata");
+                Err(Box::new(CommandError::InputFormatBad))
+            },
+            Err(_e) => Err(Box::new(CommandError::InputFormatBad))
+        } 
+    }
+    /// Put chunks into the JSON string representation, if indent=0 use unpretty form
+    pub fn to_json(&self,indent: u16) -> String {
+        let mut json_map = json::JsonValue::new_object();
+        for (c,v) in &self.chunks {
+            json_map[c.to_string()] = json::JsonValue::String(hex::encode_upper(v));
+        }
+        let ans = json::object! {
+            a2kit_type: "any",
+            fs_type: self.fs_type.to_string(),
+            aux: self.aux.to_string(),
+            chunk_length: self.chunk_len,
+            chunks: json_map
+        };
+        if indent > 0 {
+            return json::stringify_pretty(ans, indent);
+        } else {
+            return json::stringify(ans);
+        }
+    }}
 
 
 /// This is an abstraction used in handling random access text files.
 /// Text encoding at this level is UTF8, it may be translated at lower levels.
-/// This will usually be translated into `SparseData` and then passed to disk routines.
+/// This will usually be translated into `SparseData` for lower level handling.
 pub struct Records {
     /// The fixed length of all records in this collection
     pub record_len: usize,
@@ -167,11 +257,66 @@ impl Records {
             map: HashMap::new()
         }
     }
+    /// add a string as record number `num`, fields should be separated by LF or CRLF.
     pub fn add_record(&mut self,num: usize,fields: &str) {
         self.map.insert(num,fields.to_string());
     }
+    /// Derive records from sparse data, this should find any real record, but may also find spurious ones.
+    /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
+    /// This routine assumes ASCII null terminates any record.
+    pub fn from_sparse_data(dat: &SparseData,record_length: usize,encoder: impl TextEncoder) -> Result<Records,Box<dyn Error>> {
+        if record_length==0 {
+            return Err(Box::new(CommandError::OutOfRange));
+        }
+        let mut ans = Records::new(record_length);
+        let mut list: Vec<usize> = Vec::new();
+        // add record index for each starting record boundary that falls within a chunk
+        for c in dat.chunks.keys() {
+            let start_rec = c*dat.chunk_len/record_length + match c*dat.chunk_len%record_length { x if x>0 => 1, _ => 0 };
+            let end_rec = (c+1)*dat.chunk_len/record_length + match (c+1)*dat.chunk_len%record_length { x if x>0 => 1, _ => 0 };
+            for r in start_rec..end_rec {
+                list.push(r);
+            }
+        }
+        // add only records with complete data
+        for r in list {
+            let start_chunk = r*record_length/dat.chunk_len;
+            let end_chunk = 1 + (r+1)*record_length/dat.chunk_len;
+            let start_offset = r*record_length%dat.chunk_len;
+            let mut bytes: Vec<u8> = Vec::new();
+            let mut complete = true;
+            for chunk_num in start_chunk..end_chunk {
+                match dat.chunks.get(&chunk_num) {
+                    Some(chunk) => {
+                       for i in chunk {
+                            bytes.push(*i);
+                        }
+                    },
+                    _ => complete = false
+                }
+            }
+            if complete && start_offset < bytes.len() {
+                let actual_end = usize::min(start_offset+record_length,bytes.len());
+                if let Some(long_str) = encoder.decode(&bytes[start_offset..actual_end].to_vec()) {
+                    if let Some(partial) = long_str.split("\u{0000}").next() {
+                        if partial.len()>0 {
+                            ans.map.insert(r,partial.to_string());
+                        }
+                    } else {
+                        if long_str.len()>0 {
+                            ans.map.insert(r,long_str);
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(ans);
+    }
+    /// create sparse data from the records, this is usually done before writing to a disk image
     pub fn to_sparse_data(&self,chunk_len: usize,require_first: bool,encoder: impl TextEncoder) -> Result<SparseData,Box<dyn Error>> {
         let mut ans = SparseData::new(chunk_len);
+        ans.new_type("txt");
+        ans.new_aux(&self.record_len.to_string());
         let mut total_end_logical_chunk = 0;
         // always need to have the first chunk referenced on ProDOS
         if require_first {
@@ -215,6 +360,73 @@ impl Records {
             }
         }
         return Ok(ans);
+    }
+    /// Get records from the JSON string representation
+    pub fn from_json(json_str: &str) -> Result<Records,Box<dyn Error>> {
+        match json::parse(json_str) {
+            Ok(parsed) => {
+                let maybe_type = parsed["a2kit_type"].as_str();
+                let maybe_len = parsed["record_length"].as_usize();
+                if let (Some(typ),Some(len)) = (maybe_type,maybe_len) {
+                    if typ=="rec" {
+                        let mut records: HashMap<usize,String> = HashMap::new();
+                        let map_obj = &parsed["records"];
+                        if map_obj.entries().len()==0 {
+                            eprintln!("no object entries in json records");
+                            return Err(Box::new(CommandError::InputFormatBad));
+                        }
+                        for (key,lines) in map_obj.entries() {
+                            if let Ok(num) = usize::from_str(key) {
+                                let mut fields = String::new();
+                                for maybe_field in lines.members() {
+                                    if let Some(line) = maybe_field.as_str() {
+                                        fields = fields + line + "\n";
+                                    } else {
+                                        eprintln!("record is not a string");
+                                        return Err(Box::new(CommandError::InputFormatBad));
+                                    }
+                                }
+                                records.insert(num,fields);
+                            } else {
+                                eprintln!("key is not a number");
+                                return Err(Box::new(CommandError::InputFormatBad));
+                            }
+                        }
+                        return Ok(Self {
+                            record_len: len,
+                            map: records
+                        });    
+                    } else {
+                        eprintln!("json metadata type mismatch");
+                        return Err(Box::new(CommandError::InputFormatBad));
+                    }
+                }
+                eprintln!("json records missing metadata");
+                Err(Box::new(CommandError::InputFormatBad))
+            },
+            Err(_e) => Err(Box::new(CommandError::InputFormatBad))
+        } 
+    }
+    /// Put records into the JSON string representation, if indent=0 use unpretty form
+    pub fn to_json(&self,indent: u16) -> String {
+        let mut json_map = json::JsonValue::new_object();
+        for (r,l) in &self.map {
+            let mut json_array = json::JsonValue::new_array();
+            for line in l.lines() {
+                json_array.push(line).expect("error while building JSON array");
+            }
+            json_map[r.to_string()] = json_array;
+        }
+        let ans = json::object! {
+            a2kit_type: "rec",
+            record_length: self.record_len,
+            records: json_map
+        };
+        if indent > 0 {
+            return json::stringify_pretty(ans, indent);
+        } else {
+            return json::stringify(ans);
+        }
     }
 }
 
@@ -263,11 +475,18 @@ pub trait A2Disk {
     /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
     /// Use `encode_text` to generate data from a UTF8 string.
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
+    /// Read records from a random access text file.  This finds all possible records, some may be spurious.
+    /// The `record_length` can be set to 0 on file systems where this is stored with the file.
+    fn read_records(&self,path: &str,record_length: usize) -> Result<Records,Box<dyn Error>>;
     /// Write records to a random access text file
     fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,Box<dyn Error>>;
+    /// Read a file into a generalized representation
+    fn read_any(&self,path: &str) -> Result<SparseData,Box<dyn Error>>;
+    /// Write a file from a generalized representation
+    fn write_any(&mut self,path: &str,dat: &SparseData) -> Result<usize,Box<dyn Error>>;
     /// Get a chunk (block or sector) appropriate for this disk
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
-    /// Put a chunk (block or sector) appropriate for this disk
+    /// Put a chunk (block or sector) appropriate for this disk, n.b. this simply zaps the disk image and can easily break it
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
     /// Create disk image bytestream appropriate for the file system on this disk.
     fn to_img(&self) -> Vec<u8>;

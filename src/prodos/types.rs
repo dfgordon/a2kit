@@ -1,5 +1,4 @@
 
-use std::collections::HashMap;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use thiserror::Error;
@@ -7,83 +6,6 @@ use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
 use crate::disk_base::TextEncoder;
-
-pub const TYPE_MAP: [(u8,&str);39] = [
-    (0x00, "???"),
-    (0x01, "BAD"),
-    (0x02, "PAC"), // Pascal code
-    (0x03, "PAT"), // Pascal text
-    (0x04, "TXT"),
-    (0x05, "PAD"), // Pascal data
-    (0x06, "BIN"),
-    (0x07, "FON"), // SOS
-    (0x08, "PIC"),
-    (0x09, "BAS"), // SOS
-    (0x0a, "DAT"), // SOS
-    (0x0b, "WRD"), // SOS
-    (0x0c, "SYS"), // SOS
-    (0x0f, "DIR"),
-    (0x10, "RPD"), // SOS
-    (0x11, "RPX"), // SOS
-    (0x12, "AFD"), // SOS
-    (0x13, "AFM"), // SOS
-    (0x14, "AFR"), // SOS
-    (0x15, "SLB"), // SOS
-    (0x19, "AWD"), // AppleWorks Data Base
-    (0x1a, "AWW"), // AppleWorks Word Processor
-    (0x1b, "AWS"), // AppleWorks Spreadsheet
-    (0xef, "PSA"), // Pascal area
-    (0xf0, "CMD"),
-    (0xf1, "USR"),
-    (0xf2, "USR"),
-    (0xf3, "USR"),
-    (0xf4, "USR"),
-    (0xf5, "USR"),
-    (0xf6, "USR"),
-    (0xf7, "USR"),
-    (0xf8, "USR"),
-    (0xfa, "INT"),
-    (0xfb, "IVR"),
-    (0xfc, "BAS"),
-    (0xfd, "VAR"),
-    (0xfe, "REL"),
-    (0xff, "SYS")
-];
-
-#[derive(FromPrimitive)]
-pub enum FileType {
-    None = 0x00,
-    Text = 0x04,
-    Binary = 0x06,
-    Directory = 0x0f,
-    IntegerCode = 0xfa,
-    InteterVars = 0xfb,
-    ApplesoftCode = 0xfc,
-    ApplesoftVars = 0xfd,
-    RelocatableCode = 0xfe,
-    System = 0xff
-}
-
-#[derive(Clone,Copy,FromPrimitive,PartialEq)]
-pub enum StorageType {
-    Inactive = 0x00,
-    Seedling = 0x01,
-    Sapling = 0x02,
-    Tree = 0x03,
-    Pascal = 0x04,
-    SubDirEntry = 0x0d,
-    SubDirHeader = 0x0e,
-    VolDirHeader = 0x0f
-}
-
-#[derive(Clone,Copy,FromPrimitive)]
-pub enum Access {
-    Read = 0x01,
-    Write = 0x02,
-    Backup = 0x20,
-    Rename = 0x40,
-    Destroy = 0x80
-}
 
 #[derive(Error,Debug)]
 pub enum Error {
@@ -125,6 +47,113 @@ pub enum Error {
     FileBusy = 20,
     #[error("FILE(S) STILL OPEN")]
     FilesStillOpen = 21
+}
+
+/// Map file type codes to strings for display
+pub const TYPE_MAP_DISP: [(u8,&str);39] = [
+    (0x00, "???"),
+    (0x01, "BAD"),
+    (0x02, "PAC"), // Pascal code
+    (0x03, "PAT"), // Pascal text
+    (0x04, "TXT"),
+    (0x05, "PAD"), // Pascal data
+    (0x06, "BIN"),
+    (0x07, "FON"), // SOS
+    (0x08, "PIC"),
+    (0x09, "BAS"), // SOS
+    (0x0a, "DAT"), // SOS
+    (0x0b, "WRD"), // SOS
+    (0x0c, "SYS"), // SOS
+    (0x0f, "DIR"),
+    (0x10, "RPD"), // SOS
+    (0x11, "RPX"), // SOS
+    (0x12, "AFD"), // SOS
+    (0x13, "AFM"), // SOS
+    (0x14, "AFR"), // SOS
+    (0x15, "SLB"), // SOS
+    (0x19, "AWD"), // AppleWorks Data Base
+    (0x1a, "AWW"), // AppleWorks Word Processor
+    (0x1b, "AWS"), // AppleWorks Spreadsheet
+    (0xef, "PSA"), // Pascal area
+    (0xf0, "CMD"),
+    (0xf1, "USR"),
+    (0xf2, "USR"),
+    (0xf3, "USR"),
+    (0xf4, "USR"),
+    (0xf5, "USR"),
+    (0xf6, "USR"),
+    (0xf7, "USR"),
+    (0xf8, "USR"),
+    (0xfa, "INT"),
+    (0xfb, "IVR"),
+    (0xfc, "BAS"),
+    (0xfd, "VAR"),
+    (0xfe, "REL"),
+    (0xff, "SYS")
+];
+
+/// Enumerates a subset of ProDOS file types, available conversions are:
+/// * Type to u8: `as u8`
+/// * u8 to Type: `FromPrimitive::from_u8`
+/// * &str to Type: `Type::from_str`, str can be a number or mnemonic
+#[derive(FromPrimitive)]
+pub enum FileType {
+    None = 0x00,
+    Text = 0x04,
+    Binary = 0x06,
+    Directory = 0x0f,
+    IntegerCode = 0xfa,
+    IntegerVars = 0xfb,
+    ApplesoftCode = 0xfc,
+    ApplesoftVars = 0xfd,
+    RelocatableCode = 0xfe,
+    System = 0xff
+}
+
+impl FromStr for FileType {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        // string can be the number itself
+        if let Ok(num) = u8::from_str(s) {
+            return match FromPrimitive::from_u8(num) {
+                Some(typ) => Ok(typ),
+                _ => Err(Error::FileTypeMismatch)
+            };
+        }
+        // or a mnemonic
+        match s {
+            "bin" => Ok(Self::Binary),
+            "txt" => Ok(Self::Text),
+            "atok" => Ok(Self::ApplesoftCode),
+            "itok" => Ok(Self::IntegerCode),
+            "avar" => Ok(Self::ApplesoftVars),
+            "ivar" => Ok(Self::IntegerVars),
+            "rel" => Ok(Self::RelocatableCode),
+            "sys" => Ok(Self::System),
+            _ => Err(Error::FileTypeMismatch)
+        }
+    }
+}
+
+#[derive(Clone,Copy,FromPrimitive,PartialEq)]
+pub enum StorageType {
+    Inactive = 0x00,
+    Seedling = 0x01,
+    Sapling = 0x02,
+    Tree = 0x03,
+    Pascal = 0x04,
+    SubDirEntry = 0x0d,
+    SubDirHeader = 0x0e,
+    VolDirHeader = 0x0f
+}
+
+#[derive(Clone,Copy,FromPrimitive)]
+pub enum Access {
+    Read = 0x01,
+    Write = 0x02,
+    Backup = 0x20,
+    Rename = 0x40,
+    Destroy = 0x80
 }
 
 /// Convenience for locating an entry in a directory.

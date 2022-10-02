@@ -5,6 +5,16 @@ use a2kit::prodos;
 use a2kit::applesoft;
 use a2kit::disk_base::{ItemType,A2Disk};
 
+pub const JSON_REC: &str = "
+{
+    \"a2kit_type\": \"rec\",
+    \"record_length\": 127,
+    \"records\": {
+        \"2000\": [\"HELLO FROM TREE 2\"],
+        \"4000\": [\"HELLO FROM TREE 2\"]
+    }
+}";
+
 #[test]
 fn format() {
     let mut disk = prodos::Disk::new(280);
@@ -105,7 +115,12 @@ fn read_big() {
     lib_tokens.push(0xc4); // Virtual II added an extra byte, why?
     assert_eq!(disk_tokens,(0,lib_tokens));
 
-    // TODO: read text records
+    // check the text records
+    let recs = emulator_disk.read_records("tree1", 0).expect("failed to read tree1");
+    assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 1\n");
+    let recs = emulator_disk.read_records("tree2", 0).expect("failed to read tree2");
+    assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 2\n");
+    assert_eq!(recs.map.get(&4000).unwrap(),"HELLO FROM TREE 2\n");
 
     // check a large binary, this is a non-sparse sapling
     buf = vec![0;16384];
@@ -149,9 +164,7 @@ fn write_big() {
     let mut records = a2kit::disk_base::Records::new(128);
     records.add_record(2000, "HELLO FROM TREE 1");
     disk.write_records("tree1", &records).expect("dimg error");
-    records = a2kit::disk_base::Records::new(127);
-    records.add_record(2000, "HELLO FROM TREE 2");
-    records.add_record(4000, "HELLO FROM TREE 2");
+    let records = a2kit::disk_base::Records::from_json(JSON_REC).expect("could not parse JSON");
     disk.write_records("tree2", &records).expect("dimg error");
 
     // write a large binary, this is a non-sparse sapling

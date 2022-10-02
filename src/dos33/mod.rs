@@ -147,7 +147,14 @@ impl Disk
             data[offset + i] = self.tracks[track as usize][sector as usize][i];
         }
     }
+    /// Zap and allocate the sector in one step.
     fn write_sector(&mut self,data: &Vec<u8>,ts: [u8;2], offset: usize) {
+        self.zap_sector(data,ts,offset);
+        self.allocate_sector(ts[0],ts[1]);
+    }
+    /// Writes a sector of data from buffer `data`, starting at `offset` within the buffer.
+    /// If `data` is shorter than the sector, trailing bytes are unaffected.
+    fn zap_sector(&mut self,data: &Vec<u8>,ts: [u8;2], offset: usize) {
         // copy data to track and sector
         let bytes = u16::from_le_bytes(self.vtoc.bytes) as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
@@ -159,8 +166,6 @@ impl Disk
         for i in 0..actual_len as usize {
             self.tracks[track as usize][sector as usize][i] = data[offset + i];
         }
-        // update the VTOC
-        self.allocate_sector(track,sector);
     }
     /// Create a standard DOS 3.3 small volume (140K)
     pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
@@ -286,8 +291,8 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Scan the directory sectors to find the tslist of the named file
-    fn get_tslist_sector(&self,name: &str) -> [u8;2] {
+    /// Scan the directory sectors to find the tslist of the named file and the file type
+    fn get_tslist_sector(&self,name: &str) -> ([u8;2],u8) {
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
@@ -297,12 +302,12 @@ impl Disk
             let dir = DirectorySector::from_bytes(&buf);
             for entry in dir.entries.as_ref() {
                 if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
-                    return [entry.tsl_track,entry.tsl_sector];
+                    return ([entry.tsl_track,entry.tsl_sector],entry.file_type);
                 }
             }
             ts = [dir.next_track,dir.next_sector];
             if ts == [0,0] {
-                return ts;
+                return (ts,0);
             }
         }
         panic!("the disk image directory seems to be damaged");
@@ -311,15 +316,15 @@ impl Disk
     /// when it is expected to be sequential.
     fn read_file(&self,name: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
         // resulting vector will be padded modulo 256
-        let mut next_tslist = self.get_tslist_sector(name);
+        let (mut next_tslist,ftype) = self.get_tslist_sector(name);
         if next_tslist==[0,0] {
             return Err(Box::new(Error::FileNotFound));
         }
         let mut ans = disk_base::SparseData::new(256);
         let mut buf = vec![0;256];
+        let mut count: usize = 0;
         // loop up to a maximum, if it is reached panic
         for _try in 0..types::MAX_TSLIST_REPS {
-            let mut count: usize = 0;
             self.read_sector(&mut buf,next_tslist,0);
             let tslist = TrackSectorList::from_bytes(&buf);
             for p in 0..self.vtoc.max_pairs as usize {
@@ -332,6 +337,7 @@ impl Disk
                 count += 1;
             }
             if tslist.next_track==0 {
+                ans.new_type(&ftype.to_string());
                 return Ok(ans);
             }
             next_tslist = [tslist.next_track,tslist.next_sector];
@@ -340,10 +346,9 @@ impl Disk
     }
     /// Write any sparse or sequential file.  Use `SparseData::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
-    /// The creator of `SparseData` must ensure that the first sector is allocated.
     /// Unlike DOS, nothing is written unless there is enough space for all the data.
-    fn write_file(&mut self,name: &str, dat: &disk_base::SparseData, type_code: u8) -> Result<usize,Box<dyn std::error::Error>> {
-        let named_ts = self.get_tslist_sector(name);
+    fn write_file(&mut self,name: &str, dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
+        let (named_ts,_ftype) = self.get_tslist_sector(name);
         if named_ts==[0,0] {
             // this is a new file
             // unlike DOS, we do not write anything unless there is room
@@ -369,7 +374,10 @@ impl Disk
             let mut dir = DirectorySector::from_bytes(&dir_buf);
             dir.entries[e as usize].tsl_track = tslist_ts[0];
             dir.entries[e as usize].tsl_sector = tslist_ts[1];
-            dir.entries[e as usize].file_type = type_code;
+            match Type::from_str(&dat.fs_type) {
+                Ok(t) => dir.entries[e as usize].file_type = t as u8,
+                Err(e) => return Err(Box::new(e))
+            } 
             dir.entries[e as usize].name = string_to_file_name(name);
             dir.entries[e as usize].sectors = [tslist_sectors as u8 + data_sectors as u8 ,0];
             self.write_sector(&dir.to_bytes(), ts, 0);
@@ -467,7 +475,7 @@ impl Disk
 }
 
 impl disk_base::A2Disk for Disk {
-    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
@@ -570,7 +578,7 @@ impl disk_base::A2Disk for Disk {
             Some(v) => [file.to_bytes(),v.clone()].concat(),
             None => file.to_bytes()
         };
-        return self.write_file(name, &disk_base::SparseData::desequence(256, &padded), Type::Binary as u8);
+        return self.write_file(name, &disk_base::SparseData::desequence(256, &padded).new_type("bin"));
     }
     fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
@@ -581,28 +589,44 @@ impl disk_base::A2Disk for Disk {
     fn save(&mut self,name: &str, dat: &Vec<u8>, typ: disk_base::ItemType, trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::TokenizedProgram::pack(&dat,trailing);
         let fs_type = match typ {
-            disk_base::ItemType::ApplesoftTokens => Type::Applesoft,
-            disk_base::ItemType::IntegerTokens => Type::Integer,
+            disk_base::ItemType::ApplesoftTokens => "atok",
+            disk_base::ItemType::IntegerTokens => "itok",
             _ => panic!("attempt to SAVE non-BASIC data type")
         };
-        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()), fs_type as u8);
+        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()).new_type(fs_type));
     }
     fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
-            Ok(v) => {
-                Ok((0,types::SequentialText::from_bytes(&v.sequence()).text))
+            Ok(sd) => {
+                Ok((0,types::SequentialText::from_bytes(&sd.sequence()).text))
             },
             Err(e) => Err(e)
         }
     }
     fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let file = types::SequentialText::pack(&dat);
-        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()), Type::Text as u8);
+        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()).new_type("txt"));
+    }
+    fn read_records(&self,name: &str,record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
+        if record_length==0 {
+            eprintln!("DOS 3.3 requires specifying a non-zero record length");
+            return Err(Box::new(Error::Range));
+        }
+        let encoder = Encoder::new(Some(0x8d));
+        match self.read_file(name) {
+            Ok(sd) => {
+                match disk_base::Records::from_sparse_data(&sd,record_length,encoder) {
+                    Ok(ans) => Ok(ans),
+                    Err(e) => Err(e)
+                }
+            },
+            Err(e) => return Err(e)
+        }
     }
     fn write_records(&mut self,name: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x8d));
         if let Ok(sparse_data) = records.to_sparse_data(256,false,encoder) {
-            return self.write_file(name, &sparse_data,Type::Text as u8);
+            return self.write_file(name, &sparse_data);
         } else {
             Err(Box::new(Error::SyntaxError))
         }
@@ -626,11 +650,21 @@ impl disk_base::A2Disk for Disk {
                 if dat.len()>256 || sector > self.vtoc.tracks as usize*self.vtoc.sectors as usize {
                     return Err(Box::new(Error::Range));
                 }
-                self.write_sector(&dat,[(sector/16) as u8,(sector%16) as u8],0);
+                self.zap_sector(&dat,[(sector/16) as u8,(sector%16) as u8],0);
                 Ok(dat.len())
             },
             Err(e) => Err(Box::new(e))
         }
+    }
+    fn read_any(&self,name: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
+        return self.read_file(name);
+    }
+    fn write_any(&mut self,name: &str,dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
+        if dat.chunk_len!=256 {
+            eprintln!("chunk length {} is incompatible with DOS 3.3",dat.chunk_len);
+            return Err(Box::new(Error::Range));
+        }
+        return self.write_file(name,dat);
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::pack(&dat);
@@ -643,7 +677,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,ref_con: u16) -> Vec<usize> {
+    fn standardize(&self,_ref_con: u16) -> Vec<usize> {
         return vec![17*16*256];
     }
     fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {

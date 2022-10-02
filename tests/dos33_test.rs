@@ -5,6 +5,16 @@ use a2kit::disk_base::TextEncoder;
 use a2kit::disk_base::{ItemType,A2Disk};
 use a2kit::applesoft;
 
+pub const JSON_REC: &str = "
+{
+    \"a2kit_type\": \"rec\",
+    \"record_length\": 127,
+    \"records\": {
+        \"2000\": [\"HELLO FROM TREE 2\"],
+        \"4000\": [\"HELLO FROM TREE 2\"]
+    }
+}";
+
 #[test]
 fn format() {
     // DOS tracks can vary some depending on who did the formatting.
@@ -18,7 +28,7 @@ fn format() {
 #[test]
 fn read_small() {
     // Formatting: Copy2Plus, Writing: Virtual II
-    // This tests a small BASIC program, large binary, and two sparse text files
+    // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos33-smallfiles.dsk")).expect("failed to read test image file");
     let emulator_disk = a2kit::create_disk_from_bytestream(&img);
 
@@ -49,7 +59,7 @@ fn read_small() {
 #[test]
 fn write_small() {
     // Formatting: Copy2Plus, Writing: Virtual II
-    // This tests a small BASIC program, large binary, and two sparse text files
+    // This tests a small BASIC program, binary, and text file
     let mut disk = dos33::Disk::new();
     disk.format(254,false,17);
 
@@ -127,7 +137,12 @@ fn read_big() {
     lib_tokens.push(0x43); // Virtual II added an extra byte, why?
     assert_eq!(disk_tokens,(0,lib_tokens));
 
-    // TODO: read text records
+    // check the text records
+    let recs = emulator_disk.read_records("tree1", 128).expect("failed to read tree1");
+    assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 1\n");
+    let recs = emulator_disk.read_records("tree2", 127).expect("failed to read tree2");
+    assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 2\n");
+    assert_eq!(recs.map.get(&4000).unwrap(),"HELLO FROM TREE 2\n");
 
     // check a large binary (sapling terminology is vestigial)
     buf = vec![0;16384];
@@ -167,13 +182,11 @@ fn write_big() {
     tokens.push(0x43); // Virtual II added this and counted it, n.b. also the trailing byte it did not count
     disk.save("make.big",&tokens,ItemType::ApplesoftTokens,Some(&vec![0x41])).expect("dimg error");
 
-    // make tree files using random access text module
+    // make tree files directly and from JSON
     let mut records = a2kit::disk_base::Records::new(128);
     records.add_record(2000, "HELLO FROM TREE 1");
     disk.write_records("tree1", &records).expect("dimg error");
-    records = a2kit::disk_base::Records::new(127);
-    records.add_record(2000, "HELLO FROM TREE 2");
-    records.add_record(4000, "HELLO FROM TREE 2");
+    let records = a2kit::disk_base::Records::from_json(JSON_REC).expect("could not parse JSON");
     disk.write_records("tree2", &records).expect("dimg error");
 
     // write a large binary (sapling terminology is vestigial)

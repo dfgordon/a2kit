@@ -249,6 +249,9 @@ impl Entry {
     pub fn aux(&self) -> u16 {
         return u16::from_le_bytes(self.aux_type);
     }
+    pub fn ftype(&self) -> u8 {
+        return self.file_type;
+    }
     pub fn set_eof(&mut self,bytes: usize) {
         let inc = u32::to_le_bytes(bytes as u32);
         self.eof = [inc[0],inc[1],inc[2]];
@@ -326,7 +329,7 @@ impl Entry {
 /// Intended use is for CATALOG.
 impl fmt::Display for Entry {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP);
+        let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let mut create_time = "<NO DATE>".to_string();
         let mut mod_time = "<NO DATE>".to_string();
         if self.create_time!=[0,0,0,0] {

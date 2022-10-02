@@ -91,7 +91,14 @@ impl Disk {
             data[offset + i] = self.blocks[iblock][i];
         }
     }
+    /// Write and allocate the block in one step.
     fn write_block(&mut self,data: &Vec<u8>, iblock: usize, offset: usize) {
+        self.zap_block(data,iblock,offset);
+        self.allocate_block(iblock);
+    }
+    /// Writes a block of data from buffer `data`, starting at `offset` within the buffer.
+    /// If `data` is shorter than the block, trailing bytes are unaffected.
+    fn zap_block(&mut self,data: &Vec<u8>, iblock: usize, offset: usize) {
         let bytes = 512;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in write block"),
@@ -101,8 +108,6 @@ impl Disk {
         for i in 0..actual_len as usize {
             self.blocks[iblock][i] = data[offset + i];
         }
-        // update the volume directory's bitmap
-        self.allocate_block(iblock);
     }
     fn get_available_block(&self) -> Option<u16> {
         for block in 0..self.blocks.len() {
@@ -488,6 +493,7 @@ impl Disk {
         let mut eof: usize = 0;
         let dir = self.get_directory(loc.block as usize);
         let mut entry = dir.get_entry(&loc);
+        let mut blocks_available = self.num_free_blocks();
 
         for count in 0..dat.end() {
 
@@ -525,8 +531,11 @@ impl Disk {
                 }
                 _ => panic!("unexpected storage type during write")
             };
-            if blocks_needed > self.num_free_blocks() {
+            // calling num_free_blocks() here slows down tests enormously
+            if blocks_needed > blocks_available {
                 return Err(Error::DiskFull);
+            } else {
+                blocks_available -= blocks_needed;
             }
 
             // Closure to write the data block.
@@ -818,13 +827,16 @@ impl disk_base::A2Disk for Disk {
         }
     }
     fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        match self.find_file(path) {
-            Ok(loc) => {
-                self.modify(&loc,None,Some(name))
-            },
-            Err(e) => Err(Box::new(e))
+        if let Ok(loc) = self.find_file(path) {
+            return self.modify(&loc,None,Some(name));
         }
-        // TODO: what if it is a directory?
+        if let Ok(ptr) = self.find_dir_key_block(path) {
+            let dir = self.get_directory(ptr as usize);
+            if let Some(parent_loc) = dir.parent_entry_loc() {
+                return self.modify(&parent_loc,None,Some(name));
+            }
+        }
+        return Err(Box::new(Error::PathNotFound));
     }
     fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
@@ -868,7 +880,7 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: disk_base::ItemType, trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: disk_base::ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
@@ -923,6 +935,20 @@ impl disk_base::A2Disk for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
+    fn read_records(&self,path: &str,_record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
+        let encoder = Encoder::new(Some(0x0d));
+        match self.find_file(path) {
+            Ok(loc) => {
+                let entry = self.read_entry(&loc);
+                let sd = self.read_file(&entry);
+                match disk_base::Records::from_sparse_data(&sd,entry.aux() as usize,encoder) {
+                    Ok(ans) => Ok(ans),
+                    Err(e) => Err(e)
+                }
+            },
+            Err(e) => return Err(Box::new(e))
+        }
+    }
     fn write_records(&mut self,path: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
         if let Ok(sparse_data) = records.to_sparse_data(512,true,encoder) {
@@ -965,10 +991,51 @@ impl disk_base::A2Disk for Disk {
                 if dat.len() > 512 || block>=self.blocks.len() {
                     return Err(Box::new(Error::Range));
                 }
-                self.write_block(dat,block,0);
+                self.zap_block(dat,block,0);
                 Ok(dat.len())
             },
             Err(e) => Err(Box::new(e))
+        }
+    }
+    fn read_any(&self,path: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
+        match self.find_file(path) {
+            Ok(loc) => {
+                let entry = self.read_entry(&loc);
+                let mut sd = self.read_file(&entry);
+                sd.new_type(&entry.ftype().to_string());
+                sd.new_aux(&entry.aux().to_string());
+                return Ok(sd);
+            },
+            Err(e) => return Err(Box::new(e))
+        }
+    }
+    fn write_any(&mut self,path: &str,dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
+        if dat.chunk_len!=512 {
+            eprintln!("chunk length {} is incompatible with ProDOS",dat.chunk_len);
+            return Err(Box::new(Error::Range));
+        }
+        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
+            Ok((name,key_block,loc,new_block)) => {
+                // update the file count in the parent key block
+                let mut dir = self.get_directory(key_block as usize);
+                dir.inc_file_count();
+                self.write_block(&dir.to_bytes(),key_block as usize,0);
+                // write the entry into the parent directory (may not be key block)
+                let ftype = match FileType::from_str(&dat.fs_type) {
+                    Ok(t) => t,
+                    Err(e) => return Err(Box::new(e))
+                };
+                match u16::from_str(&dat.aux) {
+                    Ok(aux) => self.write_entry(&loc,&Entry::create_file(&name, ftype, aux,new_block, key_block, None)),
+                    Err(e) => return Err(Box::new(e))
+                }
+                // write blocks
+                match self.write_file(loc,dat) {
+                    Ok(len) => Ok(len),
+                    Err(e) => Err(Box::new(e))
+                }
+            },
+            Err(e) => return Err(Box::new(e))
         }
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
