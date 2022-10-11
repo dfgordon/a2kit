@@ -4,11 +4,14 @@ pub mod applesoft;
 pub mod integer;
 pub mod walker;
 pub mod disk_base;
+pub mod woz;
+pub mod disk525;
 
 use crate::disk_base::A2Disk;
 use std::io::Read;
 
-/// Given a bytestream try to identify the type of disk image and create a disk object
+/// Given a bytestream try to identify the type of disk image and create a disk object.
+/// N.b. this discards metadata and track layout details, only the high level data remains.
 pub fn create_disk_from_bytestream(disk_img_data: &Vec<u8>) -> Box<dyn A2Disk> {
     if let Some(disk) = dos33::Disk::from_img(&disk_img_data) {
         return Box::new(disk);
@@ -21,17 +24,21 @@ pub fn create_disk_from_bytestream(disk_img_data: &Vec<u8>) -> Box<dyn A2Disk> {
     }
 }
 
+/// Calls `create_disk_from_bytestream` getting the bytes from stdin
 pub fn create_disk_from_stdin() -> Box<dyn A2Disk> {
     let mut disk_img_data = Vec::new();
     std::io::stdin().read_to_end(&mut disk_img_data).expect("failed to read input stream");
     return create_disk_from_bytestream(&disk_img_data);
 }
 
+/// Calls `create_disk_from_bytestream` getting the bytes from a file.
+/// The pathname must already be in the right format for the file system.
 pub fn create_disk_from_file(img_path: &str) -> Box<dyn A2Disk> {
     let disk_img_data = std::fs::read(img_path).expect("failed to read file");
     return create_disk_from_bytestream(&disk_img_data);
 }
 
+/// Display binary to stdout in columns of hex, +ascii, and -ascii
 pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
     let mut slice_start = 0;
     loop {

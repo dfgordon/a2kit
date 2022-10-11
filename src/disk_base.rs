@@ -1,4 +1,4 @@
-//! # Base Layer for Disk Operations
+//! # Base Layer for File System Operations
 //! This module defines types and traits for use with any supported disk image.
 //! Ideally this should encompass any file system.
 //! The structure is geared toward DOS and ProDOS at present.
@@ -25,6 +25,13 @@ pub enum CommandError {
     OutOfRange,
     #[error("Input source could not be interpreted")]
     InputFormatBad
+}
+
+#[derive(PartialEq)]
+pub enum DiskKind {
+    A2_525_13,
+    A2_525_16,
+    A2_35
 }
 
 #[derive(PartialEq)]
@@ -444,8 +451,13 @@ impl fmt::Display for Records {
     }
 }
 
-/// Abstract disk interface mirroring BASIC commands.
-/// This provides a uniform interface applicable to DOS or ProDOS.
+pub trait DiskImage {
+    fn update_from_dsk(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
+    fn to_dsk(&self) -> Result<Vec<u8>,Box<dyn Error>>;
+}
+
+/// Abstract disk interface applicable to DOS or ProDOS.
+/// Provides BASIC-like file commands, chunk operations, and `any` type operations.
 pub trait A2Disk {
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn Error>>;

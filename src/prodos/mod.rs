@@ -5,7 +5,6 @@
 //! * Single volume images only
 
 mod boot;
-mod disk525;
 pub mod types;
 mod directory;
 
@@ -19,6 +18,7 @@ use crate::disk_base;
 use crate::disk_base::TextEncoder;
 use crate::applesoft;
 use crate::create_disk_from_file;
+use crate::disk525;
 
 pub struct Disk {
     blocks: Vec<[u8;512]>,

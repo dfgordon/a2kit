@@ -135,7 +135,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                 eprintln!("Writing {} bytes",buf.len());
                 std::io::stdout().write_all(&buf).expect("write to stdout failed");
                 return Ok(());
-            }
+            },
             DiskImageType::WOZ => {
                 return Err(Box::new(CommandError::UnsupportedItemType));
             }
@@ -526,7 +526,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         }
     }
     
-    eprintln!("No subcommand was found");
+    eprintln!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
 
 }
