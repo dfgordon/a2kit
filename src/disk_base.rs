@@ -27,24 +27,32 @@ pub enum CommandError {
     InputFormatBad
 }
 
-#[derive(PartialEq)]
+#[derive(thiserror::Error,Debug)]
+pub enum ImageError {
+    #[error("File is incompatible with the image format")]
+    FileIncompatible
+}
+
+#[derive(PartialEq,Clone,Copy)]
 pub enum DiskKind {
     A2_525_13,
     A2_525_16,
-    A2_35
+    A2_35,
+    A2Max
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq,Clone,Copy)]
 pub enum DiskImageType {
     DO,
     PO,
-    WOZ
+    WOZ,
+    WOZ2
 }
 
 /// Types of files that may be distinguished by the file system.
 /// This will have to be mapped to a similar enumeration at lower levels
 /// in order to obtain the binary type code.
-#[derive(PartialEq)]
+#[derive(PartialEq,Clone,Copy)]
 pub enum ItemType {
     Raw,
     Binary,
@@ -61,13 +69,26 @@ pub enum ItemType {
     System
 }
 
+impl FromStr for DiskKind {
+    type Err = CommandError;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        match s {
+            "5.25in" => Ok(Self::A2_525_16),
+            "3.5in" => Ok(Self::A2_35),
+            "hdmax" => Ok(Self::A2Max),
+            _ => Err(CommandError::UnknownItemType)
+        }
+    }
+}
+
 impl FromStr for DiskImageType {
     type Err = CommandError;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
             "do" => Ok(Self::DO),
             "po" => Ok(Self::PO),
-            "woz" => Ok(Self::WOZ),
+            "woz1" => Ok(Self::WOZ),
+            "woz2" => Ok(Self::WOZ2),
             _ => Err(CommandError::UnknownItemType)
         }
     }
@@ -452,8 +473,13 @@ impl fmt::Display for Records {
 }
 
 pub trait DiskImage {
-    fn update_from_dsk(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
-    fn to_dsk(&self) -> Result<Vec<u8>,Box<dyn Error>>;
+    fn is_do_or_po(&self) -> bool { false }
+    fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
+    fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
+    fn to_do(&self) -> Result<Vec<u8>,Box<dyn Error>>;
+    fn to_po(&self) -> Result<Vec<u8>,Box<dyn Error>>;
+    fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
+    fn to_bytes(&self) -> Vec<u8>;
 }
 
 /// Abstract disk interface applicable to DOS or ProDOS.
@@ -500,6 +526,8 @@ pub trait A2Disk {
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Put a chunk (block or sector) appropriate for this disk, n.b. this simply zaps the disk image and can easily break it
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
+    /// Underlying ordering of this file system
+    fn get_ordering(&self) -> DiskImageType;
     /// Create disk image bytestream appropriate for the file system on this disk.
     fn to_img(&self) -> Vec<u8>;
     /// Convert file system text to a UTF8 string

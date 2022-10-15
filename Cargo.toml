@@ -13,6 +13,7 @@ homepage = "https://github.com/dfgordon/a2kit"
 
 [dependencies]
 log = "0.4.17"
+env_logger = "0.9.1"
 hex = "0.4.3"
 tree-sitter = "0.20.8"
 tree-sitter-applesoft = "2.0.2"

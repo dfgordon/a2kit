@@ -450,7 +450,8 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Test the image for compatibility and return Some(disk) or None.
+    /// Return a disk object if the image data verifies as DOS ordered,
+    /// otherwise return None.  Checks for matches to byte counts and selected VTOC fields.
     pub fn from_img(img: &Vec<u8>) -> Option<Self> {
         let mut disk = Self::new();
         let tlen = 35 as usize;
@@ -700,6 +701,9 @@ impl disk_base::A2Disk for Disk {
                 }
             }
         }
+    }
+    fn get_ordering(&self) -> disk_base::DiskImageType {
+        return disk_base::DiskImageType::DO;
     }
     fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();

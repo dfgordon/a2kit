@@ -1,41 +1,51 @@
 use clap::{arg,Command};
+use log::{info};
+use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
-use a2kit::disk_base::{DiskImageType,ItemType,CommandError,A2Disk,Records,SparseData};
+use a2kit::disk_base::*;
 use a2kit::dos33;
 use a2kit::prodos;
 use a2kit::walker;
 use a2kit::applesoft;
 use a2kit::integer;
+use a2kit::img_po;
+use a2kit::img_do;
+use a2kit::img_woz1;
+use a2kit::img_woz2;
 
 const RCH: &str = "unreachable was reached";
 
 fn main() -> Result<(),Box<dyn std::error::Error>>
 {
+    env_logger::init();
     #[cfg(windows)]
     colored::control::set_virtual_terminal(true).unwrap();
     let long_help =
-"This tool is intended to be used with redirection and pipes.
-PowerShell may require you to wrap the pipeline in the native shell.
+"a2kit is always invoked with exactly one of several subcommands.
+The subcommands are generally designed to function as nodes in a pipeline.
+PowerShell users may need to wrap the pipeline in a native shell.
+Set RUST_LOG environment variable to control logging level.
 
 Examples:
-create DOS image: `a2kit mkdsk -v 254 -t do > myimg.do`
-create ProDOS image: `a2kit mkdsk -v disk.new -t po > myimg.po`
-Applesoft line entry checker: `a2kit verify -t atxt`
-Applesoft error checker: `a2kit get -f myprog.bas | a2kit verify -t atxt`
-Tokenize to file: `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt > prog.atok
-Tokenize to image: `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \\
-                    | a2kit put -f prog -t atok -d myimg.do`
-Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize -t atok";
+---------
+create DOS image:      `a2kit mkdsk -v 254 -t woz1 > myimg.woz`
+create ProDOS image:   `a2kit mkdsk -v disk.new -t po > myimg.po`
+Language line entry:   `a2kit verify -t atxt`
+Language file check:   `a2kit get -f myprog.bas | a2kit verify -t atxt`
+Tokenize to file:      `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt > prog.atok
+Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \\
+                           | a2kit put -f prog -t atok -d myimg.dsk`
+Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
     .after_long_help(long_help)
     .subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number"))
-        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do","po"]))
+        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do","po","woz1","woz2"]))
         .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values([
             "5.25in",
             "3.5in",
@@ -45,6 +55,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     .subcommand(Command::new("reorder")
         .arg(arg!(-d --dimg <PATH> "path to disk image"))
         .about("Put a disk image into its natural order"))
+    // .subcommand(Command::new("reimage")
+    //     .arg(arg!(-d --dimg <PATH> "path to old disk image"))
+    //     .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(["do","po","woz1","woz2"]))
+    //     .about("Transform an image into another type of image"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
@@ -95,51 +109,170 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     .get_matches();
     
     // Put a disk image into its natural ordering
+
     if let Some(cmd) = matches.subcommand_matches("reorder") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let disk = a2kit::create_disk_from_file(&path_to_img);
-        std::io::stdout().write_all(&disk.to_img()).expect("write to stdout failed");
-        return Ok(());
+        if let Some((img,disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            if img.is_do_or_po() {
+                std::io::stdout().write_all(&disk.to_img()).expect("write to stdout failed");
+                return Ok(());
+            } else {
+                eprintln!("cannot reorder this type of disk image");
+                return Err(Box::new(ImageError::FileIncompatible));
+            }
+        }
+        return Err(Box::new(ImageError::FileIncompatible));
     }
 
     // Create a disk image
-    // TODO: allow creation of DOS ordered ProDOS
 
     if let Some(cmd) = matches.subcommand_matches("mkdsk") {
+        let dos_vol = u8::from_str(cmd.value_of("volume").expect(RCH));
+        let kind = cmd.value_of("kind").expect(RCH);
+        let (blocks,floppy) = match kind {
+            "5.25in" => (280,true),
+            "3.5in" => (1600,true),
+            "hdmax" => (65535,false),
+            _ => (280,true)
+        };
+        match u8::from_str(cmd.value_of("volume").expect(RCH)) {
+            Ok(vol) if vol<1 || vol>254 => {
+                eprintln!("volume must be from 1 to 254");
+                return Err(Box::new(CommandError::OutOfRange));
+            },
+            _ => {}
+        }
+        let mut bytestream: Option<Vec<u8>> = None;
         match DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap() {
-            DiskImageType::DO => match u8::from_str(cmd.value_of("volume").expect(RCH)) {
-                Ok(vol) if vol>=1 && vol<=254 => {
+            DiskImageType::DO => match dos_vol {
+                Ok(vol) => {
+                    // DOS ordered DOS disk
                     let mut disk = dos33::Disk::new();
-                    disk.format(254,true,17);
-                    let buf = disk.to_img();
-                    eprintln!("writing {} bytes",buf.len());
-                    std::io::stdout().write_all(&buf).expect("write to stdout failed");
-                    return Ok(());
+                    disk.format(vol,true,17);
+                    bytestream = Some(disk.to_img());
                 },
                 _ => {
-                    eprintln!("volume must be from 1 to 254");
-                    return Err(Box::new(CommandError::OutOfRange));
+                    // DOS ordered ProDOS disk
+                    let mut disk = prodos::Disk::new(blocks);
+                    disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
+                    if let Some(img) = img_po::PO::from_bytes(&disk.to_img()) {
+                        match img.to_do() {
+                            Ok(bytes) => bytestream = Some(bytes),
+                            Err(e) => return Err(e)
+                        }
+                    }
                 }
             },
-            DiskImageType::PO => {
-                let kind = cmd.value_of("kind").expect(RCH);
-                let (blocks,floppy) = match kind {
-                    "5.25in" => (280,true),
-                    "3.5in" => (1600,true),
-                    "hdmax" => (65535,false),
-                    _ => (280,true)
-                };
-                let mut disk = prodos::Disk::new(blocks);
-                disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
-                let buf = disk.to_img();
-                eprintln!("Writing {} bytes",buf.len());
-                std::io::stdout().write_all(&buf).expect("write to stdout failed");
-                return Ok(());
+            DiskImageType::PO => match dos_vol {
+                Ok(vol) => {
+                    // ProDOS ordered DOS disk
+                    let mut disk = dos33::Disk::new();
+                    disk.format(vol,true,17);
+                    if let Some(img) = img_do::DO::from_bytes(&disk.to_img()) {
+                        match img.to_po() {
+                            Ok(bytes) => bytestream = Some(bytes),
+                            Err(e) => return Err(e)
+                        }
+                    }
+                },
+                _ => {
+                    // ProDOS ordered ProDOS disk
+                    let mut disk = prodos::Disk::new(blocks);
+                    disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
+                    bytestream = Some(disk.to_img());
+                }
             },
-            DiskImageType::WOZ => {
-                return Err(Box::new(CommandError::UnsupportedItemType));
+            DiskImageType::WOZ => match dos_vol {
+                Ok(vol) => {
+                    // DOS disk
+                    match DiskKind::from_str(kind) {
+                        Ok(DiskKind::A2_525_16) => {
+                            let mut disk = dos33::Disk::new();
+                            let mut woz = img_woz1::Woz1::create(DiskKind::A2_525_16);
+                            disk.format(vol,true,17);
+                            if let Ok(()) = woz.update_from_do(&disk.to_img()) {
+                                bytestream = Some(woz.to_bytes());
+                            }
+                        },
+                        Ok(_) => {
+                            eprintln!("Only 5.25 inch disks are supported with WOZ images");
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        },
+                        Err(e) => {
+                            return Err(Box::new(e))
+                        }
+                    }
+                },
+                _ => {
+                    // ProDOS disk
+                    match DiskKind::from_str(kind) {
+                        Ok(DiskKind::A2_525_16) => {
+                            let mut disk = prodos::Disk::new(blocks);
+                            let mut woz = img_woz1::Woz1::create(DiskKind::A2_525_16);
+                            disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
+                            if let Ok(()) = woz.update_from_po(&disk.to_img()) {
+                                bytestream = Some(woz.to_bytes());
+                            }
+                        },
+                        Ok(_) => {
+                            eprintln!("Only 5.25 inch disks are supported with WOZ images");
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        },
+                        Err(e) => {
+                            return Err(Box::new(e))
+                        }
+                    }
+                }
+            },
+            DiskImageType::WOZ2 => match dos_vol {
+                Ok(vol) => {
+                    // DOS disk
+                    match DiskKind::from_str(kind) {
+                        Ok(DiskKind::A2_525_16) => {
+                            let mut disk = dos33::Disk::new();
+                            let mut woz = img_woz2::Woz2::create(DiskKind::A2_525_16);
+                            disk.format(vol,true,17);
+                            if let Ok(()) = woz.update_from_do(&disk.to_img()) {
+                                bytestream = Some(woz.to_bytes());
+                            }
+                        },
+                        Ok(_) => {
+                            eprintln!("Only 5.25 inch disks are supported with WOZ images");
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        },
+                        Err(e) => {
+                            return Err(Box::new(e))
+                        }
+                    }
+                },
+                _ => {
+                    // ProDOS disk
+                    match DiskKind::from_str(kind) {
+                        Ok(DiskKind::A2_525_16) => {
+                            let mut disk = prodos::Disk::new(blocks);
+                            let mut woz = img_woz2::Woz2::create(DiskKind::A2_525_16);
+                            disk.format(&cmd.value_of("volume").expect(RCH).to_string(),floppy,None);
+                            if let Ok(()) = woz.update_from_po(&disk.to_img()) {
+                                bytestream = Some(woz.to_bytes());
+                            }
+                        },
+                        Ok(_) => {
+                            eprintln!("Only 5.25 inch disks are supported with WOZ images");
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        },
+                        Err(e) => {
+                            return Err(Box::new(e))
+                        }
+                    }
+                }
             }
         };
+        if let Some(buf) = bytestream {
+            eprintln!("writing {} bytes",buf.len());
+            std::io::stdout().write_all(&buf).expect("write to stdout failed");
+            return Ok(());
+        }
+        return Err(Box::new(CommandError::UnsupportedItemType));
     }
 
     // Catalog a disk image
@@ -267,60 +400,56 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
     if let Some(cmd) = matches.subcommand_matches("mkdir") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.create(&path_in_img) {
-            Ok(()) => {
-                let updated_img_data = disk.to_img();
-                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
-                return Ok(())
-            },
-            Err(e) => return Err(e)
-        };
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.create(&path_in_img) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::InputFormatBad));
+        }
     }
 
     // Delete a file or directory
     if let Some(cmd) = matches.subcommand_matches("delete") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.delete(&path_in_img) {
-            Ok(()) => {
-                let updated_img_data = disk.to_img();
-                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
-                return Ok(())
-            },
-            Err(e) => return Err(e)
-        };
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.delete(&path_in_img) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::InputFormatBad));
+        }
     }
 
     // Lock a file or directory
     if let Some(cmd) = matches.subcommand_matches("lock") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.lock(&path_in_img) {
-            Ok(()) => {
-                let updated_img_data = disk.to_img();
-                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
-                return Ok(())
-            },
-            Err(e) => return Err(e)
-        };
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.lock(&path_in_img) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::InputFormatBad));
+        }
     }
 
     // Unlock a file or directory
     if let Some(cmd) = matches.subcommand_matches("unlock") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.unlock(&path_in_img) {
-            Ok(()) => {
-                let updated_img_data = disk.to_img();
-                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
-                return Ok(())
-            },
-            Err(e) => return Err(e)
-        };
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.unlock(&path_in_img) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::InputFormatBad));
+        }
     }
 
     // Rename a file or directory
@@ -328,15 +457,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let name = String::from(cmd.value_of("name").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let mut disk = a2kit::create_disk_from_file(&path_to_img);
-        match disk.rename(&path_in_img,&name) {
-            Ok(()) => {
-                let updated_img_data = disk.to_img();
-                std::fs::write(&path_to_img,updated_img_data).expect("could not write disk image to disk");
-                return Ok(())
-            },
-            Err(e) => return Err(e)
-        };
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.rename(&path_in_img,&name) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::InputFormatBad));
+        }
     }
 
     // Put file inside disk image, or save to local
@@ -368,54 +496,54 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.do | a2kit detokenize
                     },
                     _ => 768 as u16
                 };
-                let mut disk = a2kit::create_disk_from_file(img_path);
-                let result = match typ {
-                    Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
-                    Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
-                    Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address,None),
-                    Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
-                        Ok(s) => match disk.encode_text(s) {
-                            Ok(encoded) => disk.write_text(&dest_path,&encoded),
-                            Err(e) => Err(e)
+                if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(img_path) {
+                    let result = match typ {
+                        Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
+                        Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
+                        Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address,None),
+                        Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match disk.encode_text(s) {
+                                Ok(encoded) => disk.write_text(&dest_path,&encoded),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::InputFormatBad));
+                            }
+                        },
+                        Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
+                        Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
+                        Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match Records::from_json(s) {
+                                Ok(recs) => disk.write_records(&dest_path,&recs),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::InputFormatBad));
+                            }
+                        },
+                        Ok(ItemType::SparseData) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match SparseData::from_json(s) {
+                                Ok(chunks) => disk.write_any(&dest_path,&chunks),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::InputFormatBad));
+                            }
                         },
                         _ => {
-                            eprintln!("could not encode data as UTF8");
-                            return Err(Box::new(CommandError::InputFormatBad));
+                            return Err(Box::new(CommandError::UnsupportedItemType));
                         }
-                    },
-                    Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
-                    Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
-                    Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
-                        Ok(s) => match Records::from_json(s) {
-                            Ok(recs) => disk.write_records(&dest_path,&recs),
-                            Err(e) => Err(e)
-                        },
-                        _ => {
-                            eprintln!("could not encode data as UTF8");
-                            return Err(Box::new(CommandError::InputFormatBad));
-                        }
-                    },
-                    Ok(ItemType::SparseData) => match std::str::from_utf8(&file_data) {
-                        Ok(s) => match SparseData::from_json(s) {
-                            Ok(chunks) => disk.write_any(&dest_path,&chunks),
-                            Err(e) => Err(e)
-                        },
-                        _ => {
-                            eprintln!("could not encode data as UTF8");
-                            return Err(Box::new(CommandError::InputFormatBad));
-                        }
-                    },
-                    _ => {
-                        return Err(Box::new(CommandError::UnsupportedItemType));
-                    }
-                };
-                return match result {
-                    Ok(_len) => {
-                        let updated_img_data = disk.to_img();
-                        std::fs::write(img_path,updated_img_data).expect("could not write disk image to disk");
-                        Ok(())
-                    }
-                    Err(e) => Err(e)
+                    };
+                    return match result {
+                        Ok(_len) => a2kit::update_img_and_save(&mut img,&disk,img_path),
+                        Err(e) => Err(e)
+                    };
+                } else {
+                    eprintln!("destination file could not be interpreted");
+                    return Err(Box::new(CommandError::InputFormatBad));
                 }
             },
 

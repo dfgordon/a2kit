@@ -666,6 +666,7 @@ impl Disk {
     /// otherwise return None.  N.b. `.dsk` images are often DOS
     /// ordered even if the image contains a ProDOS volume.
     /// Only 280 block (5.25 inch floppy) images are accepted.
+    #[deprecated(since="0.2.0", note="use `from_img` which expects PO, do reordering at the disk image level")]
     pub fn from_do_img(dimg: &Vec<u8>) -> Option<Self> {
         let block_count = dimg.len()/512;
         if dimg.len()%512 != 0 || block_count != 280 {
@@ -688,7 +689,15 @@ impl Disk {
     /// Return a disk object if the image data verifies as ProDOS ordered,
     /// otherwise return None.  The image is allowed to be any integral
     /// number of blocks up to the maximum of 65535.
+    #[deprecated(since="0.2.0", note="use `from_img` which expects PO, do reordering at the disk image level")]
     pub fn from_po_img(dimg: &Vec<u8>) -> Option<Self> {
+        return Self::from_img(dimg);
+    }
+    /// Return a disk object if the image data verifies as ProDOS ordered,
+    /// otherwise return None.  The image is allowed to be any integral
+    /// number of blocks up to the maximum of 65535.  The boot block must match
+    /// one of the boot blocks `a2kit` knows about.
+    pub fn from_img(dimg: &Vec<u8>) -> Option<Self> {
         let block_count = dimg.len()/512;
         if dimg.len()%512 != 0 || block_count > 65535 {
             return None;
@@ -1086,6 +1095,9 @@ impl disk_base::A2Disk for Disk {
                 assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
             }
         }
+    }
+    fn get_ordering(&self) -> disk_base::DiskImageType {
+        return disk_base::DiskImageType::PO;
     }
     fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();
