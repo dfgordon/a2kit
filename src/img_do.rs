@@ -43,14 +43,14 @@ impl disk_base::DiskImage for DO {
     }
     fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         if self.data.len()!=dsk.len() {
-            return Err(Box::new(disk_base::ImageError::FileIncompatible));
+            return Err(Box::new(disk_base::CommandError::UnknownFormat));
         }
         self.data = dsk.clone();
         return Ok(());
     }
     fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         if self.data.len()!=dsk.len() {
-            return Err(Box::new(disk_base::ImageError::FileIncompatible));
+            return Err(Box::new(disk_base::CommandError::UnknownFormat));
         }
         return self.update_from_do(&disk525::reorder_po_to_do(dsk, self.sectors as usize));
     }
@@ -62,5 +62,11 @@ impl disk_base::DiskImage for DO {
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();
+    }
+    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        return Err(Box::new(disk_base::CommandError::UnsupportedFormat));
+    }
+    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        return Err(Box::new(disk_base::CommandError::UnsupportedFormat));        
     }
 }

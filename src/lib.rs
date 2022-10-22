@@ -29,7 +29,8 @@
 //! hardware's allowed bit sequences.  There are disks that will not work on an emulator unless the
 //! detailed bit stream of the original is carefully reproduced.  As a result, disk image formats
 //! were invented that emulate a disk down to this level of detail.  As of this writing, the bit-level
-//! formats supported by `a2kit` are `WOZ` versions 1 and 2.
+//! formats supported by `a2kit` are `WOZ` versions 1 and 2.  High level operations with WOZ images
+//! are supported to the extent that the track format and file system are supported.
 
 pub mod dos33;
 pub mod prodos;
@@ -46,6 +47,7 @@ pub mod disk525;
 
 use crate::disk_base::{DiskImage,A2Disk};
 use std::io::Read;
+use std::fmt::Write;
 use log::{info};
 
 /// Use the sectors on an `A2Disk` to update the sectors on a `DiskImage` and save the image file
@@ -117,7 +119,8 @@ pub fn create_img_and_disk_from_bytestream(disk_img_data: &Vec<u8>) -> Option<(B
     return None;
 }
 
-/// Given a bytestream return a disk image without any file system
+/// Given a bytestream return a disk image without any file system.
+/// N.b. the ordering cannot always be determined without the file system.
 pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Option<Box<dyn DiskImage>> {
     if let Some(img) = img_woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
@@ -190,9 +193,9 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         }
         let slice = chunk[slice_start..slice_end].to_vec();
         let txt: Vec<u8> = slice.iter().map(|c| match *c {
-            x if x<32 => 46,
+            x if x<32 => '.' as u8,
             x if x<128 => x,
-            _ => 46
+            _ => '.' as u8
         }).collect();
         let neg_txt: Vec<u8> = slice.iter().map(|c| match *c {
             x if x>=160 && x<255 => x - 128,
@@ -205,14 +208,88 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         for _blank in slice_end..slice_start+16 {
             print!("   ");
         }
-        print!("+ {} ",String::from_utf8_lossy(&txt));
+        print!("|+| {} ",String::from_utf8_lossy(&txt));
         for _blank in slice_end..slice_start+16 {
             print!(" ");
         }
-        println!("- {}",String::from_utf8_lossy(&neg_txt));
+        println!("|-| {}",String::from_utf8_lossy(&neg_txt));
         slice_start += 16;
         if slice_end==chunk.len() {
             break;
         }
+    }
+}
+
+/// Display track bytes to stdout in columns of hex, track mnemonics
+pub fn display_track(start_addr: u16,trk: &Vec<u8>) {
+    let mut slice_start = 0;
+    let mut addr_count = 0;
+    let mut err_count = 0;
+    loop {
+        let row_label = start_addr as usize + slice_start;
+        let mut slice_end = slice_start + 16;
+        if slice_end > trk.len() {
+            slice_end = trk.len();
+        }
+        let mut mnemonics = String::new();
+        for i in slice_start..slice_end {
+            let bak = match i {
+                x if x>0 => trk[x-1],
+                _ => 0
+            };
+            let fwd = match i {
+                x if x+1<trk.len() => trk[x+1],
+                _ => 0
+            };
+            if !disk525::DISK_BYTES_62.contains(&trk[i]) && trk[i]!=0xaa && trk[i]!=0xd5 {
+                mnemonics += "?";
+                err_count += 1;
+            } else if addr_count>0 {
+                if addr_count%2==1 {
+                    write!(&mut mnemonics,"{:X}",disk525::decode_44([trk[i],fwd]) >> 4).unwrap();
+                } else {
+                    write!(&mut mnemonics,"{:X}",disk525::decode_44([bak,trk[i]]) & 0x0f).unwrap();
+                }
+                addr_count += 1;
+            } else {
+                mnemonics += match (bak,trk[i],fwd) {
+                    (0xff,0xff,_) => ">",
+                    (_,0xff,0xff) => ">",
+                    (_,0xd5,0xaa) => "(",
+                    (0xd5,0xaa,0x96) => "A",
+                    (0xaa,0x96,_) => {addr_count=1;":"},
+                    (0xd5,0xaa,0xad) => "D",
+                    (0xaa,0xad,_) => ":",
+                    (_,0xde,0xaa) => ":",
+                    (0xde,0xaa,0xeb) => ":",
+                    (0xaa,0xeb,_) => ")",
+                    (_,0xd5,_) => "R",
+                    (_,0xaa,_) => "R",
+                    _ => "."
+                };
+            }
+            if addr_count==9 {
+                addr_count = 0;
+            }
+        }
+        for _i in mnemonics.len()..16 {
+            mnemonics += " ";
+        }
+        print!("{:04X} : ",row_label);
+        for byte in trk[slice_start..slice_end].to_vec() {
+            print!("{:02X} ",byte);
+        }
+        for _blank in slice_end..slice_start+16 {
+            print!("   ");
+        }
+        println!("|{}|",mnemonics);
+        slice_start += 16;
+        if slice_end==trk.len() {
+            break;
+        }
+    }
+    if err_count > 0 {
+        println!();
+        println!("Encountered {} invalid bytes",err_count);
     }
 }

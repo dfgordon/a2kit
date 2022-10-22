@@ -1,5 +1,9 @@
+//! # Command Line Interface
+//! 
+//! This is a standalone main module.
+//! All sub-modules are in the library crate.
+
 use clap::{arg,Command};
-use log::{info};
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
@@ -55,10 +59,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     .subcommand(Command::new("reorder")
         .arg(arg!(-d --dimg <PATH> "path to disk image"))
         .about("Put a disk image into its natural order"))
-    // .subcommand(Command::new("reimage")
-    //     .arg(arg!(-d --dimg <PATH> "path to old disk image"))
-    //     .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(["do","po","woz1","woz2"]))
-    //     .about("Transform an image into another type of image"))
+    .subcommand(Command::new("reimage")
+        .arg(arg!(-d --dimg <PATH> "path to old disk image"))
+        .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(["do","po","woz1","woz2"]))
+        .about("Transform an image into another type of image"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
@@ -80,12 +84,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-n --name <NAME> "new name"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
         .about("rename a file or directory inside a disk image"))
+    .subcommand(Command::new("retype")
+        .arg(arg!(-f --file <PATH> "path inside disk image to retype"))
+        .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic"))
+        .arg(arg!(-a --aux <AUX> "file system auxiliary metadata"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .about("delete a file or directory inside a disk image"))
     .subcommand(Command::new("verify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
         .about("read from stdin and error check"))
     .subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","rec","any"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","track","raw_track","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"))
@@ -118,11 +128,30 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 return Ok(());
             } else {
                 eprintln!("cannot reorder this type of disk image");
-                return Err(Box::new(ImageError::FileIncompatible));
+                return Err(Box::new(CommandError::UnknownFormat));
             }
         }
-        return Err(Box::new(ImageError::FileIncompatible));
+        return Err(Box::new(CommandError::UnknownFormat));
     }
+
+    // Transform an image into another type of image
+
+    if let Some(cmd) = matches.subcommand_matches("reimage") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        // we need to get the file system also in order to determine the ordering
+        if let Some((img,_disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            let maybe_bytes = match DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap() {
+                DiskImageType::DO => img.to_do(),
+                DiskImageType::PO => img.to_po(),
+                _ => panic!("not supported")
+            };
+            if let Ok(bytestream) = maybe_bytes {
+                std::io::stdout().write_all(&bytestream).expect("write to stdout failed");
+                return Ok(());
+            }
+        }
+        return Err(Box::new(CommandError::UnknownFormat));
+    }    
 
     // Create a disk image
 
@@ -406,7 +435,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(e) => Err(e)
             };
         } else {
-            return Err(Box::new(CommandError::InputFormatBad));
+            return Err(Box::new(CommandError::UnknownFormat));
         }
     }
 
@@ -420,7 +449,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(e) => Err(e)
             };
         } else {
-            return Err(Box::new(CommandError::InputFormatBad));
+            return Err(Box::new(CommandError::UnknownFormat));
         }
     }
 
@@ -434,7 +463,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(e) => Err(e)
             };
         } else {
-            return Err(Box::new(CommandError::InputFormatBad));
+            return Err(Box::new(CommandError::UnknownFormat));
         }
     }
 
@@ -448,7 +477,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(e) => Err(e)
             };
         } else {
-            return Err(Box::new(CommandError::InputFormatBad));
+            return Err(Box::new(CommandError::UnknownFormat));
         }
     }
 
@@ -463,7 +492,23 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(e) => Err(e)
             };
         } else {
-            return Err(Box::new(CommandError::InputFormatBad));
+            return Err(Box::new(CommandError::UnknownFormat));
+        }
+    }
+
+    // Retype a file
+    if let Some(cmd) = matches.subcommand_matches("retype") {
+        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let typ = String::from(cmd.value_of("type").expect(RCH));
+        let aux = String::from(cmd.value_of("aux").expect(RCH));
+        if let Some((mut img,mut disk)) = a2kit::create_img_and_disk_from_file(&path_to_img) {
+            return match disk.retype(&path_in_img,&typ,&aux) {
+                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+                Err(e) => Err(e)
+            };
+        } else {
+            return Err(Box::new(CommandError::UnknownFormat));
         }
     }
 
@@ -508,7 +553,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                             },
                             _ => {
                                 eprintln!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::InputFormatBad));
+                                return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
                         Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
@@ -520,7 +565,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                             },
                             _ => {
                                 eprintln!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::InputFormatBad));
+                                return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
                         Ok(ItemType::SparseData) => match std::str::from_utf8(&file_data) {
@@ -530,7 +575,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                             },
                             _ => {
                                 eprintln!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::InputFormatBad));
+                                return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
                         _ => {
@@ -543,7 +588,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     };
                 } else {
                     eprintln!("destination file could not be interpreted");
-                    return Err(Box::new(CommandError::InputFormatBad));
+                    return Err(Box::new(CommandError::UnknownFormat));
                 }
             },
 
@@ -576,66 +621,72 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             // we are getting from a disk image
             (Some(typ_str),Some(img_path)) => {
                 let typ = ItemType::from_str(typ_str);
-                let disk = a2kit::create_disk_from_file(img_path);
-                // special handling for sparse data
-                if let Ok(ItemType::SparseData) = typ {
-                    return match disk.read_any(&src_path) {
-                        Ok(chunks) => {
-                            println!("{}",chunks.to_json(4));
-                            Ok(())
-                        },
-                        Err(e) => Err(e)
-                    }
-                }
-                // special handling for random access text
-                if let Ok(ItemType::Records) = typ {
-                    let record_length = match cmd.value_of("len") {
-                        Some(s) => {
-                            if let Ok(l) = usize::from_str(s) {
-                                l
-                            } else {
-                                0 as usize
-                            }
-                        },
-                        _ => 0 as usize
-                    };
-                    return match disk.read_records(&src_path,record_length) {
-                        Ok(recs) => {
-                            println!("{}",recs.to_json(4));
-                            Ok(())
-                        },
-                        Err(e) => Err(e)
-                    }
-                }
-                // other file types
-                let maybe_object = match typ {
-                    Ok(ItemType::ApplesoftTokens) => disk.load(&src_path),
-                    Ok(ItemType::IntegerTokens) => disk.load(&src_path),
-                    Ok(ItemType::Binary) => disk.bload(&src_path),
-                    Ok(ItemType::Text) => disk.read_text(&src_path),
-                    Ok(ItemType::Raw) => disk.read_text(&src_path),
-                    Ok(ItemType::Chunk) => disk.read_chunk(&src_path),
-                    _ => {
-                        return Err(Box::new(CommandError::UnsupportedItemType));
-                    }
-                };
-                match maybe_object {
-                    Ok(tuple) => {
-                        let object = tuple.1;
-                        if atty::is(atty::Stream::Stdout) {
-                            match typ {
-                                Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
-                                _ => a2kit::display_chunk(tuple.0,&object)
-                            };
-                        } else {
-                            match typ {
-                                Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
-                                _ => std::io::stdout().write_all(&object).expect("could not write stdout")
-                            };
+                if let Some((img,disk)) = a2kit::create_img_and_disk_from_file(img_path) {
+                    // special handling for sparse data
+                    if let Ok(ItemType::SparseData) = typ {
+                        return match disk.read_any(&src_path) {
+                            Ok(chunks) => {
+                                println!("{}",chunks.to_json(4));
+                                Ok(())
+                            },
+                            Err(e) => Err(e)
                         }
-                        return Ok(())
-                    },
-                    Err(e) => return Err(e)
+                    }
+                    // special handling for random access text
+                    if let Ok(ItemType::Records) = typ {
+                        let record_length = match cmd.value_of("len") {
+                            Some(s) => {
+                                if let Ok(l) = usize::from_str(s) {
+                                    l
+                                } else {
+                                    0 as usize
+                                }
+                            },
+                            _ => 0 as usize
+                        };
+                        return match disk.read_records(&src_path,record_length) {
+                            Ok(recs) => {
+                                println!("{}",recs.to_json(4));
+                                Ok(())
+                            },
+                            Err(e) => Err(e)
+                        }
+                    }
+                    // other file types
+                    let maybe_object = match typ {
+                        Ok(ItemType::ApplesoftTokens) => disk.load(&src_path),
+                        Ok(ItemType::IntegerTokens) => disk.load(&src_path),
+                        Ok(ItemType::Binary) => disk.bload(&src_path),
+                        Ok(ItemType::Text) => disk.read_text(&src_path),
+                        Ok(ItemType::Raw) => disk.read_text(&src_path),
+                        Ok(ItemType::Chunk) => disk.read_chunk(&src_path),
+                        Ok(ItemType::Track) => img.get_track_bytes(&src_path),
+                        Ok(ItemType::RawTrack) => img.get_track_buf(&src_path),
+                        _ => {
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        }
+                    };
+                    match maybe_object {
+                        Ok(tuple) => {
+                            let object = tuple.1;
+                            if atty::is(atty::Stream::Stdout) {
+                                match typ {
+                                    Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
+                                    Ok(ItemType::Track) => a2kit::display_track(tuple.0,&object),
+                                    _ => a2kit::display_chunk(tuple.0,&object)
+                                };
+                            } else {
+                                match typ {
+                                    Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
+                                    _ => std::io::stdout().write_all(&object).expect("could not write stdout")
+                                };
+                            }
+                            return Ok(())
+                        },
+                        Err(e) => return Err(e)
+                    }
+                } else {
+                    return Err(Box::new(CommandError::UnknownFormat));
                 }
             },
 

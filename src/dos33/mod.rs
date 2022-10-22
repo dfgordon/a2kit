@@ -417,8 +417,8 @@ impl Disk
             return Err(Box::new(Error::WriteProtected));
         }
     }
-    /// modify a file entry, optionally lock, unlock, and/or rename; attempt to rename already locked file will fail.
-    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>) -> Result<(),Box<dyn std::error::Error>> {
+    /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
+    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> Result<(),Box<dyn std::error::Error>> {
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
         let mut dir_ts = [self.vtoc.track1,self.vtoc.sector1];
@@ -438,6 +438,12 @@ impl Disk
                     };
                     if let Some(new_name) = maybe_new_name {
                         entry.name = string_to_file_name(new_name);
+                    }
+                    if let Some(ftype) = maybe_ftype {
+                        match Type::from_str(ftype) {
+                            Ok(typ) => entry.file_type = typ as u8,
+                            Err(e) => return Err(Box::new(e))
+                        }
                     }
                     self.write_sector(&dir.to_bytes(),dir_ts,0);
                     return Ok(());
@@ -556,13 +562,16 @@ impl disk_base::A2Disk for Disk {
         panic!("the disk image directory seems to be damaged");
     }
     fn lock(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        return self.modify(name,Some(true),None);
+        return self.modify(name,Some(true),None,None);
     }
     fn unlock(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        return self.modify(name,Some(false),None);
+        return self.modify(name,Some(false),None,None);
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        return self.modify(old_name,None,Some(new_name));
+        return self.modify(old_name,None,Some(new_name),None);
+    }
+    fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> Result<(),Box<dyn std::error::Error>> {
+        return self.modify(name, None,None, Some(new_type));
     }
     fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {

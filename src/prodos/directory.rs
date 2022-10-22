@@ -249,8 +249,14 @@ impl Entry {
     pub fn aux(&self) -> u16 {
         return u16::from_le_bytes(self.aux_type);
     }
+    pub fn set_aux(&mut self,aux: u16) {
+        self.aux_type = u16::to_le_bytes(aux);
+    }
     pub fn ftype(&self) -> u8 {
         return self.file_type;
+    }
+    pub fn set_ftype(&mut self,typ: u8) {
+        self.file_type = typ;
     }
     pub fn set_eof(&mut self,bytes: usize) {
         let inc = u32::to_le_bytes(bytes as u32);

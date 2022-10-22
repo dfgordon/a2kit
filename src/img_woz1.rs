@@ -2,7 +2,8 @@
 //! This uses the nibble machinery in module `disk525` to handle the bit streams.
 //! The `DiskStruct` trait is used to flatten and unflatten the wrapper structures.
 
-use log::{info};
+use log::info;
+use std::str::FromStr;
 use crate::disk_base;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -160,6 +161,10 @@ impl Trks {
         }
         return ans;
     }
+    fn num_tracks(&self) -> usize {
+        // would this list ever be padded?
+        return self.tracks.len();
+    }
 }
 
 impl DiskStruct for Trks {
@@ -307,5 +312,35 @@ impl disk_base::DiskImage for Woz1 {
         ans[10] = crc[2];
         ans[11] = crc[3];
         return ans;
+    }
+    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match usize::from_str(track) {
+            Ok(track_num) if track_num<self.trks.num_tracks() => {
+                let track_obj = self.get_track_obj(track_num as u8);
+                Ok((0,track_obj.to_buffer()))
+            },
+            Err(e) => Err(Box::new(e)),
+            _ => Err(Box::new(disk_base::CommandError::OutOfRange))
+        }
+    }
+    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+        match usize::from_str(track) {
+            Ok(track_num) if track_num<self.trks.num_tracks() => {
+                let mut ans: Vec<u8> = Vec::new();
+                let mut byte: [u8;1] = [0;1];
+                let mut track_obj = self.get_track_obj(track_num as u8);
+                track_obj.reset();
+                loop {
+                    track_obj.read_latch(&mut byte,1);
+                    ans.push(byte[0]);
+                    if track_obj.get_bit_ptr()+8 > track_obj.bit_count() {
+                        break;
+                    }
+                }
+                Ok((0,ans))
+            },
+            Err(e) => Err(Box::new(e)),
+            _ => Err(Box::new(disk_base::CommandError::OutOfRange))
+        }
     }
 }

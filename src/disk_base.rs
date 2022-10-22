@@ -1,9 +1,8 @@
-//! # Base Layer for File System Operations
+//! # Base Layer for Disk Image and File Operations
+//! 
 //! This module defines types and traits for use with any supported disk image.
-//! Ideally this should encompass any file system.
-//! The structure is geared toward DOS and ProDOS at present.
-//! Note that the `DiskStruct` trait, which abstracts directory components in a file system,
-//! uses procedural macros, and therefore is required to be in a separate crate.
+//! It defines the primary trait objects, `DiskImage` and `A2Disk`, as well as the
+//! base-level file representation, `SparseData`.
 
 use std::error::Error;
 use thiserror;
@@ -23,14 +22,10 @@ pub enum CommandError {
     InvalidCommand,
     #[error("One of the parameters was out of range")]
     OutOfRange,
+    #[error("Input source is not supported")]
+    UnsupportedFormat,
     #[error("Input source could not be interpreted")]
-    InputFormatBad
-}
-
-#[derive(thiserror::Error,Debug)]
-pub enum ImageError {
-    #[error("File is incompatible with the image format")]
-    FileIncompatible
+    UnknownFormat
 }
 
 #[derive(PartialEq,Clone,Copy)]
@@ -66,6 +61,8 @@ pub enum ItemType {
     ApplesoftVars,
     IntegerVars,
     Chunk,
+    Track,
+    RawTrack,
     System
 }
 
@@ -110,6 +107,8 @@ impl FromStr for ItemType {
             "avar" => Ok(Self::ApplesoftVars),
             "ivar" => Ok(Self::IntegerVars),
             "chunk" => Ok(Self::Chunk),
+            "track" => Ok(Self::Track),
+            "raw_track" => Ok(Self::RawTrack),
             "sys" => Ok(Self::System),
             _ => Err(CommandError::UnknownItemType)
         }
@@ -136,6 +135,8 @@ pub struct SparseData {
     pub fs_type: String,
     /// Auxiliary data in some string representation
     pub aux: String,
+    /// the length of the file were it serialized
+    pub eof: usize,
     /// The key is an ordered chunk number starting at 0, no relation to any disk location.
     /// Contraints on the length of the data are undefined at this level.
     pub chunks: HashMap<usize,Vec<u8>>
@@ -147,6 +148,7 @@ impl SparseData {
             chunk_len,
             fs_type: String::from("bin"),
             aux: String::from("0"),
+            eof: 0,
             chunks: HashMap::new()
         }
     }
@@ -187,6 +189,7 @@ impl SparseData {
             ans.chunks.insert(idx,dat[mark..end].to_vec());
             mark = end;
             if mark == dat.len() {
+                ans.eof = dat.len();
                 return ans;
             }
             idx += 1;
@@ -208,13 +211,15 @@ impl SparseData {
                 let maybe_len = parsed["chunk_length"].as_usize();
                 let maybe_fs_type = parsed["fs_type"].as_str();
                 let maybe_aux = parsed["aux"].as_str();
-                if let (Some(typ),Some(len),Some(fs_type),Some(aux)) = (maybe_type,maybe_len,maybe_fs_type,maybe_aux) {
+                let maybe_eof = parsed["eof"].as_usize();
+                if let (Some(typ),Some(len),Some(fs_type),Some(aux),Some(eof)) = 
+                    (maybe_type,maybe_len,maybe_fs_type,maybe_aux,maybe_eof) {
                     if typ=="any" {
                         let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
                         let map_obj = &parsed["chunks"];
                         if map_obj.entries().len()==0 {
                             eprintln!("no object entries in json records");
-                            return Err(Box::new(CommandError::InputFormatBad));
+                            return Err(Box::new(CommandError::UnknownFormat));
                         }
                         for (key,hex) in map_obj.entries() {
                             let prev_len = chunks.len();
@@ -227,24 +232,25 @@ impl SparseData {
                             }
                             if chunks.len()==prev_len {
                                 eprintln!("could not read hex string from chunk");
-                                return Err(Box::new(CommandError::InputFormatBad));
+                                return Err(Box::new(CommandError::UnknownFormat));
                             }
                         }
                         return Ok(Self {
                             chunk_len: len,
                             fs_type: fs_type.to_string(),
                             aux: aux.to_string(),
+                            eof,
                             chunks
-                        });    
+                        });
                     } else {
                         eprintln!("json metadata type mismatch");
-                        return Err(Box::new(CommandError::InputFormatBad));
+                        return Err(Box::new(CommandError::UnknownFormat));
                     }
                 }
                 eprintln!("json records missing metadata");
-                Err(Box::new(CommandError::InputFormatBad))
+                Err(Box::new(CommandError::UnknownFormat))
             },
-            Err(_e) => Err(Box::new(CommandError::InputFormatBad))
+            Err(_e) => Err(Box::new(CommandError::UnknownFormat))
         } 
     }
     /// Put chunks into the JSON string representation, if indent=0 use unpretty form
@@ -257,6 +263,7 @@ impl SparseData {
             a2kit_type: "any",
             fs_type: self.fs_type.to_string(),
             aux: self.aux.to_string(),
+            eof: self.eof,
             chunk_length: self.chunk_len,
             chunks: json_map
         };
@@ -345,7 +352,7 @@ impl Records {
         let mut ans = SparseData::new(chunk_len);
         ans.new_type("txt");
         ans.new_aux(&self.record_len.to_string());
-        let mut total_end_logical_chunk = 0;
+        ans.eof = 0;
         // always need to have the first chunk referenced on ProDOS
         if require_first {
             ans.chunks.insert(0,vec![0;chunk_len]);
@@ -378,10 +385,8 @@ impl Records {
                         for i in start_byte..end_byte {
                             buf[i as usize] = data_bytes[chunk_len*(lb-logical_chunk) + i - fwd_offset];
                         }
+                        ans.eof = usize::max(lb*512 + buf.len(),ans.eof);
                         ans.chunks.insert(lb as usize,buf);
-                    }
-                    if end_logical_chunk > total_end_logical_chunk {
-                        total_end_logical_chunk = end_logical_chunk;
                     }
                 },
                 None => return Err(Box::new(std::fmt::Error))
@@ -401,7 +406,7 @@ impl Records {
                         let map_obj = &parsed["records"];
                         if map_obj.entries().len()==0 {
                             eprintln!("no object entries in json records");
-                            return Err(Box::new(CommandError::InputFormatBad));
+                            return Err(Box::new(CommandError::UnknownFormat));
                         }
                         for (key,lines) in map_obj.entries() {
                             if let Ok(num) = usize::from_str(key) {
@@ -411,13 +416,13 @@ impl Records {
                                         fields = fields + line + "\n";
                                     } else {
                                         eprintln!("record is not a string");
-                                        return Err(Box::new(CommandError::InputFormatBad));
+                                        return Err(Box::new(CommandError::UnknownFormat));
                                     }
                                 }
                                 records.insert(num,fields);
                             } else {
                                 eprintln!("key is not a number");
-                                return Err(Box::new(CommandError::InputFormatBad));
+                                return Err(Box::new(CommandError::UnknownFormat));
                             }
                         }
                         return Ok(Self {
@@ -426,13 +431,13 @@ impl Records {
                         });    
                     } else {
                         eprintln!("json metadata type mismatch");
-                        return Err(Box::new(CommandError::InputFormatBad));
+                        return Err(Box::new(CommandError::UnknownFormat));
                     }
                 }
                 eprintln!("json records missing metadata");
-                Err(Box::new(CommandError::InputFormatBad))
+                Err(Box::new(CommandError::UnknownFormat))
             },
-            Err(_e) => Err(Box::new(CommandError::InputFormatBad))
+            Err(_e) => Err(Box::new(CommandError::UnknownFormat))
         } 
     }
     /// Put records into the JSON string representation, if indent=0 use unpretty form
@@ -480,6 +485,10 @@ pub trait DiskImage {
     fn to_po(&self) -> Result<Vec<u8>,Box<dyn Error>>;
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
     fn to_bytes(&self) -> Vec<u8>;
+    /// Get the track buffer exactly in the form the image stores it
+    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
+    /// Get the track bytes; bits are processed through a soft latch, if applicable
+    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
 }
 
 /// Abstract disk interface applicable to DOS or ProDOS.
@@ -497,6 +506,8 @@ pub trait A2Disk {
     fn lock(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
     // remove write protection from a file
     fn unlock(&mut self,path: &str) -> Result<(),Box<dyn Error>>;
+    /// Change the type and subtype of a file, strings may contain numbers as appropriate.
+    fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> Result<(),Box<dyn Error>>;
     /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
     fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Write a binary file to the disk, mirrors `BSAVE`

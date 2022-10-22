@@ -633,12 +633,14 @@ impl Disk {
             }
 
             // update the entry, do last to capture all the changes
+            entry.set_eof(usize::max(entry.eof(),dat.eof));
             self.write_entry(&loc,&entry);
         }
         return Ok(eof);
     }
-    /// modify a file entry, optionally lock, unlock, and/or rename; attempt to rename already locked file will fail.
-    fn modify(&mut self,loc: &EntryLocation,maybe_lock: Option<bool>,maybe_new_name: Option<&str>) -> Result<(),Box<dyn std::error::Error>> {
+    /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
+    fn modify(&mut self,loc: &EntryLocation,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,
+        maybe_new_type: Option<&str>,maybe_new_aux: Option<u16>) -> Result<(),Box<dyn std::error::Error>> {
         let dir = self.get_directory(loc.block as usize);
         let mut entry = dir.get_entry(&loc);
         if !entry.get_access(Access::Rename) && maybe_new_name!=None {
@@ -658,6 +660,15 @@ impl Disk {
         }
         if let Some(new_name) = maybe_new_name {
             entry.rename(new_name);
+        }
+        if let Some(new_type) = maybe_new_type {
+            match FileType::from_str(new_type) {
+                Ok(typ) => entry.set_ftype(typ as u8),
+                Err(e) => return Err(Box::new(e))
+            }
+        }
+        if let Some(new_aux) = maybe_new_aux {
+            entry.set_aux(new_aux);
         }
         self.write_entry(loc, &entry);
         return Ok(());
@@ -709,10 +720,30 @@ impl Disk {
                 disk.blocks[block][byte] = dimg[byte+block*512];
             }
         }
-        if disk.blocks[0]==boot::FLOPPY_BLOCK0 || disk.blocks[0]==boot::HD_BLOCK0 {
-            return Some(disk);
+        // test the volume directory header to see if this is ProDOS
+        let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
+        let char_patt = [first_char_patt,"0123456789"].concat();
+        let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&disk.blocks[2].to_vec());
+        let (nibs,name) = vol_key.header.fname();
+        let total_blocks = u16::from_le_bytes([disk.blocks[2][0x29],disk.blocks[2][0x2A]]);
+        if disk.blocks[2][0x23]!=0x27 || disk.blocks[2][0x24]!=0x0D {
+            return None;
         }
-        return None;
+        if total_blocks as usize!=block_count {
+            return None;
+        }
+        if vol_key.prev()!=0 || vol_key.next()!=3 || (nibs >> 4)!=15 {
+            return None;
+        }
+        if !first_char_patt.contains(name[0] as char) {
+            return None;
+        }
+        for i in 1..(nibs & 0x0F) {
+            if !char_patt.contains(name[i as usize] as char) {
+                return None;
+            }
+        }
+        return Some(disk);
     }
 }
 
@@ -822,7 +853,7 @@ impl disk_base::A2Disk for Disk {
     fn lock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
-                self.modify(&loc,Some(true),None)
+                self.modify(&loc,Some(true),None,None,None)
             },
             Err(e) => Err(Box::new(e))
         }
@@ -830,22 +861,33 @@ impl disk_base::A2Disk for Disk {
     fn unlock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
-                self.modify(&loc,Some(false),None)
+                self.modify(&loc,Some(false),None,None,None)
             },
             Err(e) => Err(Box::new(e))
         }
     }
     fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn std::error::Error>> {
         if let Ok(loc) = self.find_file(path) {
-            return self.modify(&loc,None,Some(name));
+            return self.modify(&loc,None,Some(name),None,None);
         }
         if let Ok(ptr) = self.find_dir_key_block(path) {
             let dir = self.get_directory(ptr as usize);
             if let Some(parent_loc) = dir.parent_entry_loc() {
-                return self.modify(&parent_loc,None,Some(name));
+                return self.modify(&parent_loc,None,Some(name),None,None);
             }
         }
         return Err(Box::new(Error::PathNotFound));
+    }
+    fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> Result<(),Box<dyn std::error::Error>> {
+        match u16::from_str(sub_type) {
+            Ok(aux) => match self.find_file(path) {
+                Ok(loc) => {
+                    self.modify(&loc, None, None,Some(new_type),Some(aux))
+                },
+                Err(e) => Err(Box::new(e))
+            }
+            Err(e) => Err(Box::new(e))
+        }
     }
     fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
@@ -1011,6 +1053,7 @@ impl disk_base::A2Disk for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let mut sd = self.read_file(&entry);
+                sd.eof = entry.eof();
                 sd.new_type(&entry.ftype().to_string());
                 sd.new_aux(&entry.aux().to_string());
                 return Ok(sd);
