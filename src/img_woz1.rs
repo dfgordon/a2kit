@@ -45,7 +45,7 @@ pub struct TMap {
     map: [u8;160]
 }
 
-#[derive(DiskStruct)]
+#[derive(DiskStruct,Clone,Copy)]
 pub struct Trk {
     bits: [u8;TRACK_BYTE_CAPACITY],
     bytes_used: [u8;2],
@@ -229,16 +229,32 @@ impl Woz1 {
             meta: None
         }
     }
+    fn get_trk_struct(&self,track: u8) -> Trk {
+        let mut unique_count: usize = 0;
+        let mut ptr = 0xff;
+        // loop through the drive head positions
+        for test in self.tmap.map {
+            if test!=ptr && test!=0xff {
+                ptr = test;
+                unique_count += 1;
+            }
+            if unique_count>track as usize {
+                break;
+            }
+        }
+        if ptr==0xff {
+            panic!("WOZ track not found");
+        }
+        return self.trks.tracks[ptr as usize];
+    }
     fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
-        let ptr = self.tmap.map[track as usize*4];
-        let trk = &self.trks.tracks[ptr as usize];
+        let trk = self.get_trk_struct(track);
         let buf = trk.bits.to_vec();
         let bit_count = u16::from_le_bytes(trk.bit_count) as usize;
         return disk525::TrackBits::create(buf,bit_count);
     }
     fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
-        let ptr = self.tmap.map[track as usize*4];
-        let trk = &mut self.trks.tracks[ptr as usize];
+        let mut trk = self.get_trk_struct(track);
         track_obj.reset();
         track_obj.read(&mut trk.bits,track_obj.bit_count());
     }
@@ -330,7 +346,7 @@ impl disk_base::DiskImage for Woz1 {
                 let mut byte: [u8;1] = [0;1];
                 let mut track_obj = self.get_track_obj(track_num as u8);
                 track_obj.reset();
-                loop {
+                for _i in 0..track_obj.len() {
                     track_obj.read_latch(&mut byte,1);
                     ans.push(byte[0]);
                     if track_obj.get_bit_ptr()+8 > track_obj.bit_count() {

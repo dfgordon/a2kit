@@ -3,6 +3,7 @@ use std::path::Path;
 use std::fmt::Write;
 use a2kit::prodos;
 use a2kit::applesoft;
+use a2kit::img_woz1;
 use a2kit::disk_base::{ItemType,A2Disk};
 
 pub const JSON_REC: &str = "
@@ -287,4 +288,31 @@ fn rename_delete() {
     disk.rename("inner.dirs/dir53/tree","tree53").expect("dimg error");
 
     disk.compare(&Path::new("tests").join("prodos-ren-del.dsk"),&ignore);
+}
+
+#[test]
+fn read_big_woz1() {
+    // Formatting: Copy2Plus, Writing: Virtual II
+    // This tests the same file system information used for read_big and write_big.
+    // We do not expect our WOZ track bits to be identical to those from an emulator.
+    // So the strategy is to load the WOZ image as created by the emulator,
+    // convert to DSK, and compare with a DSK that was also created via the emulator.
+    // In testing the conversion we test a lot of underlying WOZ machinery.
+
+    if let Some(woz1_path) = (Path::new("tests").join("prodos-bigfiles.woz")).to_str() {
+        if let Some((_img,mut disk)) = a2kit::create_img_and_disk_from_file(woz1_path) {
+            let ignore = disk.standardize(2);
+            // As usual we have mysterious trailing byte differences which seem to be a real artifact of the emulators.
+            // When VII saves the WOZ it does not have the trailing byte(s), using DSK in the exact same way does.
+            if let Ok((_x,mut dir_chunk)) = disk.read_chunk("2") {
+                dir_chunk[0x40] = 0x71;
+                disk.write_chunk("2",&dir_chunk).expect("could not apply chunk correction");
+            }
+            if let Ok((_x,mut dir_chunk)) = disk.read_chunk("7") {
+                dir_chunk[0x170] = 0xc4;
+                disk.write_chunk("7",&dir_chunk).expect("could not apply chunk correction");
+            }
+            disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
+        }
+    }
 }

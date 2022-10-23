@@ -10,5 +10,5 @@ Here is an example using the CLI to create a disk image that is then loaded into
 
 [Command Line Interface](https://github.com/dfgordon/a2kit/wiki)
 
-[Library Crate](https://docs.rs/a2kit/0.2.0/a2kit/)
+[Library Crate](https://docs.rs/a2kit/latest/a2kit)
 

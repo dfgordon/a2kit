@@ -110,7 +110,7 @@ fn out_of_space() {
 
 #[test]
 fn read_big() {
-    // Formatting: CiderPress, Writing: Virtual II
+    // Formatting: Copy2Plus, Writing: MicroM8
     // This tests a small BASIC program, large binary, and two sparse text files
     let img = std::fs::read(&Path::new("tests").join("dos33-bigfiles.do")).expect("failed to read test image file");
     let emulator_disk = a2kit::create_disk_from_bytestream(&img);
@@ -156,11 +156,11 @@ fn read_big() {
 
 #[test]
 fn write_big() {
-    // Formatting: CiderPress, Writing: Virtual II
+    // Formatting: Copy2Plus, Writing: MicroM8
     // This tests a small BASIC program, large binary, and two sparse text files
     let mut buf: Vec<u8>;
     let mut disk = dos33::Disk::new();
-    disk.format(254,false,18);
+    disk.format(254,false,17);
 
     // create and save the BASIC program
     let basic_program = "
@@ -179,7 +179,7 @@ fn write_big() {
     130 PRINT D$;\"BSAVE SAPLING,A16384,L16384\"";
     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
     let mut tokens = tokenizer.tokenize(basic_program,2049);
-    tokens.push(0x43); // Virtual II added this and counted it, n.b. also the trailing byte it did not count
+    tokens.push(0x43); // MicroM8 added this and counted it, n.b. also the trailing byte it did not count
     disk.save("make.big",&tokens,ItemType::ApplesoftTokens,Some(&vec![0x41])).expect("dimg error");
 
     // make tree files directly and from JSON
@@ -194,9 +194,14 @@ fn write_big() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,Some(&vec![0xc9])).expect("dimg error");
+    disk.bsave("sapling",&buf,16384,None).expect("dimg error");
 
-    disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&disk.standardize(0));
+    let mut ignore = disk.standardize(0);
+    // loop to ignore boot tracks for this test
+    for i in 0..3*16*256 {
+        ignore.push(i);
+    }
+    disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);
 }
 
 #[test]
@@ -252,4 +257,25 @@ fn rename_delete() {
     disk.rename("tree1","mytree1").expect("dimg error");
 
     disk.compare(&Path::new("tests").join("dos33-ren-del.do"),&disk.standardize(0));
+}
+
+#[test]
+fn read_big_woz1() {
+    // Formatting: Copy2Plus, Writing: MicroM8
+    // This tests the same file system information used for read_big and write_big.
+    // We do not expect our WOZ track bits to be identical to those from an emulator.
+    // So the strategy is to load the WOZ image as created by the emulator,
+    // convert to DSK, and compare with a DSK that was also created via the emulator.
+    // In testing the conversion we test a lot of underlying WOZ machinery.
+
+    if let Some(woz1_path) = (Path::new("tests").join("dos33-bigfiles.woz")).to_str() {
+        if let Some((_img,disk)) = a2kit::create_img_and_disk_from_file(woz1_path) {
+            let mut ignore = disk.standardize(2);
+            // loop to ignore boot tracks for this test
+            for i in 0..3*16*256 {
+                ignore.push(i);
+            }
+            disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
+        }
+    }
 }

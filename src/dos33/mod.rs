@@ -1,10 +1,9 @@
-//! # DOS 3.3 disk image library
+//! # DOS 3.3 file system module
 //! This manipulates disk images containing one standard bootable
 //! or non-bootable DOS 3.3 small volume (140K).
 //! 
-//! * Image types: DOS ordered images (.DO,.DSK)
 //! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `A2Disk` trait
-//! * The library will try to emulate the order in which DOS would access sectors, but
+//! * The module will try to emulate the order in which DOS would access sectors, but
 //! this is not intended to be exact.
 
 pub mod types;

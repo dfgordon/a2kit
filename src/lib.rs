@@ -16,6 +16,11 @@
 //! the beginning and end of many workflows involves transforming between `DSK` and
 //! some other image format (including ordering variants of `DSK`)
 //! 
+//! Language services are built on tree-sitter parsers.  Generalized syntax checking is in `walker`.
+//! Specific language services are in modules named after the language, at present:
+//! * `applesoft` handles (de)tokenization of Applesoft BASIC
+//! * `integer` handles (de)tokenization of Integer BASIC
+//! 
 //! ## File Systems
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
@@ -194,7 +199,7 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         let slice = chunk[slice_start..slice_end].to_vec();
         let txt: Vec<u8> = slice.iter().map(|c| match *c {
             x if x<32 => '.' as u8,
-            x if x<128 => x,
+            x if x<127 => x,
             _ => '.' as u8
         }).collect();
         let neg_txt: Vec<u8> = slice.iter().map(|c| match *c {

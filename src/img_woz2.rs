@@ -53,7 +53,7 @@ pub struct TMap {
     map: [u8;160]
 }
 
-#[derive(DiskStruct)]
+#[derive(DiskStruct,Clone,Copy)]
 pub struct Trk {
     starting_block: [u8;2],
     block_count: [u8;2],
@@ -272,9 +272,26 @@ impl Woz2 {
             writ: None
         }
     }
+    fn get_trk_struct(&self,track: u8) -> Trk {
+        let mut unique_count: usize = 0;
+        let mut ptr = 0xff;
+        // loop through the drive head positions
+        for test in self.tmap.map {
+            if test!=ptr && test!=0xff {
+                ptr = test;
+                unique_count += 1;
+            }
+            if unique_count>track as usize {
+                break;
+            }
+        }
+        if ptr==0xff {
+            panic!("WOZ track not found");
+        }
+        return self.trks.tracks[ptr as usize];
+    }
     fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
-        let ptr = self.tmap.map[track as usize*4];
-        let trk = &self.trks.tracks[ptr as usize];
+        let trk = self.get_trk_struct(track);
         let begin = u16::from_le_bytes(trk.starting_block) as usize*512 - self.track_bits_offset;
         let end = begin + u16::from_le_bytes(trk.block_count) as usize*512;
         let buf = self.trks.bits[begin..end].to_vec();
@@ -282,8 +299,7 @@ impl Woz2 {
         return disk525::TrackBits::create(buf,bit_count);
     }
     fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
-        let ptr = self.tmap.map[track as usize*4];
-        let trk = &self.trks.tracks[ptr as usize];
+        let trk = self.get_trk_struct(track);
         let begin = u16::from_le_bytes(trk.starting_block) as usize*512 - self.track_bits_offset;
         let end = begin + u16::from_le_bytes(trk.block_count) as usize*512;
         track_obj.reset();
@@ -391,7 +407,7 @@ impl disk_base::DiskImage for Woz2 {
                 let mut byte: [u8;1] = [0;1];
                 let mut track_obj = self.get_track_obj(track_num as u8);
                 track_obj.reset();
-                loop {
+                for _i in 0..track_obj.len() {
                     track_obj.read_latch(&mut byte,1);
                     ans.push(byte[0]);
                     if track_obj.get_bit_ptr()+8 > track_obj.bit_count() {

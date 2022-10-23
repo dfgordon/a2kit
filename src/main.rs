@@ -7,6 +7,7 @@ use clap::{arg,Command};
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
+use std::error::Error;
 #[cfg(windows)]
 use colored;
 use a2kit::disk_base::*;
@@ -621,6 +622,22 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             // we are getting from a disk image
             (Some(typ_str),Some(img_path)) => {
                 let typ = ItemType::from_str(typ_str);
+                // If getting a track, no need to resolve file system, handle differently
+                match typ {
+                    Ok(ItemType::Track) | Ok(ItemType::RawTrack) => {
+                        if let Some(img) = a2kit::create_img_from_file(img_path) {
+                            let maybe_object = match typ {
+                                Ok(ItemType::Track) => img.get_track_bytes(&src_path),
+                                Ok(ItemType::RawTrack) => img.get_track_buf(&src_path),
+                                _ => panic!("{}",RCH)
+                            };
+                            return output_get(maybe_object,typ,None);
+                        } else {
+                            return Err(Box::new(CommandError::UnknownFormat));
+                        }
+                    }
+                    _ => {}
+                }
                 if let Some((img,disk)) = a2kit::create_img_and_disk_from_file(img_path) {
                     // special handling for sparse data
                     if let Ok(ItemType::SparseData) = typ {
@@ -660,31 +677,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                         Ok(ItemType::Text) => disk.read_text(&src_path),
                         Ok(ItemType::Raw) => disk.read_text(&src_path),
                         Ok(ItemType::Chunk) => disk.read_chunk(&src_path),
-                        Ok(ItemType::Track) => img.get_track_bytes(&src_path),
-                        Ok(ItemType::RawTrack) => img.get_track_buf(&src_path),
                         _ => {
                             return Err(Box::new(CommandError::UnsupportedItemType));
                         }
                     };
-                    match maybe_object {
-                        Ok(tuple) => {
-                            let object = tuple.1;
-                            if atty::is(atty::Stream::Stdout) {
-                                match typ {
-                                    Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
-                                    Ok(ItemType::Track) => a2kit::display_track(tuple.0,&object),
-                                    _ => a2kit::display_chunk(tuple.0,&object)
-                                };
-                            } else {
-                                match typ {
-                                    Ok(ItemType::Text) => println!("{}",disk.decode_text(&object)),
-                                    _ => std::io::stdout().write_all(&object).expect("could not write stdout")
-                                };
-                            }
-                            return Ok(())
-                        },
-                        Err(e) => return Err(e)
-                    }
+                    return output_get(maybe_object,typ,Some(disk));
                 } else {
                     return Err(Box::new(CommandError::UnknownFormat));
                 }
@@ -708,4 +705,31 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     eprintln!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
 
+}
+
+// TODO: somehow fold SparseData and Records into the pattern
+fn output_get(
+    maybe_object: Result<(u16,Vec<u8>),Box<dyn Error>>,
+    maybe_typ: Result<ItemType,CommandError>,
+    maybe_disk: Option<Box<dyn A2Disk>>,
+) -> Result<(),Box<dyn Error>> {
+    match maybe_object {
+        Ok(tuple) => {
+            let object = tuple.1;
+            if atty::is(atty::Stream::Stdout) {
+                match (maybe_typ,maybe_disk) {
+                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
+                    (Ok(ItemType::Track),None) => a2kit::display_track(tuple.0,&object),
+                    _ => a2kit::display_chunk(tuple.0,&object)
+                };
+            } else {
+                match (maybe_typ,maybe_disk) {
+                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
+                    _ => std::io::stdout().write_all(&object).expect("could not write stdout")
+                };
+            }
+            return Ok(())
+        },
+        Err(e) => return Err(e)
+    }
 }

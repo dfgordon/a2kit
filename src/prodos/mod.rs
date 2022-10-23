@@ -1,7 +1,6 @@
-//! # ProDOS disk image library
+//! # ProDOS file system module
 //! This manipulates disk images containing one ProDOS volume.
 //! 
-//! * Image types: ProDOS ordered images, DOS ordered images (.DO,.PO,.DSK)
 //! * Single volume images only
 
 mod boot;
