@@ -16,6 +16,7 @@ use a2kit::prodos;
 use a2kit::walker;
 use a2kit::applesoft;
 use a2kit::integer;
+use a2kit::merlin;
 use a2kit::img_po;
 use a2kit::img_do;
 use a2kit::img_woz1;
@@ -90,19 +91,19 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic"))
         .arg(arg!(-a --aux <AUX> "file system auxiliary metadata"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("delete a file or directory inside a disk image"))
+        .about("change file type inside a disk image"))
     .subcommand(Command::new("verify")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
         .about("read from stdin and error check"))
     .subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","track","raw_track","rec","any"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","track","raw_track","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"))
     .subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "destination path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","bin","txt","raw","chunk","rec","any"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"))
@@ -112,10 +113,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("write disk image catalog to stdout"))
     .subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
         .about("read from stdin, tokenize, write to stdout"))
     .subcommand(Command::new("detokenize")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atok","itok"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atok","itok","mtok"]))
         .about("read from stdin, detokenize, write to stdout"))
     .get_matches();
     
@@ -326,6 +327,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             {
                 ItemType::ApplesoftText => walker::verify_stdin(tree_sitter_applesoft::language(),"]"),
                 ItemType::IntegerText => walker::verify_stdin(tree_sitter_integerbasic::language(),">"),
+                ItemType::MerlinText => walker::verify_stdin(tree_sitter_merlin6502::language(),":"),
                 _ => return Err(Box::new(CommandError::UnsupportedItemType))
             };
             match res {
@@ -342,7 +344,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         }
     }
 
-    // Tokenize BASIC
+    // Tokenize BASIC or Encode Merlin
 
     if let Some(cmd) = matches.subcommand_matches("tokenize") {
         if atty::is(atty::Stream::Stdin) {
@@ -388,11 +390,27 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 }
                 Ok(())
             },
+            Ok(ItemType::MerlinText) => {
+                if let Some(_addr) = addr_opt {
+                    eprintln!("unnecessary address argument");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                }
+                let mut program = String::new();
+                std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+                let mut tokenizer = merlin::tokenizer::Tokenizer::new();
+                let object = tokenizer.tokenize(String::from(&program));
+                if atty::is(atty::Stream::Stdout) {
+                    a2kit::display_chunk(0,&object);
+                } else {
+                    std::io::stdout().write_all(&object).expect("could not write output stream");
+                }
+                Ok(())
+            },
             _ => Err(Box::new(CommandError::UnsupportedItemType))
         };
     }
 
-    // Detokenize BASIC
+    // Detokenize BASIC or decode Merlin
 
     if let Some(cmd) = matches.subcommand_matches("detokenize") {
         if atty::is(atty::Stream::Stdin) {
@@ -416,6 +434,16 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 let mut tok: Vec<u8> = Vec::new();
                 std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
                 let tokenizer = integer::tokenizer::Tokenizer::new();
+                let program = tokenizer.detokenize(&tok);
+                for line in program.lines() {
+                    println!("{}",line);
+                }
+                Ok(())
+            },
+            Ok(ItemType::MerlinTokens) => {
+                let mut tok: Vec<u8> = Vec::new();
+                std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
+                let tokenizer = merlin::tokenizer::Tokenizer::new();
                 let program = tokenizer.detokenize(&tok);
                 for line in program.lines() {
                     println!("{}",line);
@@ -546,6 +574,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     let result = match typ {
                         Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
                         Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
+                        Ok(ItemType::MerlinTokens) => disk.write_text(&dest_path,&file_data),
                         Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address,None),
                         Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
                             Ok(s) => match disk.encode_text(s) {
@@ -673,6 +702,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     let maybe_object = match typ {
                         Ok(ItemType::ApplesoftTokens) => disk.load(&src_path),
                         Ok(ItemType::IntegerTokens) => disk.load(&src_path),
+                        Ok(ItemType::MerlinTokens) => disk.read_text(&src_path),
                         Ok(ItemType::Binary) => disk.bload(&src_path),
                         Ok(ItemType::Text) => disk.read_text(&src_path),
                         Ok(ItemType::Raw) => disk.read_text(&src_path),

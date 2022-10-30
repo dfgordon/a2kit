@@ -20,6 +20,7 @@
 //! Specific language services are in modules named after the language, at present:
 //! * `applesoft` handles (de)tokenization of Applesoft BASIC
 //! * `integer` handles (de)tokenization of Integer BASIC
+//! * `merlin` handles encodings for Merlin assembly source files
 //! 
 //! ## File Systems
 //! 
@@ -41,6 +42,7 @@ pub mod dos33;
 pub mod prodos;
 pub mod applesoft;
 pub mod integer;
+pub mod merlin;
 pub mod walker;
 pub mod disk_base;
 pub mod img_do;

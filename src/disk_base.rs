@@ -44,7 +44,7 @@ pub enum DiskImageType {
     WOZ2
 }
 
-/// Types of files that may be distinguished by the file system.
+/// Types of files that may be distinguished by the file system or a2kit.
 /// This will have to be mapped to a similar enumeration at lower levels
 /// in order to obtain the binary type code.
 #[derive(PartialEq,Clone,Copy)]
@@ -56,8 +56,10 @@ pub enum ItemType {
     SparseData,
     ApplesoftText,
     IntegerText,
+    MerlinText,
     ApplesoftTokens,
     IntegerTokens,
+    MerlinTokens,
     ApplesoftVars,
     IntegerVars,
     Chunk,
@@ -102,8 +104,10 @@ impl FromStr for ItemType {
             "any" => Ok(Self::SparseData),
             "atxt" => Ok(Self::ApplesoftText),
             "itxt" => Ok(Self::IntegerText),
+            "mtxt" => Ok(Self::MerlinText),
             "atok" => Ok(Self::ApplesoftTokens),
             "itok" => Ok(Self::IntegerTokens),
+            "mtok" => Ok(Self::MerlinTokens),
             "avar" => Ok(Self::ApplesoftVars),
             "ivar" => Ok(Self::IntegerVars),
             "chunk" => Ok(Self::Chunk),

@@ -139,13 +139,13 @@ impl Tokenizer
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
 			for rep in 0..256 {
+				if rep==255 {
+					panic!("integer BASIC tokens appear to be broken");
+				}
 				if img[addr]==1 {
 					code += "\n";
 					addr += 1;
 					break;
-				}
-				if rep==255 {
-					panic!("integer BASIC tokens appear to be broken");
 				}
 				if img[addr]<128 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
