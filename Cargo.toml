@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -16,7 +16,7 @@ log = "0.4.17"
 env_logger = "0.9.1"
 hex = "0.4.3"
 tree-sitter = "0.20.8"
-tree-sitter-applesoft = "2.0.2"
+tree-sitter-applesoft = "2.0.3"
 tree-sitter-integerbasic = "1.0.2"
 tree-sitter-merlin6502 = "1.0.0"
 clap = {version="3.1.5",features=["cargo"]}

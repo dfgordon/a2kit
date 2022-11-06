@@ -1,3 +1,8 @@
+//! # Module to walk any syntax tree
+//! 
+//! Objects that want to walk a syntax tree can provide the `Visit` trait.
+//! Such objects can take some action depending on the status of `TreeCursor`.
+
 use tree_sitter;
 use colored::*;
 use thiserror::Error;
@@ -18,6 +23,11 @@ pub enum WalkerChoice {
 pub enum LanguageError {
     #[error("Syntax error")]
     Syntax
+}
+
+pub fn node_text(node: tree_sitter::Node,source: &str) -> String {
+    let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
+    return String::from(&source[rng]);
 }
 
 pub trait Visit {

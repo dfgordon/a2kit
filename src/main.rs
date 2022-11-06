@@ -3,7 +3,7 @@
 //! This is a standalone main module.
 //! All sub-modules are in the library crate.
 
-use clap::{arg,Command};
+use clap::{arg,Command,ArgAction};
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
@@ -52,6 +52,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     .subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number"))
         .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do","po","woz1","woz2"]))
+        .arg(arg!(-i --include "include operating system").action(ArgAction::SetTrue))
         .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values([
             "5.25in",
             "3.5in",
@@ -95,6 +96,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     .subcommand(Command::new("verify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
         .about("read from stdin and error check"))
+    .subcommand(Command::new("minify")
+        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
+        .about("reduce program size"))
     .subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
         .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","track","raw_track","rec","any"]))
@@ -166,6 +170,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             "hdmax" => (65535,false),
             _ => (280,true)
         };
+        let include_os = cmd.get_flag("include");
+        match (include_os,&dos_vol) {
+            (true,Err(_e)) => {
+                eprintln!("Please omit the include flag, this OS must be obtained elsewhere");
+                return Err(Box::new(CommandError::UnsupportedItemType));
+            },
+            _ => {}
+        }
         match u8::from_str(cmd.value_of("volume").expect(RCH)) {
             Ok(vol) if vol<1 || vol>254 => {
                 eprintln!("volume must be from 1 to 254");
@@ -179,7 +191,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Ok(vol) => {
                     // DOS ordered DOS disk
                     let mut disk = dos33::Disk::new();
-                    disk.format(vol,true,17);
+                    disk.format(vol,include_os,17);
                     bytestream = Some(disk.to_img());
                 },
                 _ => {
@@ -195,16 +207,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 }
             },
             DiskImageType::PO => match dos_vol {
-                Ok(vol) => {
+                Ok(_vol) => {
                     // ProDOS ordered DOS disk
-                    let mut disk = dos33::Disk::new();
-                    disk.format(vol,true,17);
-                    if let Some(img) = img_do::DO::from_bytes(&disk.to_img()) {
-                        match img.to_po() {
-                            Ok(bytes) => bytestream = Some(bytes),
-                            Err(e) => return Err(e)
-                        }
-                    }
+                    eprintln!("ProDOS ordering of DOS is refused. Use reimage if you really need this.");
+                    return Err(Box::new(CommandError::UnsupportedItemType));
+                    // let mut disk = dos33::Disk::new();
+                    // disk.format(vol,include_os,17);
+                    // if let Some(img) = img_do::DO::from_bytes(&disk.to_img()) {
+                    //     match img.to_po() {
+                    //         Ok(bytes) => bytestream = Some(bytes),
+                    //         Err(e) => return Err(e)
+                    //     }
+                    // }
                 },
                 _ => {
                     // ProDOS ordered ProDOS disk
@@ -220,7 +234,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                         Ok(DiskKind::A2_525_16) => {
                             let mut disk = dos33::Disk::new();
                             let mut woz = img_woz1::Woz1::create(DiskKind::A2_525_16);
-                            disk.format(vol,true,17);
+                            disk.format(vol,include_os,17);
                             if let Ok(()) = woz.update_from_do(&disk.to_img()) {
                                 bytestream = Some(woz.to_bytes());
                             }
@@ -262,7 +276,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                         Ok(DiskKind::A2_525_16) => {
                             let mut disk = dos33::Disk::new();
                             let mut woz = img_woz2::Woz2::create(DiskKind::A2_525_16);
-                            disk.format(vol,true,17);
+                            disk.format(vol,include_os,17);
                             if let Ok(()) = woz.update_from_do(&disk.to_img()) {
                                 bytestream = Some(woz.to_bytes());
                             }
@@ -344,6 +358,28 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         }
     }
 
+    // Minify
+
+    if let Some(cmd) = matches.subcommand_matches("minify") {
+        if atty::is(atty::Stream::Stdin) {
+            eprintln!("line entry is not supported for `minify`, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        return match typ
+        {
+            Ok(ItemType::ApplesoftText) => {
+                let mut program = String::new();
+                std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+                let mut minifier = applesoft::minifier::Minifier::new();
+                let object = minifier.minify(&program);
+                println!("{}",&object);
+                Ok(())
+            },
+            _ => Err(Box::new(CommandError::UnsupportedItemType))
+        };
+    }
+    
     // Tokenize BASIC or Encode Merlin
 
     if let Some(cmd) = matches.subcommand_matches("tokenize") {
