@@ -48,6 +48,8 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v3
+      - name: Install musl GCC wrapper
+        run: sudo apt install musl-tools
       - name: Cargo cache
         uses: actions/cache@v3
         with:
