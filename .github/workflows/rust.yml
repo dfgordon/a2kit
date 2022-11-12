@@ -49,7 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install musl GCC wrapper
-        run: sudo apt install musl-tools
+        run: |
+          if [[ $OS =~ ^ubuntu.*$ ]]; then
+            sudo apt install musl-tools
+          fi
       - name: Cargo cache
         uses: actions/cache@v3
         with:
