@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use tree_sitter;
 use tree_sitter_applesoft;
-use super::super::walker;
-use super::super::walker::Visit;
+use crate::lang;
+use crate::lang::Visit;
 use super::token_maps;
 
 /// Handles tokenization of Applesoft BASIC
@@ -19,9 +19,9 @@ pub struct Tokenizer
 	detok_map: HashMap<u8,&'static str>
 }
 
-impl walker::Visit for Tokenizer
+impl lang::Visit for Tokenizer
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> walker::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
     {
 		// At this point we assume we have ASCII in self.line
 
@@ -35,7 +35,7 @@ impl walker::Visit for Tokenizer
 						let bytes = u16::to_le_bytes(num);
 						self.tokenized_line.push(bytes[0]);
 						self.tokenized_line.push(bytes[1]);
-						return walker::WalkerChoice::GotoSibling;
+						return lang::WalkerChoice::GotoSibling;
 					}
 					panic!("linenum node did not parse as a number")
 				}
@@ -45,18 +45,18 @@ impl walker::Visit for Tokenizer
 		if !curs.node().is_named() {
 			let mut cleaned = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		// Negative ASCII tokens (except DATA will be intercepted by parent statement)
 		if let Some(tok) = self.tok_map.get(curs.node().kind()) {
 			self.tokenized_line.push(*tok);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		// Required upper case
 		if curs.node().kind().starts_with("name_") || curs.node().kind()=="real" {
 			let mut cleaned = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		// Persistent spaces
 		if curs.node().kind()=="statement" {
@@ -68,33 +68,33 @@ impl walker::Visit for Tokenizer
 					let items: String = String::from(&self.line[std::ops::Range {start: tok.end_byte(),end: curs.node().end_byte()}]);
 					self.tokenized_line.push(*self.tok_map.get("tok_data").unwrap());
 					self.tokenized_line.append(&mut items.as_bytes().to_vec());
-					return walker::WalkerChoice::GotoSibling;
+					return lang::WalkerChoice::GotoSibling;
 				}
 			}
 		}
 		if curs.node().kind()=="str" {
 			let mut cleaned = node_str.trim().as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="terminal_str" {
 			let mut cleaned = node_str.trim_start().as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="comment_text" {
 			self.tokenized_line.append(&mut node_str.as_bytes().to_vec());
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().child_count()==0 {
 			let mut cleaned = node_str.replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
-		return walker::WalkerChoice::GotoChild;
+		return lang::WalkerChoice::GotoChild;
     }
 }
 

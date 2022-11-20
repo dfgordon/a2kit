@@ -1,8 +1,8 @@
 //! # Base Layer for Disk Image and File Operations
 //! 
 //! This module defines types and traits for use with any supported disk image.
-//! It defines the primary trait objects, `DiskImage` and `A2Disk`, as well as the
-//! base-level file representation, `SparseData`.
+//! It defines the primary trait objects, `DiskImage` and `DiskFS`, as well as the
+//! base-level file representation, `FileImage`.
 
 use std::error::Error;
 use thiserror;
@@ -25,7 +25,9 @@ pub enum CommandError {
     #[error("Input source is not supported")]
     UnsupportedFormat,
     #[error("Input source could not be interpreted")]
-    UnknownFormat
+    UnknownFormat,
+    #[error("File not found")]
+    FileNotFound
 }
 
 #[derive(PartialEq,Clone,Copy)]
@@ -40,7 +42,7 @@ pub enum DiskKind {
 pub enum DiskImageType {
     DO,
     PO,
-    WOZ,
+    WOZ1,
     WOZ2
 }
 
@@ -53,7 +55,7 @@ pub enum ItemType {
     Binary,
     Text,
     Records,
-    SparseData,
+    FileImage,
     ApplesoftText,
     IntegerText,
     MerlinText,
@@ -86,7 +88,7 @@ impl FromStr for DiskImageType {
         match s {
             "do" => Ok(Self::DO),
             "po" => Ok(Self::PO),
-            "woz1" => Ok(Self::WOZ),
+            "woz1" => Ok(Self::WOZ1),
             "woz2" => Ok(Self::WOZ2),
             _ => Err(CommandError::UnknownItemType)
         }
@@ -101,7 +103,7 @@ impl FromStr for ItemType {
             "bin" => Ok(Self::Binary),
             "txt" => Ok(Self::Text),
             "rec" => Ok(Self::Records),
-            "any" => Ok(Self::SparseData),
+            "any" => Ok(Self::FileImage),
             "atxt" => Ok(Self::ApplesoftText),
             "itxt" => Ok(Self::IntegerText),
             "mtxt" => Ok(Self::MerlinText),
@@ -132,27 +134,42 @@ pub trait TextEncoder {
 /// The chunks can be partially filled, e.g., `desequence` will not pad the last chunk.
 /// This is essentially `Records`, but for raw bytes.  Text should already be
 /// properly encoded by the time it gets put into the chunks.
-pub struct SparseData {
+pub struct FileImage {
     /// The length of a chunk
     pub chunk_len: usize,
+    /// the length of the file were it serialized
+    pub eof: usize,
     /// The file system type in some string representation
     pub fs_type: String,
     /// Auxiliary data in some string representation
     pub aux: String,
-    /// the length of the file were it serialized
-    pub eof: usize,
+    /// The access control bits in some string representation
+    pub access: String,
+    /// The creation time in some string representation
+    pub created: String,
+    /// The modified time in some string representation
+    pub modified: String,
+    /// Some version as a string
+    pub version: String,
+    /// Some minimum version as a string
+    pub min_version: String,
     /// The key is an ordered chunk number starting at 0, no relation to any disk location.
     /// Contraints on the length of the data are undefined at this level.
     pub chunks: HashMap<usize,Vec<u8>>
 }
 
-impl SparseData {
+impl FileImage {
     pub fn new(chunk_len: usize) -> Self {
         Self {
             chunk_len,
             fs_type: String::from("bin"),
             aux: String::from("0"),
             eof: 0,
+            access: String::from("0"),
+            created: String::from("0"),
+            modified: String::from("0"),
+            version: String::from("0"),
+            min_version: String::from("0"),
             chunks: HashMap::new()
         }
     }
@@ -208,16 +225,41 @@ impl SparseData {
         return self;
     }
     /// Get chunks from the JSON string representation
-    pub fn from_json(json_str: &str) -> Result<SparseData,Box<dyn Error>> {
+    pub fn from_json(json_str: &str) -> Result<FileImage,Box<dyn Error>> {
         match json::parse(json_str) {
             Ok(parsed) => {
-                let maybe_type = parsed["a2kit_type"].as_str();
+                let maybe_type = parsed["fimg_type"].as_str();
                 let maybe_len = parsed["chunk_length"].as_usize();
                 let maybe_fs_type = parsed["fs_type"].as_str();
                 let maybe_aux = parsed["aux"].as_str();
                 let maybe_eof = parsed["eof"].as_usize();
-                if let (Some(typ),Some(len),Some(fs_type),Some(aux),Some(eof)) = 
-                    (maybe_type,maybe_len,maybe_fs_type,maybe_aux,maybe_eof) {
+                let maybe_access = parsed["access"].as_str();
+                let maybe_created = parsed["created"].as_str();
+                let maybe_modified = parsed["modified"].as_str();
+                let maybe_vers = parsed["version"].as_str();
+                let maybe_min_version = parsed["min_version"].as_str();
+                if let (
+                    Some(typ),
+                    Some(chunk_len),
+                    Some(fs_type),
+                    Some(aux),
+                    Some(eof),
+                    Some(access),
+                    Some(created),
+                    Some(modified),
+                    Some(version),
+                    Some(min_version)
+                ) = (
+                    maybe_type,
+                    maybe_len,
+                    maybe_fs_type,
+                    maybe_aux,
+                    maybe_eof,
+                    maybe_access,
+                    maybe_created,
+                    maybe_modified,
+                    maybe_vers,
+                    maybe_min_version) {
                     if typ=="any" {
                         let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
                         let map_obj = &parsed["chunks"];
@@ -240,10 +282,15 @@ impl SparseData {
                             }
                         }
                         return Ok(Self {
-                            chunk_len: len,
+                            chunk_len,
+                            eof,
                             fs_type: fs_type.to_string(),
                             aux: aux.to_string(),
-                            eof,
+                            access: access.to_string(),
+                            created: created.to_string(),
+                            modified: modified.to_string(),
+                            version: version.to_string(),
+                            min_version: min_version.to_string(),
                             chunks
                         });
                     } else {
@@ -264,10 +311,15 @@ impl SparseData {
             json_map[c.to_string()] = json::JsonValue::String(hex::encode_upper(v));
         }
         let ans = json::object! {
-            a2kit_type: "any",
-            fs_type: self.fs_type.to_string(),
-            aux: self.aux.to_string(),
+            fimg_type: "any",
+            fs_type: self.fs_type.clone(),
+            aux: self.aux.clone(),
             eof: self.eof,
+            access: self.access.clone(),
+            created: self.created.clone(),
+            modified: self.modified.clone(),
+            version: self.version.clone(),
+            min_version: self.min_version.clone(),
             chunk_length: self.chunk_len,
             chunks: json_map
         };
@@ -281,7 +333,7 @@ impl SparseData {
 
 /// This is an abstraction used in handling random access text files.
 /// Text encoding at this level is UTF8, it may be translated at lower levels.
-/// This will usually be translated into `SparseData` for lower level handling.
+/// This will usually be translated into `FileImage` for lower level handling.
 pub struct Records {
     /// The fixed length of all records in this collection
     pub record_len: usize,
@@ -300,10 +352,10 @@ impl Records {
     pub fn add_record(&mut self,num: usize,fields: &str) {
         self.map.insert(num,fields.to_string());
     }
-    /// Derive records from sparse data, this should find any real record, but may also find spurious ones.
+    /// Derive records from file image, this should find any real record, but may also find spurious ones.
     /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
     /// This routine assumes ASCII null terminates any record.
-    pub fn from_sparse_data(dat: &SparseData,record_length: usize,encoder: impl TextEncoder) -> Result<Records,Box<dyn Error>> {
+    pub fn from_fimg(dat: &FileImage,record_length: usize,encoder: impl TextEncoder) -> Result<Records,Box<dyn Error>> {
         if record_length==0 {
             return Err(Box::new(CommandError::OutOfRange));
         }
@@ -351,9 +403,9 @@ impl Records {
         }
         return Ok(ans);
     }
-    /// create sparse data from the records, this is usually done before writing to a disk image
-    pub fn to_sparse_data(&self,chunk_len: usize,require_first: bool,encoder: impl TextEncoder) -> Result<SparseData,Box<dyn Error>> {
-        let mut ans = SparseData::new(chunk_len);
+    /// create file image from the records, this is usually done before writing to a disk image
+    pub fn to_fimg(&self,chunk_len: usize,require_first: bool,encoder: impl TextEncoder) -> Result<FileImage,Box<dyn Error>> {
+        let mut ans = FileImage::new(chunk_len);
         ans.new_type("txt");
         ans.new_aux(&self.record_len.to_string());
         ans.eof = 0;
@@ -402,7 +454,7 @@ impl Records {
     pub fn from_json(json_str: &str) -> Result<Records,Box<dyn Error>> {
         match json::parse(json_str) {
             Ok(parsed) => {
-                let maybe_type = parsed["a2kit_type"].as_str();
+                let maybe_type = parsed["fimg_type"].as_str();
                 let maybe_len = parsed["record_length"].as_usize();
                 if let (Some(typ),Some(len)) = (maybe_type,maybe_len) {
                     if typ=="rec" {
@@ -455,7 +507,7 @@ impl Records {
             json_map[r.to_string()] = json_array;
         }
         let ans = json::object! {
-            a2kit_type: "rec",
+            fimg_type: "rec",
             record_length: self.record_len,
             records: json_map
         };
@@ -495,9 +547,9 @@ pub trait DiskImage {
     fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
 }
 
-/// Abstract disk interface applicable to DOS or ProDOS.
-/// Provides BASIC-like file commands, chunk operations, and `any` type operations.
-pub trait A2Disk {
+/// Abstract file system interface.
+/// Provides BASIC-like high level commands, chunk operations, and `any` type operations.
+pub trait DiskFS {
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn Error>>;
     /// Create a new directory
@@ -534,9 +586,9 @@ pub trait A2Disk {
     /// Write records to a random access text file
     fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,Box<dyn Error>>;
     /// Read a file into a generalized representation
-    fn read_any(&self,path: &str) -> Result<SparseData,Box<dyn Error>>;
+    fn read_any(&self,path: &str) -> Result<FileImage,Box<dyn Error>>;
     /// Write a file from a generalized representation
-    fn write_any(&mut self,path: &str,dat: &SparseData) -> Result<usize,Box<dyn Error>>;
+    fn write_any(&mut self,path: &str,dat: &FileImage) -> Result<usize,Box<dyn Error>>;
     /// Get a chunk (block or sector) appropriate for this disk
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Put a chunk (block or sector) appropriate for this disk, n.b. this simply zaps the disk image and can easily break it

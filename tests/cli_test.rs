@@ -73,6 +73,24 @@ BLOCKS FREE: 227\s+BLOCKS USED: 53\s+TOTAL BLOCKS: 280"#;
     Ok(())
 }
 
+#[test]
+fn catalog_pascal() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected =
+r#"BLANK:
+HELLO.TEXT\s+4.*TEXT
+TEST2.TEXT\s+4.*TEXT
+TEST3.TEXT\s+4.*TEXT
+
+3/3 files<listed/in-dir>, 18 blocks used, 262 unused, 262 in largest"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("pascal-smallfiles.do"))
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(expected).expect("regex err"));
+    Ok(())
+}
+
 // N.b. extensive tokenization tests are in the language modules
 #[test]
 fn tokenize_stdin() -> Result<(), Box<dyn std::error::Error>> {

@@ -92,7 +92,7 @@ mod minify_vars {
 
 mod minify_vars_with_guards {
     #[test]
-	fn TO_and_STEP_guards() {
+	fn to_and_step_guards() {
 		let test_code = "10 for x = ca12345 to abracadabra step 5";
 		let expected = "10forx=(ca)to(ab)step5";
 		super::test_minify(test_code, expected);

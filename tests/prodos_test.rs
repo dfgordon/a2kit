@@ -1,14 +1,16 @@
 // test of prodos disk image module
 use std::path::Path;
 use std::fmt::Write;
-use a2kit::prodos;
-use a2kit::applesoft;
-use a2kit::img_woz1;
-use a2kit::disk_base::{ItemType,A2Disk};
+use a2kit::fs::prodos;
+use a2kit::img::{woz1,woz2};
+use a2kit::disk_base::TextEncoder;
+use a2kit::lang::applesoft;
+use a2kit::disk_base::{ItemType,DiskFS,DiskImage,DiskKind};
+use a2kit_macro::DiskStruct;
 
 pub const JSON_REC: &str = "
 {
-    \"a2kit_type\": \"rec\",
+    \"fimg_type\": \"rec\",
     \"record_length\": 127,
     \"records\": {
         \"2000\": [\"HELLO FROM TREE 2\"],
@@ -39,34 +41,71 @@ fn create_dirs() {
 
 #[test]
 fn read_small() {
-    // test a disk we formatted ourselves, but saved some files in VII:
-    // 1. BSAVE THECHIP,A$300,L$4    ($300: 6 5 0 2)
-    // 2. SAVE HELLO    (10 PRINT "HELLO")
-    // TODO: add a small sequential text file
-    let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.po")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    // Formatting: Copy2Plus, writing: MicroM8:
+    // This tests a small BASIC program, binary, and text files
+    let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.do")).expect("failed to read test image file");
+    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+
+    // check the BASIC program
+    let basic_program = "
+    10 D$ =  CHR$ (4)
+    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
+    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
+    40  PRINT D$;\"OPEN THETEXT\"
+    50  PRINT D$;\"WRITE THETEXT\"
+    60  PRINT \"HELLO FROM PRODOS\"
+    70  PRINT D$;\"CLOSE THETEXT\"";
+    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
+    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
+    lib_tokens.push(196);
+    let disk_tokens = emulator_disk.load("hello").expect("error");
+    assert_eq!(disk_tokens,(0,lib_tokens));
+
+    // check the binary
     let binary_data = emulator_disk.bload("thechip").expect("error");
     assert_eq!(binary_data,(768,vec![6,5,0,2]));
-    let disk_tokens = emulator_disk.load("hello").expect("error");
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let lib_tokens = tokenizer.tokenize("10 print \"HELLO\"",2049);
-    assert_eq!(disk_tokens,(0,lib_tokens));
+
+    // check the sequential text file
+    let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
+    let txt = prodos::types::SequentialText::from_bytes(&raw);
+    let encoder = prodos::types::Encoder::new(Some(0x0d));
+    assert_eq!(txt.text,encoder.encode("HELLO FROM PRODOS").unwrap());
 }
 
 #[test]
 fn write_small() {
-    // test a disk we formatted ourselves, but saved some files in VII:
-    // 1. BSAVE THECHIP,A$300,L$4    ($300: 6 5 0 2)
-    // 2. SAVE HELLO    (10 PRINT "HELLO")
-    // TODO: add a small sequential text file
+    // Formatting: Copy2Plus, writing: MicroM8:
+    // This tests a small BASIC program, binary, and text file
     let mut disk = prodos::Disk::new(280);
     disk.format(&String::from("NEW.DISK"),true,None);
-    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
-    let basic_program = "10 print \"HELLO\"";
+
+    // save the BASIC program
+    let basic_program = "
+    10 D$ =  CHR$ (4)
+    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
+    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
+    40  PRINT D$;\"OPEN THETEXT\"
+    50  PRINT D$;\"WRITE THETEXT\"
+    60  PRINT \"HELLO FROM PRODOS\"
+    70  PRINT D$;\"CLOSE THETEXT\"";
     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let tokens = tokenizer.tokenize(basic_program, 2049);
-    disk.save("hello",&tokens,ItemType::ApplesoftTokens,None).expect("error");
-    disk.compare(&Path::new("tests").join("prodos-smallfiles.po"),&disk.standardize(2));
+    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
+    lib_tokens.push(196);
+    disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("error");
+
+    // save the binary
+    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
+
+    // save the text
+    let encoder = prodos::types::Encoder::new(Some(0x0d));
+    disk.write_text("thetext",&encoder.encode("HELLO FROM PRODOS").unwrap()).expect("error");
+
+    let mut ignore = disk.standardize(2);
+    // loop to ignore boot blocks for this test
+    for i in 0..1024 {
+        ignore.push(i);
+    }
+    disk.compare(&Path::new("tests").join("prodos-smallfiles.do"),&ignore);
 }
 
 #[test]
@@ -92,7 +131,7 @@ fn read_big() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a seedling, a sapling, and two trees (both sparse)
     let img = std::fs::read(&Path::new("tests").join("prodos-bigfiles.dsk")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program, this is a seedling file
@@ -299,20 +338,63 @@ fn read_big_woz1() {
     // convert to DSK, and compare with a DSK that was also created via the emulator.
     // In testing the conversion we test a lot of underlying WOZ machinery.
 
-    if let Some(woz1_path) = (Path::new("tests").join("prodos-bigfiles.woz")).to_str() {
-        if let Some((_img,mut disk)) = a2kit::create_img_and_disk_from_file(woz1_path) {
-            let ignore = disk.standardize(2);
-            // As usual we have mysterious trailing byte differences which seem to be a real artifact of the emulators.
-            // When VII saves the WOZ it does not have the trailing byte(s), using DSK in the exact same way does.
-            if let Ok((_x,mut dir_chunk)) = disk.read_chunk("2") {
-                dir_chunk[0x40] = 0x71;
-                disk.write_chunk("2",&dir_chunk).expect("could not apply chunk correction");
-            }
-            if let Ok((_x,mut dir_chunk)) = disk.read_chunk("7") {
-                dir_chunk[0x170] = 0xc4;
-                disk.write_chunk("7",&dir_chunk).expect("could not apply chunk correction");
-            }
-            disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
-        }
+    let buf = Path::new("tests").join("prodos-bigfiles.woz");
+    let woz1_path = buf.to_str().expect("could not get path");
+    let (_img,mut disk) = a2kit::create_img_and_fs_from_file(woz1_path).expect("could not interpret image");
+    let ignore = disk.standardize(2);
+    // As usual we have mysterious trailing byte differences which seem to be a real artifact of the emulators.
+    // When VII saves the WOZ it does not have the trailing byte(s), using DSK in the exact same way does.
+    if let Ok((_x,mut dir_chunk)) = disk.read_chunk("2") {
+        dir_chunk[0x40] = 0x71;
+        disk.write_chunk("2",&dir_chunk).expect("could not apply chunk correction");
     }
+    if let Ok((_x,mut dir_chunk)) = disk.read_chunk("7") {
+        dir_chunk[0x170] = 0xc4;
+        disk.write_chunk("7",&dir_chunk).expect("could not apply chunk correction");
+    }
+    disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
+}
+
+#[test]
+fn read_write_small_woz1_and_woz2() {
+    // To verify we can write to WOZ, we create a DiskFS, save it to a WOZ, regenerate the DiskFS
+    let mut disk = prodos::Disk::new(280);
+    disk.format(&String::from("NEW.DISK"),true,None);
+
+    // save the BASIC program
+    let basic_program = "
+    10 D$ =  CHR$ (4)
+    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
+    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
+    40  PRINT D$;\"OPEN THETEXT\"
+    50  PRINT D$;\"WRITE THETEXT\"
+    60  PRINT \"HELLO FROM PRODOS\"
+    70  PRINT D$;\"CLOSE THETEXT\"";
+    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
+    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
+    lib_tokens.push(196);
+    disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("error");
+
+    // save the binary
+    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
+
+    // save the text
+    let encoder = prodos::types::Encoder::new(Some(0x0d));
+    disk.write_text("thetext",&encoder.encode("HELLO FROM PRODOS").unwrap()).expect("error");
+    
+    // Check we can go to WOZ1 and back
+
+    let mut woz = woz1::Woz1::create(254, DiskKind::A2_525_16);
+    woz.update_from_po(&disk.to_img()).expect("could not form WOZ");
+    let other_img = woz.to_po().expect("could not unform WOZ");
+
+    assert_eq!(disk.to_img(),other_img);
+
+    // Check we can go to WOZ2 and back
+
+    let mut woz = woz2::Woz2::create(254, DiskKind::A2_525_16);
+    woz.update_from_po(&disk.to_img()).expect("could not form WOZ");
+    let other_img = woz.to_po().expect("could not unform WOZ");
+
+    assert_eq!(disk.to_img(),other_img);
 }

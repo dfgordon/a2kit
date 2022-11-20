@@ -7,6 +7,10 @@ use std::fmt;
 use a2kit_macro::DiskStruct;
 use crate::disk_base::TextEncoder;
 
+pub const BLOCK_SIZE: usize = 512;
+pub const VOL_KEY_BLOCK: u16 = 2;
+pub const STD_ACCESS: u8 = 1+2+32+64+128;
+
 #[derive(Error,Debug)]
 pub enum Error {
     #[error("RANGE ERROR")]
@@ -53,13 +57,13 @@ pub enum Error {
 pub const TYPE_MAP_DISP: [(u8,&str);39] = [
     (0x00, "???"),
     (0x01, "BAD"),
-    (0x02, "PAC"), // Pascal code
-    (0x03, "PAT"), // Pascal text
+    (0x02, "PCD"), // Pascal code
+    (0x03, "PTX"), // Pascal text
     (0x04, "TXT"),
-    (0x05, "PAD"), // Pascal data
+    (0x05, "PDA"), // Pascal data
     (0x06, "BIN"),
     (0x07, "FON"), // SOS
-    (0x08, "PIC"),
+    (0x08, "FOT"), // Photo
     (0x09, "BAS"), // SOS
     (0x0a, "DAT"), // SOS
     (0x0b, "WRD"), // SOS
@@ -164,20 +168,20 @@ pub struct EntryLocation {
 }
 
 pub struct Encoder {
-    terminator: Option<u8>
+    line_terminator: Option<u8>
 }
 
 impl TextEncoder for Encoder {
-    fn new(terminator: Option<u8>) -> Self {
+    fn new(line_terminator: Option<u8>) -> Self {
         Self {
-            terminator
+            line_terminator
         }
     }
     fn encode(&self,txt: &str) -> Option<Vec<u8>> {
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
-            if ans.len()>0 && ans[ans.len()-1]==0x0d && src[i]==0x0a {
+            if i+1<src.len() && src[i]==0x0d && src[i+1]==0x0a {
                 continue;
             }
             if src[i]==0x0a || src[i]==0x0d {
@@ -188,7 +192,7 @@ impl TextEncoder for Encoder {
                 return None;
             }
         }
-        if let Some(terminator) = self.terminator {
+        if let Some(terminator) = self.line_terminator {
             if ans[ans.len()-1] != terminator {
                 ans.push(terminator);
             }
@@ -218,17 +222,6 @@ impl TextEncoder for Encoder {
 pub struct SequentialText {
     pub text: Vec<u8>,
     terminator: u8
-}
-
-impl SequentialText {
-    /// Take unstructured bytes representing the text only (sans terminator) and pack it into the structure.
-    /// Use `FromStr` and `Display` below if you need to convert newlines for display purposes.
-    pub fn pack(txt: &Vec<u8>) -> Self {
-        Self {
-            text: txt.clone(),
-            terminator: 0
-        }
-    }
 }
 
 /// Allows the structure to be created from string slices using `from_str`.
@@ -270,16 +263,11 @@ impl DiskStruct for SequentialText {
     }
     /// Create structure using flattened bytes (typically from disk)
     fn from_bytes(dat: &Vec<u8>) -> Self {
-        // find end of text
-        let mut end_byte = dat.len();
-        for i in 0..dat.len() {
-            if dat[i]==0 {
-                end_byte = i;
-                break;
-            }
-        }
         Self {
-            text: dat[0..end_byte as usize].to_vec(),
+            text: match dat.split(|x| *x==0).next() {
+                Some(v) => v.to_vec(),
+                _ => dat.clone()
+            },
             terminator: 0
         }
     }

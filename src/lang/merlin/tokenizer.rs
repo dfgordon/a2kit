@@ -6,8 +6,8 @@
 
 use tree_sitter;
 use tree_sitter_merlin6502;
-use super::super::walker;
-use super::super::walker::Visit;
+use crate::lang;
+use crate::lang::Visit;
 
 /// Handles transformations between source encodings used by Merlin and ordinary text editors.
 /// Merlin uses negative ASCII for all except spaces.  New line is 0x8d.
@@ -20,9 +20,9 @@ pub struct Tokenizer
 	columns: usize
 }
 
-impl walker::Visit for Tokenizer
+impl lang::Visit for Tokenizer
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> walker::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
     {
 		// Two tasks here:
 		// 1. convert string to ASCII bytes (to be inverted later)
@@ -57,10 +57,10 @@ impl walker::Visit for Tokenizer
 		// If none of the above, look for terminal nodes
 		if curs.node().child_count()==0 {
 			self.tokenized_line.append(&mut self.text(curs.node()).as_bytes().to_vec());
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
-		return walker::WalkerChoice::GotoChild;
+		return lang::WalkerChoice::GotoChild;
     }
 }
 

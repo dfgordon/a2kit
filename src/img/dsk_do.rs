@@ -7,7 +7,7 @@
 //! all this module has to do is reordering and verifications.
 
 use crate::disk_base;
-use crate::disk525;
+use crate::img;
 
 const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
@@ -52,21 +52,21 @@ impl disk_base::DiskImage for DO {
         if self.data.len()!=dsk.len() {
             return Err(Box::new(disk_base::CommandError::UnknownFormat));
         }
-        return self.update_from_do(&disk525::reorder_po_to_do(dsk, self.sectors as usize));
+        return self.update_from_do(&img::reorder_po_to_do(dsk, self.sectors as usize));
     }
     fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         return Ok(self.data.clone());
     }
     fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Ok(disk525::reorder_do_to_po(&self.data, self.sectors as usize));
+        return Ok(img::reorder_do_to_po(&self.data, self.sectors as usize));
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_buf(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         return Err(Box::new(disk_base::CommandError::UnsupportedFormat));
     }
-    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_bytes(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         return Err(Box::new(disk_base::CommandError::UnsupportedFormat));        
     }
 }

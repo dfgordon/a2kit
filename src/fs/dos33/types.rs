@@ -77,20 +77,20 @@ fn append_junk(dat: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Vec<u8> {
 }
 
 pub struct Encoder {
-    terminator: Option<u8>
+    line_terminator: Option<u8>
 }
 
 impl TextEncoder for Encoder {
-    fn new(terminator: Option<u8>) -> Self {
+    fn new(line_terminator: Option<u8>) -> Self {
         Self {
-            terminator
+            line_terminator
         }
     }
     fn encode(&self,txt: &str) -> Option<Vec<u8>> {
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
-            if ans.len()>0 && ans[ans.len()-1]==0x8d && src[i]==0x0a {
+            if i+1<src.len() && src[i]==0x0d && src[i+1]==0x0a {
                 continue;
             }
             if src[i]==0x0a || src[i]==0x0d {
@@ -101,7 +101,7 @@ impl TextEncoder for Encoder {
                 return None;
             }
         }
-        if let Some(terminator) = self.terminator {
+        if let Some(terminator) = self.line_terminator {
             if ans[ans.len()-1] != terminator {
                 ans.push(terminator);
             }
@@ -190,17 +190,6 @@ pub struct SequentialText {
     terminator: u8
 }
 
-impl SequentialText {
-    /// Take unstructured bytes representing the text only (sans terminator) and pack it into the structure.
-    /// These are not standard UTF8 bytes, see `FromStr` and `Display` below if you need to convert.
-    pub fn pack(txt: &Vec<u8>) -> Self {
-        Self {
-            text: txt.clone(),
-            terminator: 0
-        }
-    }
-}
-
 /// Allows the structure to be created from string slices using `from_str`.
 /// This replaces LF/CRLF with CR and flips positive ASCII. Negative ASCII is an error.
 impl FromStr for SequentialText {
@@ -240,16 +229,11 @@ impl DiskStruct for SequentialText {
     }
     /// Create structure using flattened bytes (typically from disk)
     fn from_bytes(dat: &Vec<u8>) -> Self {
-        // find end of text
-        let mut end_byte = dat.len();
-        for i in 0..dat.len() {
-            if dat[i]==0 {
-                end_byte = i;
-                break;
-            }
-        }
         Self {
-            text: dat[0..end_byte as usize].to_vec(),
+            text: match dat.split(|x| *x==0).next() {
+                Some(v) => v.to_vec(),
+                _ => dat.clone()
+            },
             terminator: 0
         }
     }

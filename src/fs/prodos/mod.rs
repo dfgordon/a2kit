@@ -11,14 +11,15 @@ use a2kit_macro::DiskStruct;
 use std::str::FromStr;
 use std::fmt::Write;
 use colored::*;
+use log::info;
 use types::*;
 use directory::*;
 use crate::disk_base;
 use crate::disk_base::TextEncoder;
-use crate::applesoft;
-use crate::create_disk_from_file;
-use crate::disk525;
+use crate::lang::applesoft;
+use crate::create_fs_from_file;
 
+/// The primary interface for disk operations.
 pub struct Disk {
     blocks: Vec<[u8;512]>,
 }
@@ -117,8 +118,11 @@ impl Disk {
         return None;
     }
 
-    pub fn format(&mut self, vol_name: &String, floppy: bool, time: Option<chrono::NaiveDateTime>) {
-        
+    pub fn format(&mut self, vol_name: &str, floppy: bool, time: Option<chrono::NaiveDateTime>) {
+        // make sure we start with all 0
+        for iblock in 0..self.blocks.len() {
+            self.zap_block(&[0;512].to_vec(),iblock,0);
+        }
         // calculate volume parameters and setup volume directory
         let mut volume_dir = KeyBlock::<VolDirHeader>::new();
         let bitmap_blocks = 1 + self.blocks.len() / 4096;
@@ -348,7 +352,7 @@ impl Disk {
         return Err(Error::PathNotFound);
     }
     /// Read the data referenced by a single index block
-    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,dat: &mut disk_base::SparseData,count: &mut usize,eof: &mut usize) {
+    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,fimg: &mut disk_base::FileImage,count: &mut usize,eof: &mut usize) {
         self.read_block(buf,index_ptr as usize,0);
         let index_block = buf.clone();
         for idx in 0..256 {
@@ -359,7 +363,7 @@ impl Disk {
             }
             if ptr>0 {
                 self.read_block(buf,ptr as usize,0);
-                dat.chunks.insert(*count,buf[0..bytes].to_vec());
+                fimg.chunks.insert(*count,buf[0..bytes].to_vec());
             }
             *count += 1;
             *eof += bytes;
@@ -408,10 +412,11 @@ impl Disk {
             _ => panic!("cannot read file of this type")
         }
     }
-    /// Read any file into the sparse file format.  Use `SparseData.sequence()` to flatten the result
+    /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,entry: &Entry) -> disk_base::SparseData {
-        let mut dat = disk_base::SparseData::new(512);
+    fn read_file(&self,entry: &Entry) -> disk_base::FileImage {
+        let mut fimg = disk_base::FileImage::new(512);
+        entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
         let master_ptr = entry.get_ptr();
         let mut eof: usize = 0;
@@ -419,12 +424,12 @@ impl Disk {
         match entry.storage_type() {
             StorageType::Seedling => {
                 self.read_block(&mut buf, master_ptr as usize, 0);
-                dat.chunks.insert(0, buf[0..entry.eof()].to_vec());
-                return dat;
+                fimg.chunks.insert(0, buf[0..entry.eof()].to_vec());
+                return fimg;
             },
             StorageType::Sapling => {
-                self.read_index_block(&entry, master_ptr, &mut buf, &mut dat, &mut count, &mut eof);
-                return dat;
+                self.read_index_block(&entry, master_ptr, &mut buf, &mut fimg, &mut count, &mut eof);
+                return fimg;
             },
             StorageType::Tree => {
                 self.read_block(&mut buf,master_ptr as usize,0);
@@ -432,13 +437,13 @@ impl Disk {
                 for idx in 0..256 {
                     let ptr = u16::from_le_bytes([master_block[idx],master_block[idx+256]]);
                     if ptr>0 {
-                        self.read_index_block(entry, ptr, &mut buf, &mut dat, &mut count, &mut eof);
+                        self.read_index_block(entry, ptr, &mut buf, &mut fimg, &mut count, &mut eof);
                     } else {
                         count += 256;
                         eof += 256*512;
                     }
                 }
-                return dat;
+                return fimg;
             }
             _ => panic!("cannot read file of this type")
         }
@@ -476,12 +481,12 @@ impl Disk {
             return Err(Error::PathNotFound);
         }
     }
-    /// Write any sparse or sequential file.  Use `SparseData::desequence` to put sequential data
+    /// Write any sparse or sequential file.  Use `FileImage::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
     /// The entry must already exist and point to the next available block.
-    /// The creator of `SparseData` must ensure that the first block is allocated.
+    /// The creator of `FileImage` must ensure that the first block is allocated.
     /// This writes blocks more often than necessary, would be inadequate for an actual disk.
-    fn write_file(&mut self,loc: EntryLocation,dat: &disk_base::SparseData) -> Result<usize,Error> {
+    fn write_file(&mut self,loc: EntryLocation,fimg: &disk_base::FileImage) -> Result<usize,Error> {
         let mut storage = StorageType::Seedling;
         let mut master_buf: Vec<u8> = vec![0;512];
         let mut master_ptr: u16 = 0;
@@ -494,9 +499,9 @@ impl Disk {
         let mut entry = dir.get_entry(&loc);
         let mut blocks_available = self.num_free_blocks();
 
-        for count in 0..dat.end() {
+        for count in 0..fimg.end() {
 
-            let buf_maybe = dat.chunks.get(&count);
+            let buf_maybe = fimg.chunks.get(&count);
 
             if master_count > 127 {
                 return Err(Error::DiskFull);
@@ -545,7 +550,7 @@ impl Disk {
                     data_block = disk.get_available_block().unwrap();
                     disk.write_block(&buf,data_block as usize,0);
                     eof += match count {
-                        c if c+1 < dat.end() => 512,
+                        c if c+1 < fimg.end() => 512,
                         _ => buf.len()
                     };
                     ent.delta_blocks(1);
@@ -632,7 +637,7 @@ impl Disk {
             }
 
             // update the entry, do last to capture all the changes
-            entry.set_eof(usize::max(entry.eof(),dat.eof));
+            entry.set_eof(usize::max(entry.eof(),fimg.eof));
             self.write_entry(&loc,&entry);
         }
         return Ok(eof);
@@ -672,41 +677,10 @@ impl Disk {
         self.write_entry(loc, &entry);
         return Ok(());
     }
-    /// Return a disk object if the image data verifies as DOS ordered,
-    /// otherwise return None.  N.b. `.dsk` images are often DOS
-    /// ordered even if the image contains a ProDOS volume.
-    /// Only 280 block (5.25 inch floppy) images are accepted.
-    #[deprecated(since="0.2.0", note="use `from_img` which expects PO, do reordering at the disk image level")]
-    pub fn from_do_img(dimg: &Vec<u8>) -> Option<Self> {
-        let block_count = dimg.len()/512;
-        if dimg.len()%512 != 0 || block_count != 280 {
-            return None;
-        }
-        let mut disk = Self::new(block_count as u16);
-
-        for block in 0..block_count {
-            let ([t1,s1],[t2,s2]) = disk525::ts_from_block(block as u16);
-            for byte in 0..256 {
-                disk.blocks[block][byte] = dimg[t1 as usize*4096 + s1 as usize*256 + byte];
-                disk.blocks[block][byte+256] = dimg[t2 as usize*4096 + s2 as usize*256 + byte];
-            }
-        }
-        if disk.blocks[0]==boot::FLOPPY_BLOCK0 || disk.blocks[0]==boot::HD_BLOCK0 {
-            return Some(disk);
-        }
-        return None;
-    }
-    /// Return a disk object if the image data verifies as ProDOS ordered,
+    /// Return a disk object if the image data verifies as ProDOS,
     /// otherwise return None.  The image is allowed to be any integral
-    /// number of blocks up to the maximum of 65535.
-    #[deprecated(since="0.2.0", note="use `from_img` which expects PO, do reordering at the disk image level")]
-    pub fn from_po_img(dimg: &Vec<u8>) -> Option<Self> {
-        return Self::from_img(dimg);
-    }
-    /// Return a disk object if the image data verifies as ProDOS ordered,
-    /// otherwise return None.  The image is allowed to be any integral
-    /// number of blocks up to the maximum of 65535.  The boot block must match
-    /// one of the boot blocks `a2kit` knows about.
+    /// number of blocks up to the maximum of 65535.  Various fields in the
+    /// volume directory header are checked for consistency.
     pub fn from_img(dimg: &Vec<u8>) -> Option<Self> {
         let block_count = dimg.len()/512;
         if dimg.len()%512 != 0 || block_count > 65535 {
@@ -726,19 +700,24 @@ impl Disk {
         let (nibs,name) = vol_key.header.fname();
         let total_blocks = u16::from_le_bytes([disk.blocks[2][0x29],disk.blocks[2][0x2A]]);
         if disk.blocks[2][0x23]!=0x27 || disk.blocks[2][0x24]!=0x0D {
+            info!("unexpected header bytes {}, {}",disk.blocks[2][0x23],disk.blocks[2][0x24]);
             return None;
         }
         if total_blocks as usize!=block_count {
+            info!("unexpected total blocks {}",total_blocks);
             return None;
         }
         if vol_key.prev()!=0 || vol_key.next()!=3 || (nibs >> 4)!=15 {
+            info!("unexpected volume name length or links");
             return None;
         }
         if !first_char_patt.contains(name[0] as char) {
+            info!("volume name unexpected character");
             return None;
         }
         for i in 1..(nibs & 0x0F) {
             if !char_patt.contains(name[i as usize] as char) {
+                info!("volume name unexpected character");
                 return None;
             }
         }
@@ -746,7 +725,7 @@ impl Disk {
     }
 }
 
-impl disk_base::A2Disk for Disk {
+impl disk_base::DiskFS for Disk {
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_dir_key_block(path) {
             Ok(b) => {
@@ -903,22 +882,10 @@ impl disk_base::A2Disk for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-            Ok((name,key_block,loc,new_block)) => {
-                // update the file count in the parent key block
-                let mut dir = self.get_directory(key_block as usize);
-                dir.inc_file_count();
-                self.write_block(&dir.to_bytes(),key_block as usize,0);
-                // write the entry into the parent directory (may not be key block)
-                self.write_entry(&loc,&Entry::create_file(&name, FileType::Binary,start_addr,new_block, key_block, None));
-                // write blocks
-                match self.write_file(loc,&disk_base::SparseData::desequence(512,&padded)) {
-                    Ok(len) => Ok(len),
-                    Err(e) => Err(Box::new(e))
-                }
-            },
-            Err(e) => return Err(Box::new(e))
-        }
+        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, &padded);
+        fimg.fs_type = (FileType::Binary as u8).to_string();
+        fimg.aux = start_addr.to_string();
+        return self.write_any(path,&fimg);
     }
     fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
@@ -931,31 +898,20 @@ impl disk_base::A2Disk for Disk {
         }
     }
     fn save(&mut self,path: &str, dat: &Vec<u8>, typ: disk_base::ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
-        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-            Ok((name,key_block,loc,new_block)) => {
-                // update the file count in the parent key block
-                let mut dir = self.get_directory(key_block as usize);
-                dir.inc_file_count();
-                self.write_block(&dir.to_bytes(),key_block as usize,0);
-                // write the entry into the parent directory (may not be key block)
-                match typ {
-                    disk_base::ItemType::ApplesoftTokens => {
-                        let addr = applesoft::deduce_address(dat);
-                        self.write_entry(&loc,&Entry::create_file(&name, FileType::ApplesoftCode,addr,new_block, key_block, None));
-                    },
-                    disk_base::ItemType::IntegerTokens => {
-                        self.write_entry(&loc,&Entry::create_file(&name, FileType::IntegerCode,0,new_block, key_block, None));
-                    }
-                    _ => panic!("cannot write this type of program file")
-                }
-                // write blocks
-                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
-                    Ok(len) => Ok(len),
-                    Err(e) => Err(Box::new(e))
-                }
+        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, dat);
+        match typ {
+            disk_base::ItemType::ApplesoftTokens => {
+                let addr = applesoft::deduce_address(dat);
+                fimg.fs_type = (FileType::ApplesoftCode as u8).to_string();
+                fimg.aux = addr.to_string();
+                info!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
             },
-            Err(e) => return Err(Box::new(e))
+            disk_base::ItemType::IntegerTokens => {
+                fimg.fs_type = (FileType::IntegerCode as u8).to_string();
+            }
+            _ => panic!("cannot write this type of program file")
         }
+        return self.write_any(path,&fimg);
     }
     fn read_text(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
@@ -968,30 +924,17 @@ impl disk_base::A2Disk for Disk {
         }
     }
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-            Ok((name,key_block,loc,new_block)) => {
-                // update the file count in the parent key block
-                let mut dir = self.get_directory(key_block as usize);
-                dir.inc_file_count();
-                self.write_block(&dir.to_bytes(),key_block as usize,0);
-                // write the entry into the parent directory (may not be key block)
-                self.write_entry(&loc,&Entry::create_file(&name, FileType::Text,0,new_block, key_block, None));
-                // write blocks
-                match self.write_file(loc,&disk_base::SparseData::desequence(512,dat)) {
-                    Ok(len) => Ok(len),
-                    Err(e) => Err(Box::new(e))
-                }
-            },
-            Err(e) => return Err(Box::new(e))
-        }
+        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, dat);
+        fimg.fs_type = (FileType::Text as u8).to_string();
+        return self.write_any(path,&fimg);
     }
     fn read_records(&self,path: &str,_record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
-                let sd = self.read_file(&entry);
-                match disk_base::Records::from_sparse_data(&sd,entry.aux() as usize,encoder) {
+                let fimg = self.read_file(&entry);
+                match disk_base::Records::from_fimg(&fimg,entry.aux() as usize,encoder) {
                     Ok(ans) => Ok(ans),
                     Err(e) => Err(e)
                 }
@@ -1001,23 +944,8 @@ impl disk_base::A2Disk for Disk {
     }
     fn write_records(&mut self,path: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
-        if let Ok(sparse_data) = records.to_sparse_data(512,true,encoder) {
-            match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-                Ok((name,key_block,loc,new_block)) => {
-                    // update the file count in the parent key block
-                    let mut dir = self.get_directory(key_block as usize);
-                    dir.inc_file_count();
-                    self.write_block(&dir.to_bytes(),key_block as usize,0);
-                    // write the entry into the parent directory (may not be key block)
-                    self.write_entry(&loc,&Entry::create_file(&name, FileType::Text,records.record_len as u16,new_block, key_block, None));
-                    // write blocks
-                    match self.write_file(loc,&sparse_data) {
-                        Ok(len) => Ok(len),
-                        Err(e) => Err(Box::new(e))
-                    }
-                },
-                Err(e) => return Err(Box::new(e))
-            }
+        if let Ok(fimg) = records.to_fimg(BLOCK_SIZE,true,encoder) {
+            return self.write_any(path,&fimg);
         } else {
             Err(Box::new(Error::Syntax))
         }
@@ -1047,41 +975,33 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,path: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
+    fn read_any(&self,path: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
-                let mut sd = self.read_file(&entry);
-                sd.eof = entry.eof();
-                sd.new_type(&entry.ftype().to_string());
-                sd.new_aux(&entry.aux().to_string());
-                return Ok(sd);
+                return Ok(self.read_file(&entry));
             },
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn write_any(&mut self,path: &str,dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
-        if dat.chunk_len!=512 {
-            eprintln!("chunk length {} is incompatible with ProDOS",dat.chunk_len);
+    fn write_any(&mut self,path: &str,fimg: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.chunk_len!=512 {
+            eprintln!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
         match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
-            Ok((name,key_block,loc,new_block)) => {
+            Ok((name,dir_key_block,loc,new_key_block)) => {
                 // update the file count in the parent key block
-                let mut dir = self.get_directory(key_block as usize);
+                let mut dir = self.get_directory(dir_key_block as usize);
                 dir.inc_file_count();
-                self.write_block(&dir.to_bytes(),key_block as usize,0);
-                // write the entry into the parent directory (may not be key block)
-                let ftype = match FileType::from_str(&dat.fs_type) {
-                    Ok(t) => t,
-                    Err(e) => return Err(Box::new(e))
-                };
-                match u16::from_str(&dat.aux) {
-                    Ok(aux) => self.write_entry(&loc,&Entry::create_file(&name, ftype, aux,new_block, key_block, None)),
+                self.write_block(&dir.to_bytes(),dir_key_block as usize,0);
+                // create the entry
+                match Entry::create_file(&name,fimg,new_key_block,dir_key_block,None) {
+                    Ok(entry) => self.write_entry(&loc,&entry),
                     Err(e) => return Err(Box::new(e))
                 }
                 // write blocks
-                match self.write_file(loc,dat) {
+                match self.write_file(loc,fimg) {
                     Ok(len) => Ok(len),
                     Err(e) => Err(Box::new(e))
                 }
@@ -1090,7 +1010,7 @@ impl disk_base::A2Disk for Disk {
         }
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
-        let file = types::SequentialText::pack(&dat);
+        let file = types::SequentialText::from_bytes(&dat);
         return file.to_string();
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
@@ -1120,7 +1040,9 @@ impl disk_base::A2Disk for Disk {
         return ans;
     }
     fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
-        let emulator_disk = create_disk_from_file(&path.to_str().expect("could not unwrap path"));
+        let emulator_disk = create_fs_from_file(&path.to_str()
+            .expect("could not unwrap path"))
+            .expect("could not interpret file system");
         let mut expected = emulator_disk.to_img();
         let mut actual = self.to_img();
         for ignorable in ignore {

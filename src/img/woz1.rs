@@ -11,9 +11,9 @@ use crate::disk_base;
 // For fixed length structures, update_from_bytes will panic if lengths do not match.
 use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
-use crate::disk525;
-use crate::img_woz;
-use crate::img_woz::{TMAP_ID,TRKS_ID,INFO_ID,META_ID};
+use crate::img::disk525;
+use crate::img;
+use crate::img::woz::{TMAP_ID,TRKS_ID,INFO_ID,META_ID};
 
 const TRACK_BYTE_CAPACITY: usize = 6646;
 
@@ -130,10 +130,10 @@ impl TMap {
 }
 
 impl Trk {
-    fn create(track: u8) -> Self {
+    fn create(vol: u8,track: u8) -> Self {
         let padding_byte = 0x00;
         let mut bits: [u8;TRACK_BYTE_CAPACITY] = [padding_byte;TRACK_BYTE_CAPACITY];
-        let mut track_obj = disk525::create_std_track(254,track,6646);
+        let mut track_obj = disk525::create_std_track(vol,track,6646);
         track_obj.read(&mut bits,track_obj.bit_count());
         Self {
             bits,
@@ -148,7 +148,7 @@ impl Trk {
 }
 
 impl Trks {
-    fn create(kind: disk_base::DiskKind) -> Self {
+    fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
         let mut ans = Trks::new();
         if kind!=disk_base::DiskKind::A2_525_16 {
             panic!("only 16 sector 5.25 disks allowed");
@@ -156,7 +156,7 @@ impl Trks {
         ans.id = u32::to_le_bytes(TRKS_ID);
         ans.size = u32::to_le_bytes(35 * Trk::new().len() as u32);
         for track in 0..35 {
-            let trk = Trk::create(track);
+            let trk = Trk::create(vol,track);
             ans.tracks.push(trk);
         }
         return ans;
@@ -217,7 +217,7 @@ impl Woz1 {
             meta: None
         }
     }
-    pub fn create(kind: disk_base::DiskKind) -> Self {
+    pub fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
         if kind!=disk_base::DiskKind::A2_525_16 {
             panic!("only 16 sector 5.25 disks allowed");
         }
@@ -225,11 +225,12 @@ impl Woz1 {
             header: Header::create(),
             info: Info::create(kind),
             tmap: TMap::create(kind),
-            trks: Trks::create(kind),
+            trks: Trks::create(vol,kind),
             meta: None
         }
     }
-    fn get_trk_struct(&self,track: u8) -> Trk {
+    /// Go through drive head positions to find the index to the track
+    fn get_trk_idx(&self,track: u8) -> usize {
         let mut unique_count: usize = 0;
         let mut ptr = 0xff;
         // loop through the drive head positions
@@ -242,10 +243,14 @@ impl Woz1 {
                 break;
             }
         }
-        if ptr==0xff {
+        if ptr==0xff || unique_count <= track as usize {
             panic!("WOZ track not found");
         }
-        return self.trks.tracks[ptr as usize];
+        return ptr as usize;
+    }
+    /// Go through drive head positions to find track and get a copy
+    fn get_trk_struct(&self,track: u8) -> Trk {
+        return self.trks.tracks[self.get_trk_idx(track)];
     }
     fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
         let trk = self.get_trk_struct(track);
@@ -254,9 +259,10 @@ impl Woz1 {
         return disk525::TrackBits::create(buf,bit_count);
     }
     fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
-        let mut trk = self.get_trk_struct(track);
+        let idx = self.get_trk_idx(track);
         track_obj.reset();
-        track_obj.read(&mut trk.bits,track_obj.bit_count());
+        track_obj.read(&mut self.trks.tracks[idx].bits,track_obj.bit_count());
+
     }
 }
 
@@ -273,7 +279,7 @@ impl disk_base::DiskImage for Woz1 {
         info!("identified WOZ v1 header");
         let mut ptr: usize= 12;
         while ptr>0 {
-            let (next,id,maybe_chunk) = img_woz::get_next_chunk(ptr, buf);
+            let (next,id,maybe_chunk) = img::woz::get_next_chunk(ptr, buf);
             match (id,maybe_chunk) {
                 (INFO_ID,Some(chunk)) => ans.info.update_from_bytes(&chunk),
                 (TMAP_ID,Some(chunk)) => ans.tmap.update_from_bytes(&chunk),
@@ -289,6 +295,9 @@ impl disk_base::DiskImage for Woz1 {
         return None;
     }
     fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        if dsk.len()!=35*16*256 {
+            return Err(Box::new(disk_base::CommandError::UnsupportedFormat));
+        }
         for track in 0..35 {
             let mut track_obj = self.get_track_obj(track);
             track_obj.update_track_with_do(dsk, track as u8);
@@ -297,7 +306,7 @@ impl disk_base::DiskImage for Woz1 {
         return Ok(());
     }
     fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return self.update_from_do(&disk525::reorder_po_to_do(dsk, 16));
+        return self.update_from_do(&img::reorder_po_to_do(dsk, 16));
     }
     fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         let mut ans: Vec<u8> = [0;512*280].to_vec();
@@ -309,7 +318,7 @@ impl disk_base::DiskImage for Woz1 {
     }
     fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         match self.to_do() {
-            Ok(v) => Ok(disk525::reorder_do_to_po(&v, 16)),
+            Ok(v) => Ok(img::reorder_do_to_po(&v, 16)),
             Err(e) => Err(e)
         }
     }
@@ -322,7 +331,7 @@ impl disk_base::DiskImage for Woz1 {
         if let Some(mut meta) = self.meta.clone() {
             ans.append(&mut meta);
         }
-        let crc = u32::to_le_bytes(img_woz::crc32(0, &ans[12..].to_vec()));
+        let crc = u32::to_le_bytes(img::woz::crc32(0, &ans[12..].to_vec()));
         ans[8] = crc[0];
         ans[9] = crc[1];
         ans[10] = crc[2];

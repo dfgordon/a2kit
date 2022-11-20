@@ -1,0 +1,101 @@
+use clap;
+use std::io::Read;
+use std::str::FromStr;
+use std::error::Error;
+use a2kit::disk_base::*;
+
+const RCH: &str = "unreachable was reached";
+
+pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+    if atty::is(atty::Stream::Stdin) {
+        eprintln!("cannot use `put` with console input, please pipe something in");
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
+    if !atty::is(atty::Stream::Stdout) {
+        eprintln!("output is redirected, but `put` must end the pipeline");
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
+    let dest_path = String::from(cmd.value_of("file").expect(RCH));
+    let maybe_typ = cmd.value_of("type");
+    let maybe_img = cmd.value_of("dimg");
+    let mut file_data = Vec::new();
+    std::io::stdin().read_to_end(&mut file_data).expect("failed to read input stream");
+
+    match (maybe_typ,maybe_img) {
+        
+        // we are writing to a disk image
+        (Some(typ_str),Some(img_path)) => {
+            let typ = ItemType::from_str(typ_str);
+            let load_address: u16 = match (cmd.value_of("addr"),&typ) {
+                (Some(a),_) => u16::from_str(a).expect("bad address"),
+                (_ ,Ok(ItemType::Binary)) => {
+                    eprintln!("binary file requires an address");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                },
+                _ => 768 as u16
+            };
+            match a2kit::create_img_and_fs_from_file(img_path) {
+                Ok((mut img,mut disk)) => {
+                    let result = match typ {
+                        Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
+                        Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
+                        Ok(ItemType::MerlinTokens) => disk.write_text(&dest_path,&file_data),
+                        Ok(ItemType::Binary) => disk.bsave(&dest_path,&file_data,load_address,None),
+                        Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match disk.encode_text(s) {
+                                Ok(encoded) => disk.write_text(&dest_path,&encoded),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::UnknownFormat));
+                            }
+                        },
+                        Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
+                        Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
+                        Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match Records::from_json(s) {
+                                Ok(recs) => disk.write_records(&dest_path,&recs),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::UnknownFormat));
+                            }
+                        },
+                        Ok(ItemType::FileImage) => match std::str::from_utf8(&file_data) {
+                            Ok(s) => match FileImage::from_json(s) {
+                                Ok(chunks) => disk.write_any(&dest_path,&chunks),
+                                Err(e) => Err(e)
+                            },
+                            _ => {
+                                eprintln!("could not encode data as UTF8");
+                                return Err(Box::new(CommandError::UnknownFormat));
+                            }
+                        },
+                        _ => {
+                            return Err(Box::new(CommandError::UnsupportedItemType));
+                        }
+                    };
+                    return match result {
+                        Ok(_len) => a2kit::update_img_and_save(&mut img,&disk,img_path),
+                        Err(e) => Err(e)
+                    }
+                },
+                Err(e) => return Err(e)
+            }
+        },
+
+        // we are writing to a local file
+        (None,None) => {
+            std::fs::write(&dest_path,&file_data).expect("could not write data to disk");
+            return Ok(());
+        },
+
+        // arguments inconsistent
+        _ => {
+            eprintln!("for `put` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
+            return Err(Box::new(CommandError::InvalidCommand))
+        }
+    }
+}

@@ -1,13 +1,14 @@
 // test of dos33 disk image module
 use std::path::Path;
-use a2kit::dos33;
+use a2kit::fs::dos33;
 use a2kit::disk_base::TextEncoder;
-use a2kit::disk_base::{ItemType,A2Disk};
-use a2kit::applesoft;
+use a2kit::disk_base::{ItemType,DiskFS};
+use a2kit::lang::applesoft;
+use a2kit_macro::DiskStruct;
 
 pub const JSON_REC: &str = "
 {
-    \"a2kit_type\": \"rec\",
+    \"fimg_type\": \"rec\",
     \"record_length\": 127,
     \"records\": {
         \"2000\": [\"HELLO FROM TREE 2\"],
@@ -30,7 +31,7 @@ fn read_small() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos33-smallfiles.dsk")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
 
     // check the BASIC program
     let basic_program = "
@@ -51,9 +52,10 @@ fn read_small() {
     assert_eq!(binary_data,(768,vec![6,5,0,2]));
 
     // check the sequential text file
-    let text = emulator_disk.read_text("thetext").expect("error");
+    let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
+    let txt = dos33::types::SequentialText::from_bytes(&raw);
     let encoder = dos33::types::Encoder::new(Some(0x8d));
-    assert_eq!(text,(0,encoder.encode("HELLO FROM DOS 3.3").unwrap()));
+    assert_eq!(txt.text,encoder.encode("HELLO FROM DOS 3.3").unwrap());
 }
 
 #[test]
@@ -113,7 +115,7 @@ fn read_big() {
     // Formatting: Copy2Plus, Writing: MicroM8
     // This tests a small BASIC program, large binary, and two sparse text files
     let img = std::fs::read(&Path::new("tests").join("dos33-bigfiles.do")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_disk_from_bytestream(&img);
+    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program
@@ -268,14 +270,13 @@ fn read_big_woz1() {
     // convert to DSK, and compare with a DSK that was also created via the emulator.
     // In testing the conversion we test a lot of underlying WOZ machinery.
 
-    if let Some(woz1_path) = (Path::new("tests").join("dos33-bigfiles.woz")).to_str() {
-        if let Some((_img,disk)) = a2kit::create_img_and_disk_from_file(woz1_path) {
-            let mut ignore = disk.standardize(2);
-            // loop to ignore boot tracks for this test
-            for i in 0..3*16*256 {
-                ignore.push(i);
-            }
-            disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
-        }
+    let buf = Path::new("tests").join("dos33-bigfiles.woz");
+    let woz1_path = buf.to_str().expect("could not get path");
+    let (_img,disk) = a2kit::create_img_and_fs_from_file(woz1_path).expect("could not get image");
+    let mut ignore = disk.standardize(2);
+    // loop to ignore boot tracks for this test
+    for i in 0..3*16*256 {
+        ignore.push(i);
     }
+    disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
 }

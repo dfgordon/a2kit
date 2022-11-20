@@ -1,7 +1,8 @@
 
 use chrono::{Datelike,Timelike};
 use std::fmt;
-use num_derive::FromPrimitive;
+use std::str::FromStr;
+use crate::disk_base::FileImage;
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use regex::Regex;
@@ -87,8 +88,6 @@ pub fn is_file_match<T: HasName>(valid_types: &Vec<StorageType>,name: &String,ob
 // 2       | Volume Directory Key
 // 3 - n   | Volume Directory
 // n+1 - p | Volume Bitmap
-
-pub const VOL_KEY_BLOCK: u16 = 2;
 
 pub trait Header {
     fn file_count(&self) -> u16;
@@ -192,7 +191,7 @@ pub struct Entry {
 }
 
 impl VolDirHeader {
-    pub fn format(&mut self, blocks: u16, vol_name: &String, create_time: Option<chrono::NaiveDateTime>) {
+    pub fn format(&mut self, blocks: u16, vol_name: &str, create_time: Option<chrono::NaiveDateTime>) {
         let (nibs,fname) = string_to_file_name(&StorageType::VolDirHeader, vol_name);
         self.stor_len_nibs = nibs;
         self.name = fname;
@@ -240,9 +239,9 @@ impl Entry {
     pub fn set_ptr(&mut self,ptr: u16) {
         self.key_ptr = u16::to_le_bytes(ptr);
     }
-    pub fn get_header(&self) -> u16 {
-        return u16::from_le_bytes(self.header_ptr);
-    }
+    // pub fn get_header(&self) -> u16 {
+    //     return u16::from_le_bytes(self.header_ptr);
+    // }
     pub fn eof(&self) -> usize {
         return u32::from_le_bytes([self.eof[0],self.eof[1],self.eof[2],0]) as usize;
     }
@@ -252,9 +251,9 @@ impl Entry {
     pub fn set_aux(&mut self,aux: u16) {
         self.aux_type = u16::to_le_bytes(aux);
     }
-    pub fn ftype(&self) -> u8 {
-        return self.file_type;
-    }
+    // pub fn ftype(&self) -> u8 {
+    //     return self.file_type;
+    // }
     pub fn set_ftype(&mut self,typ: u8) {
         self.file_type = typ;
     }
@@ -266,38 +265,51 @@ impl Entry {
         let new_val = u16::from_le_bytes(self.blocks_used) as i32 + delta;
         self.blocks_used = u16::to_le_bytes(new_val as u16);
     }
-    fn create_generic(&mut self,
-        name: &str,
-        stype: StorageType,
-        ftype: FileType,
-        aux: u16,
-        key_ptr: u16,
-        header_ptr: u16,
-        create_time: Option<chrono::NaiveDateTime>) {
-        let (nibs,fname) = string_to_file_name(&stype, name);
-        self.stor_len_nibs = nibs;
-        self.name = fname;
-        self.file_type = ftype as u8;
-        self.key_ptr = u16::to_le_bytes(key_ptr);
-        self.blocks_used = [0,0];
-        self.eof = [0,0,0];
-        self.create_time = pack_time(create_time);
-        self.vers = 0;
-        self.min_vers = 0;
-        self.access = 1+2+32+64+128;
-        self.aux_type = u16::to_le_bytes(aux);
-        self.last_mod = pack_time(create_time);
-        self.header_ptr = u16::to_le_bytes(header_ptr);
+    pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
+        fimg.eof = self.eof();
+        fimg.access = self.access.to_string();
+        fimg.fs_type = self.file_type.to_string();
+        fimg.aux = u16::from_le_bytes(self.aux_type).to_string();
+        fimg.created = u32::from_le_bytes(self.create_time).to_string();
+        fimg.modified = u32::from_le_bytes(self.last_mod).to_string();
+        fimg.version = self.vers.to_string();
+        fimg.min_version = self.min_vers.to_string();
     }
     pub fn create_subdir(name: &str,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
-        ans.create_generic(name,StorageType::SubDirEntry,FileType::Directory,0,key_ptr,header_ptr,create_time);
+        let (nibs,fname) = string_to_file_name(&StorageType::SubDirEntry, name);
+        ans.stor_len_nibs = nibs;
+        ans.name = fname;
+        ans.file_type = FileType::Directory as u8;
+        ans.key_ptr = u16::to_le_bytes(key_ptr);
+        ans.blocks_used = [0,0];
+        ans.eof = [0,0,0];
+        ans.create_time = pack_time(create_time);
+        ans.vers = 0;
+        ans.min_vers = 0;
+        ans.access = STD_ACCESS;
+        ans.aux_type = u16::to_le_bytes(0);
+        ans.last_mod = pack_time(create_time);
+        ans.header_ptr = u16::to_le_bytes(header_ptr);
         return ans;
     }
-    pub fn create_file(name: &str,ftype: FileType,aux: u16,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
+    pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,Error> {
         let mut ans = Self::new();
-        ans.create_generic(name,StorageType::Seedling,ftype,aux,key_ptr,header_ptr,create_time);
-        return ans;
+        let (nibs,fname) = string_to_file_name(&StorageType::Seedling, name);
+        ans.stor_len_nibs = nibs;
+        ans.name = fname;
+        ans.file_type = match FileType::from_str(&fimg.fs_type) { Ok(t) => t as u8, _ => return Err(Error::FileTypeMismatch) };
+        ans.key_ptr = u16::to_le_bytes(key_ptr);
+        ans.blocks_used = [0,0];
+        ans.eof = [0,0,0];
+        ans.create_time = pack_time(create_time);
+        ans.vers = match u8::from_str_radix(&fimg.version,10) { Ok(v) => v, _ => return Err(Error::Range) };
+        ans.min_vers = match u8::from_str_radix(&fimg.min_version,10) { Ok(v) => v, _ => return Err(Error::Range) };
+        ans.access = STD_ACCESS;
+        ans.aux_type = u16::to_le_bytes(match u16::from_str_radix(&fimg.aux,10) { Ok(v) => v, _ => return Err(Error::Range) });
+        ans.last_mod = pack_time(create_time);
+        ans.header_ptr = u16::to_le_bytes(header_ptr);
+        return Ok(ans);
     }
     pub fn get_access(&self,what: Access) -> bool {
         return self.access & what as u8 > 0;
@@ -348,7 +360,7 @@ impl fmt::Display for Entry {
         if self.access & 0x02 == 0x02 {
             write_protect = " ".to_string();
         }
-        //"NAME","TYPE","BLOCKS","MODIFIED","CREATED","ENDFILE","SUBTYPE");
+        //"NAME","TYPE","BLOCKS","MODIFIED","CREATED","ENDFILE","SUBTYPE"
         write!(f,"{}{:15} {:4} {:6} {:16} {:16} {:7} {:7}",
             write_protect,
             match self.file_type { 0x0f => self.name().blue().bold(), _ => self.name().normal() },
@@ -705,7 +717,7 @@ impl Directory for EntryBlock {
     fn dec_file_count(&mut self) {
         panic!("attempt to access header from EntryBlock");
     }
-    fn standardize(&mut self,offset: usize) -> Vec<usize> {
+    fn standardize(&mut self,_offset: usize) -> Vec<usize> {
         Vec::new()
     }
     fn delete(&mut self) {

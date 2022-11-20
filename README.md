@@ -2,7 +2,7 @@
 
 Command line interface and library for manipulating Apple ][ language files and disk images.
 
-Here is an example using the CLI to create a disk image that is then loaded into [microM8](https://paleotronic.com/software/microm8/) and booted.  This example assumes the working directory contains ProDOS system binaries (in the `any` format) and Applesoft source code for the greeting program.  In practice one might choose to script such operations.
+Here is an example using the CLI to create a disk image that is then loaded into [microM8](https://paleotronic.com/software/microm8/) and booted.  This example assumes the working directory contains ProDOS file images and source code for the startup program.  In practice one might choose to script such operations.
 
 <img src="a2kit-demo.gif" alt="session capture"/>
 

@@ -1,34 +1,9 @@
-// Adapted from CiderPress source, here is the licence statement:
+//! Boot and DOS tracks.
+//! Data is adapted from that used by CiderPress
 
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//     * Redistributions of source code must retain the above copyright
-//       notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above copyright
-//       notice, this list of conditions and the following disclaimer in the
-//       documentation and/or other materials provided with the distribution.
-//     * Neither the name of FaddenSoft, LLC nor the
-//       names of its contributors may be used to endorse or promote products
-//       derived from this software without specific prior written permission.
+// Three 16-sector tracks, in DOS order (t0,s0),(t0,s1),...
 
-// THIS SOFTWARE IS PROVIDED BY FaddenSoft, LLC ``AS IS'' AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-// DISCLAIMED. IN NO EVENT SHALL FaddenSoft, LLC BE LIABLE FOR ANY
-// DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-// ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-// Three 16-sector tracks, in DOS order (i.e. track 0 sector 0 followed
-// by track 0 sector 1).
-// 
-// Obtained from tracks 0-2 of a newly-formatted disk created
-// by "INIT HELLO" after booting the DOS 3.3 system master.
-
-pub const DOS33_TRACKS: [u8;16 * 3 * 256] = [
+pub const DOS33_TRACKS: [u8;3 * 16 * 256] = [
     0x01, 0xa5, 0x27, 0xc9, 0x09, 0xd0, 0x18, 0xa5,
     0x2b, 0x4a, 0x4a, 0x4a, 0x4a, 0x09, 0xc0, 0x85,
     0x3f, 0xa9, 0x5c, 0x85, 0x3e, 0x18, 0xad, 0xfe,
@@ -1616,13 +1591,9 @@ pub const DOS33_TRACKS: [u8;16 * 3 * 256] = [
 
 
 
-// Three 13-sector tracks, in DOS order (i.e. track 0 sector 0 followed
-// by track 0 sector 1).
-//
-// Obtained from the DOS 3.2.1 system master.  The last two sectors of
-// track 2 were unreadable, and have been zeroed out here.
+// Three 13-sector tracks, in DOS order (t0,s0),(t0,s1),...
 
-const DOS32_TRACKS : [u8;13 * 3 * 256] = [
+const _DOS32_TRACKS : [u8;3 * 13 * 256] = [
     0xf0, 0x4a, 0x99, 0xff, 0xff, 0x03, 0x3c, 0xad,
     0xff, 0xff, 0xff, 0x26, 0xb3, 0xff, 0xff, 0x4d,
     0x4a, 0x10, 0xff, 0xff, 0x3d, 0x4a, 0xca, 0xff,

@@ -2,9 +2,8 @@
 //! This manipulates disk images containing one standard bootable
 //! or non-bootable DOS 3.3 small volume (140K).
 //! 
-//! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `A2Disk` trait
-//! * The module will try to emulate the order in which DOS would access sectors, but
-//! this is not intended to be exact.
+//! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `DiskFS` trait
+//! * The module will try to emulate the order in which DOS would access sectors
 
 pub mod types;
 mod boot;
@@ -14,12 +13,13 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
+use log::info;
 
 use types::*;
 use crate::disk_base::TextEncoder;
 use directory::*;
 use crate::disk_base;
-use crate::create_disk_from_file;
+use crate::create_fs_from_file;
 
 fn file_name_to_string(fname: [u8;30]) -> String {
     // fname is negative ASCII padded to the end with spaces
@@ -57,7 +57,6 @@ fn string_to_file_name(s: &str) -> [u8;30] {
 
 
 /// The primary interface for disk operations.
-/// At present only BASIC-like commands (SAVE, BLOAD, etc.) are exposed.
 pub struct Disk
 {
     // 16 sectors hard coded here
@@ -168,6 +167,14 @@ impl Disk
     }
     /// Create a standard DOS 3.3 small volume (140K)
     pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
+        // Zero out everything
+        for track in 0..35 {
+            for sector in 0..16 {
+                for byte in 0..256 {
+                    self.tracks[track][sector][byte] = 0;
+                }
+            }
+        }
         // First write the Volume Table of Contents (VTOC)
         assert!(vol>0 && vol<255);
         assert!(last_track_written>0 && last_track_written<35);
@@ -311,15 +318,14 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Read any file into the sparse file format.  Use `SparseData.sequence()` to flatten the result
+    /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,name: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
-        // resulting vector will be padded modulo 256
+    fn read_file(&self,name: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
         let (mut next_tslist,ftype) = self.get_tslist_sector(name);
         if next_tslist==[0,0] {
             return Err(Box::new(Error::FileNotFound));
         }
-        let mut ans = disk_base::SparseData::new(256);
+        let mut ans = disk_base::FileImage::new(256);
         let mut buf = vec![0;256];
         let mut count: usize = 0;
         // loop up to a maximum, if it is reached panic
@@ -343,17 +349,17 @@ impl Disk
         }
         panic!("the disk image track sector list seems to be damaged");
     }
-    /// Write any sparse or sequential file.  Use `SparseData::desequence` to put sequential data
+    /// Write any sparse or sequential file.  Use `FileImage::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
     /// Unlike DOS, nothing is written unless there is enough space for all the data.
-    fn write_file(&mut self,name: &str, dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_file(&mut self,name: &str, fimg: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         let (named_ts,_ftype) = self.get_tslist_sector(name);
         if named_ts==[0,0] {
             // this is a new file
             // unlike DOS, we do not write anything unless there is room
-            assert!(dat.chunks.len()>0);
-            let data_sectors = dat.chunks.len();
-            let tslist_sectors = 1 + (dat.end()-1)/self.vtoc.max_pairs as usize;
+            assert!(fimg.chunks.len()>0);
+            let data_sectors = fimg.chunks.len();
+            let tslist_sectors = 1 + (fimg.end()-1)/self.vtoc.max_pairs as usize;
             if data_sectors + tslist_sectors > self.num_free_sectors() {
                 return Err(Box::new(Error::DiskFull));
             }
@@ -373,7 +379,7 @@ impl Disk
             let mut dir = DirectorySector::from_bytes(&dir_buf);
             dir.entries[e as usize].tsl_track = tslist_ts[0];
             dir.entries[e as usize].tsl_sector = tslist_ts[1];
-            match Type::from_str(&dat.fs_type) {
+            match Type::from_str(&fimg.fs_type) {
                 Ok(t) => dir.entries[e as usize].file_type = t as u8,
                 Err(e) => return Err(Box::new(e))
             } 
@@ -382,8 +388,8 @@ impl Disk
             self.write_sector(&dir.to_bytes(), ts, 0);
 
             // write the data and TS list as we go
-            for s in 0..dat.end() {
-                if let Some(chunk) = dat.chunks.get(&s) {
+            for s in 0..fimg.end() {
+                if let Some(chunk) = fimg.chunks.get(&s) {
                     let data_ts = self.get_next_free_sector(false);
                     tslist.pairs[p*2] = data_ts[0];
                     tslist.pairs[p*2+1] = data_ts[1];
@@ -396,7 +402,7 @@ impl Disk
                     self.write_sector(&tslist.to_bytes(), tslist_ts, 0);
                 }
                 p += 1;
-                if p==self.vtoc.max_pairs as usize  && s+1!=dat.end() {
+                if p==self.vtoc.max_pairs as usize  && s+1!=fimg.end() {
                     // tslist spilled over to another sector
                     let next_tslist_ts = self.get_next_free_sector(false);
                     tslist.next_track = next_tslist_ts[0];
@@ -463,6 +469,7 @@ impl Disk
         let slen = 16 as usize;
         let blen = 256 as usize;
         if img.len()!=tlen*slen*blen {
+            info!("byte count is not correct");
             return None;
         }
         for track in 0..tlen {
@@ -473,14 +480,19 @@ impl Disk
             }
         }
         disk.vtoc = VTOC::from_bytes(&disk.tracks[17][0].to_vec());
-        if disk.vtoc.bytes != [0,1] || disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
+        if disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 {
+            info!("VTOC wrong track1 {}, sector1 {}",disk.vtoc.track1,disk.vtoc.sector1);
+            return None;
+        }
+        if disk.vtoc.bytes != [0,1] || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
+            info!("VTOC wrong bytes {:?}, sectors {}, tracks {}",disk.vtoc.bytes,disk.vtoc.sectors,disk.vtoc.tracks);
             return None;
         }
         return Some(disk);
     }
 }
 
-impl disk_base::A2Disk for Disk {
+impl disk_base::DiskFS for Disk {
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
@@ -517,6 +529,7 @@ impl disk_base::A2Disk for Disk {
         return Err(Box::new(Error::IOError));
     }
     fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
+        eprintln!("DOS 3.3 does not support operation");
         return Err(Box::new(Error::SyntaxError));
     }
     fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -587,7 +600,7 @@ impl disk_base::A2Disk for Disk {
             Some(v) => [file.to_bytes(),v.clone()].concat(),
             None => file.to_bytes()
         };
-        return self.write_file(name, &disk_base::SparseData::desequence(256, &padded).new_type("bin"));
+        return self.write_file(name, &disk_base::FileImage::desequence(256, &padded).new_type("bin"));
     }
     fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
@@ -602,19 +615,16 @@ impl disk_base::A2Disk for Disk {
             disk_base::ItemType::IntegerTokens => "itok",
             _ => panic!("attempt to SAVE non-BASIC data type")
         };
-        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()).new_type(fs_type));
+        return self.write_file(name, &disk_base::FileImage::desequence(256,&file.to_bytes()).new_type(fs_type));
     }
     fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
-            Ok(sd) => {
-                Ok((0,types::SequentialText::from_bytes(&sd.sequence()).text))
-            },
+            Ok(sd) => Ok((0,sd.sequence())),
             Err(e) => Err(e)
         }
     }
     fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        let file = types::SequentialText::pack(&dat);
-        return self.write_file(name, &disk_base::SparseData::desequence(256,&file.to_bytes()).new_type("txt"));
+        return self.write_file(name, &disk_base::FileImage::desequence(256,dat).new_type("txt"));
     }
     fn read_records(&self,name: &str,record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
         if record_length==0 {
@@ -623,8 +633,8 @@ impl disk_base::A2Disk for Disk {
         }
         let encoder = Encoder::new(Some(0x8d));
         match self.read_file(name) {
-            Ok(sd) => {
-                match disk_base::Records::from_sparse_data(&sd,record_length,encoder) {
+            Ok(fimg) => {
+                match disk_base::Records::from_fimg(&fimg,record_length,encoder) {
                     Ok(ans) => Ok(ans),
                     Err(e) => Err(e)
                 }
@@ -634,8 +644,8 @@ impl disk_base::A2Disk for Disk {
     }
     fn write_records(&mut self,name: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x8d));
-        if let Ok(sparse_data) = records.to_sparse_data(256,false,encoder) {
-            return self.write_file(name, &sparse_data);
+        if let Ok(fimg) = records.to_fimg(256,false,encoder) {
+            return self.write_file(name, &fimg);
         } else {
             Err(Box::new(Error::SyntaxError))
         }
@@ -665,18 +675,18 @@ impl disk_base::A2Disk for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,name: &str) -> Result<disk_base::SparseData,Box<dyn std::error::Error>> {
+    fn read_any(&self,name: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
         return self.read_file(name);
     }
-    fn write_any(&mut self,name: &str,dat: &disk_base::SparseData) -> Result<usize,Box<dyn std::error::Error>> {
-        if dat.chunk_len!=256 {
-            eprintln!("chunk length {} is incompatible with DOS 3.3",dat.chunk_len);
+    fn write_any(&mut self,name: &str,fimg: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.chunk_len!=256 {
+            eprintln!("chunk length {} is incompatible with DOS 3.3",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
-        return self.write_file(name,dat);
+        return self.write_file(name,fimg);
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
-        let file = types::SequentialText::pack(&dat);
+        let file = types::SequentialText::from_bytes(&dat);
         return file.to_string();
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
@@ -690,7 +700,8 @@ impl disk_base::A2Disk for Disk {
         return vec![17*16*256];
     }
     fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
-        let emulator_disk = create_disk_from_file(&path.to_str().expect("could not unwrap path"));
+        let emulator_disk = create_fs_from_file(&path.to_str()
+            .expect("could not unwrap path")).expect("could not interpret file system");
         let mut expected = emulator_disk.to_img();
         let mut actual = self.to_img();
         for ignorable in ignore {

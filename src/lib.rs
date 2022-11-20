@@ -7,12 +7,12 @@
 //! 
 //! Disk image operations are built around two trait objects found in the `disk_base` module:
 //! * `DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
-//! * `A2Disk` imposes a file system on the already decoded track data
+//! * `DiskFS` imposes a file system on the already decoded track data
+//! * `FileImage` provides a representation of a file that can be restored to a disk image
 //! 
-//! Internally, the `A2Disk` object contains its own track data,
+//! Internally, the `DiskFS` object contains its own track data,
 //! but always in the `DSK` image format, with the sector order chosen to match the file system.
-//! The `DSK` image format uses already-decoded track data from the get-go, so it is ideal for
-//! running a file system.  Because the `DSK` format is at the heart of all file operations,
+//! Because the `DSK` format is at the heart of all file operations,
 //! the beginning and end of many workflows involves transforming between `DSK` and
 //! some other image format (including ordering variants of `DSK`)
 //! 
@@ -21,11 +21,15 @@
 //! * `applesoft` handles (de)tokenization of Applesoft BASIC
 //! * `integer` handles (de)tokenization of Integer BASIC
 //! * `merlin` handles encodings for Merlin assembly source files
+//! * Pascal source files are handled through the file system module
 //! 
 //! ## File Systems
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
-//! As of this writing standard DOS 3.3 and ProDOS are supported.
+//! As of this writing `a2kit` supports
+//! * DOS 3.3
+//! * ProDOS
+//! * Pascal File System
 //! 
 //! ## Disk Encodings
 //! 
@@ -38,31 +42,23 @@
 //! formats supported by `a2kit` are `WOZ` versions 1 and 2.  High level operations with WOZ images
 //! are supported to the extent that the track format and file system are supported.
 
-pub mod dos33;
-pub mod prodos;
-pub mod applesoft;
-pub mod integer;
-pub mod merlin;
-pub mod walker;
+pub mod fs;
+pub mod lang;
 pub mod disk_base;
-pub mod img_do;
-pub mod img_po;
-pub mod img_woz;
-pub mod img_woz1;
-pub mod img_woz2;
-pub mod disk525;
+pub mod img;
 
-use crate::disk_base::{DiskImage,A2Disk};
+use crate::disk_base::{DiskImage,DiskFS,CommandError};
 use std::io::Read;
 use std::fmt::Write;
+use std::error::Error;
 use log::{info};
 
-/// Use the sectors on an `A2Disk` to update the sectors on a `DiskImage` and save the image file
+/// Use the sectors on an `DiskFS` to update the sectors on a `DiskImage` and save the image file
 /// This will almost always be used if we are making permanent changes to a file system.
-pub fn update_img_and_save(img: &mut Box<dyn DiskImage>,disk: &Box<dyn A2Disk>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
+pub fn update_img_and_save(img: &mut Box<dyn DiskImage>,disk: &Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
     let temp_po = match disk.get_ordering() {
         disk_base::DiskImageType::DO => {
-            let temp_do = img_do::DO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
+            let temp_do = img::dsk_do::DO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
             temp_do.to_po().expect("unexpected file system metrics")
         },
         disk_base::DiskImageType::PO => disk.to_img(),
@@ -78,115 +74,123 @@ pub fn update_img_and_save(img: &mut Box<dyn DiskImage>,disk: &Box<dyn A2Disk>,i
 }
 
 /// Return the file system on a disk image, or None if one cannot be found.
-fn try_img(img: &impl DiskImage) -> Option<Box<dyn A2Disk>> {
+fn try_img(img: &impl DiskImage) -> Option<Box<dyn DiskFS>> {
     if let Ok(bytestream) = img.to_do() {
-        if let Some(disk) = dos33::Disk::from_img(&bytestream) {
+        if let Some(disk) = fs::dos33::Disk::from_img(&bytestream) {
             info!("identified DOS 3.3 file system");
             return Some(Box::new(disk));
         }
     }
     if let Ok(bytestream) = img.to_po() {
-        if let Some(disk) = prodos::Disk::from_img(&bytestream) {
+        if let Some(disk) = fs::prodos::Disk::from_img(&bytestream) {
             info!("identified ProDOS file system");
             return Some(Box::new(disk));
         }
-    }
-    return None;
+        if let Some(disk) = fs::pascal::Disk::from_img(&bytestream) {
+            info!("identified Pascal file system");
+            return Some(Box::new(disk));
+        }
+   }
+   return None;
 }
 
-/// Given a bytestream return a tuple with (DiskImage, A2Disk), or None if the bytestream cannot be interpreted.
-/// DiskImage is the disk structure and data, A2Disk is a higher level representation including a file system (e.g. DOS or ProDOS).
-/// Manipulation of files that may be on the image is done via the A2Disk object.
+/// Given a bytestream return a tuple with (DiskImage, DiskFS), or Err if the bytestream cannot be interpreted.
+/// DiskImage is the disk structure and data, DiskFS is a higher level representation including a file system (e.g. DOS).
+/// Manipulation of files that may be on the image is done via the DiskFS object.
 /// The changes are only permanent if they are written back to the DiskImage, and explicitly saved to local storage.
-pub fn create_img_and_disk_from_bytestream(disk_img_data: &Vec<u8>) -> Option<(Box<dyn DiskImage>,Box<dyn A2Disk>)> {
-    if let Some(img) = img_woz1::Woz1::from_bytes(disk_img_data) {
+pub fn create_img_and_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<(Box<dyn DiskImage>,Box<dyn DiskFS>),Box<dyn Error>> {
+    if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
         if let Some(disk) = try_img(&img) {
-            return Some((Box::new(img),disk));
+            return Ok((Box::new(img),disk));
         }
     }
-    if let Some(img) = img_woz2::Woz2::from_bytes(disk_img_data) {
+    if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
         info!("identified woz2 image");
         if let Some(disk) = try_img(&img) {
-            return Some((Box::new(img),disk));
+            return Ok((Box::new(img),disk));
         }
     }
-    if let Some(img) = img_do::DO::from_bytes(disk_img_data) {
+    if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
         info!("Possible DO image");
         if let Some(disk) = try_img(&img) {
-            return Some((Box::new(img),disk));
+            return Ok((Box::new(img),disk));
         }
     }
-    if let Some(img) = img_po::PO::from_bytes(disk_img_data) {
+    if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
         info!("Possible PO image");
         if let Some(disk) = try_img(&img) {
-            return Some((Box::new(img),disk));
+            return Ok((Box::new(img),disk));
         }
     }
-    return None;
+    return Err(Box::new(CommandError::UnknownFormat));
 }
 
 /// Given a bytestream return a disk image without any file system.
 /// N.b. the ordering cannot always be determined without the file system.
-pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Option<Box<dyn DiskImage>> {
-    if let Some(img) = img_woz1::Woz1::from_bytes(disk_img_data) {
+pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskImage>,Box<dyn Error>> {
+    if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
-        return Some(Box::new(img));
+        return Ok(Box::new(img));
     }
-    if let Some(img) = img_woz2::Woz2::from_bytes(disk_img_data) {
+    if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
         info!("identified woz2 image");
-        return Some(Box::new(img));
+        return Ok(Box::new(img));
     }
-    if let Some(img) = img_do::DO::from_bytes(disk_img_data) {
+    if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
         info!("Possible DO image");
-        return Some(Box::new(img));
+        return Ok(Box::new(img));
     }
-    if let Some(img) = img_po::PO::from_bytes(disk_img_data) {
+    if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
         info!("Possible PO image");
-        return Some(Box::new(img));
+        return Ok(Box::new(img));
     }
-    return None;
+    return Err(Box::new(CommandError::UnknownFormat));
 }
 
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-pub fn create_img_from_file(img_path: &str) -> Option<Box<dyn DiskImage>> {
-    let disk_img_data = std::fs::read(img_path).expect("failed to read file");
-    return create_img_from_bytestream(&disk_img_data);
-}
-
-/// Calls `create_img_and_disk_from_bytestream` getting the bytes from a file.
-/// The pathname must already be in the right format for the file system.
-pub fn create_img_and_disk_from_file(img_path: &str) -> Option<(Box<dyn DiskImage>,Box<dyn A2Disk>)> {
-    let disk_img_data = std::fs::read(img_path).expect("failed to read file");
-    return create_img_and_disk_from_bytestream(&disk_img_data);
-}
-
-/// Given a bytestream try to identify the type of disk image and create a disk object.
-/// N.b. this discards metadata and track layout details, only the high level data remains.
-/// This will also panic if the data cannot be interpreted.
-#[deprecated(since="0.2.0", note="will be modified to return an Option")]
-pub fn create_disk_from_bytestream(disk_img_data: &Vec<u8>) -> Box<dyn A2Disk> {
-    if let Some((_img,disk)) = create_img_and_disk_from_bytestream(disk_img_data) {
-        return disk;
+pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn Error>> {
+    match std::fs::read(img_path) {
+        Ok(disk_img_data) => create_img_from_bytestream(&disk_img_data),
+        Err(e) => Err(Box::new(e))
     }
-    panic!("could not interpret disk image data");
 }
 
-/// Calls `create_disk_from_bytestream` getting the bytes from stdin
-#[deprecated(since="0.2.0", note="will be modified to return an Option")]
-pub fn create_disk_from_stdin() -> Box<dyn A2Disk> {
-    let mut disk_img_data = Vec::new();
-    std::io::stdin().read_to_end(&mut disk_img_data).expect("failed to read input stream");
-    return create_disk_from_bytestream(&disk_img_data);
-}
-
-/// Calls `create_disk_from_bytestream` getting the bytes from a file.
+/// Calls `create_img_and_fs_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-#[deprecated(since="0.2.0", note="will be modified to return an Option")]
-pub fn create_disk_from_file(img_path: &str) -> Box<dyn A2Disk> {
-    let disk_img_data = std::fs::read(img_path).expect("failed to read file");
-    return create_disk_from_bytestream(&disk_img_data);
+pub fn create_img_and_fs_from_file(img_path: &str) -> Result<(Box<dyn DiskImage>,Box<dyn DiskFS>),Box<dyn Error>> {
+    match std::fs::read(img_path) {
+        Ok(disk_img_data) => create_img_and_fs_from_bytestream(&disk_img_data),
+        Err(e) => Err(Box::new(e))
+    }
+}
+
+/// Given a bytestream try to identify the type of disk image and create a file system object.
+/// N.b. this discards metadata and track layout details, only the high level data remains.
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+    match create_img_and_fs_from_bytestream(disk_img_data) {
+        Ok((_img,disk)) => Ok(disk),
+        Err(e) => Err(e)
+    }
+}
+
+/// Calls `create_fs_from_bytestream` getting the bytes from stdin
+pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+    let mut disk_img_data = Vec::new();
+    match std::io::stdin().read_to_end(&mut disk_img_data) {
+        Ok(_n) => create_fs_from_bytestream(&disk_img_data),
+        Err(e) => Err(Box::new(e))
+    }
+}
+
+/// Calls `create_fs_from_bytestream` getting the bytes from a file.
+/// The pathname must already be in the right format for the file system.
+pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+    match std::fs::read(img_path) {
+        Ok(disk_img_data) => create_fs_from_bytestream(&disk_img_data),
+        Err(e) => Err(Box::new(e))
+    }
 }
 
 /// Display binary to stdout in columns of hex, +ascii, and -ascii
@@ -248,14 +252,14 @@ pub fn display_track(start_addr: u16,trk: &Vec<u8>) {
                 x if x+1<trk.len() => trk[x+1],
                 _ => 0
             };
-            if !disk525::DISK_BYTES_62.contains(&trk[i]) && trk[i]!=0xaa && trk[i]!=0xd5 {
+            if !img::disk525::DISK_BYTES_62.contains(&trk[i]) && trk[i]!=0xaa && trk[i]!=0xd5 {
                 mnemonics += "?";
                 err_count += 1;
             } else if addr_count>0 {
                 if addr_count%2==1 {
-                    write!(&mut mnemonics,"{:X}",disk525::decode_44([trk[i],fwd]) >> 4).unwrap();
+                    write!(&mut mnemonics,"{:X}",img::disk525::decode_44([trk[i],fwd]) >> 4).unwrap();
                 } else {
-                    write!(&mut mnemonics,"{:X}",disk525::decode_44([bak,trk[i]]) & 0x0f).unwrap();
+                    write!(&mut mnemonics,"{:X}",img::disk525::decode_44([bak,trk[i]]) & 0x0f).unwrap();
                 }
                 addr_count += 1;
             } else {

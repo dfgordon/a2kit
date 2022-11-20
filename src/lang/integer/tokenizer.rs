@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use tree_sitter;
 use tree_sitter_integerbasic;
-use super::super::walker;
-use super::super::walker::Visit;
+use crate::lang;
+use crate::lang::Visit;
 use super::token_maps;
 
 /// Handles tokenization of Integer BASIC
@@ -18,9 +18,9 @@ pub struct Tokenizer
 	detok_map: HashMap<u8,&'static str>
 }
 
-impl walker::Visit for Tokenizer
+impl lang::Visit for Tokenizer
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> walker::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
     {
 		// At this point we assume we have ASCII in self.line
 
@@ -34,7 +34,7 @@ impl walker::Visit for Tokenizer
 				}
 				self.tokenized_line.push(bytes[0]);
 				self.tokenized_line.push(bytes[1]);
-				return walker::WalkerChoice::GotoSibling;
+				return lang::WalkerChoice::GotoSibling;
 			}
 			panic!("number node did not parse as a number")
 		}
@@ -47,7 +47,7 @@ impl walker::Visit for Tokenizer
 		// Positive ASCII tokens
 		if let Some(tok) = self.tok_map.get(curs.node().kind()) {
 			self.tokenized_line.push(*tok);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		// Variables to upper case and negative ASCII
 		if curs.node().kind()=="str_name" || curs.node().kind()=="int_name" {
@@ -60,7 +60,7 @@ impl walker::Visit for Tokenizer
 				}
 			}).collect();
 			self.tokenized_line.append(&mut neg);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		// Persistent spaces
 		if curs.node().kind()=="string" {
@@ -70,20 +70,20 @@ impl walker::Visit for Tokenizer
 			neg[0] = 0x28;
 			neg[cleaned.len()-1] = 0x29;
 			self.tokenized_line.append(&mut neg);
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="comment_text" {
 			self.tokenized_line.append(&mut self.text(curs.node()).as_bytes().to_vec().iter().map(|b| b+128).collect());
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().child_count()==0 {
 			self.tokenized_line.append(&mut self.text(curs.node()).replace(" ","").as_bytes().to_vec());
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
-		return walker::WalkerChoice::GotoChild;
+		return lang::WalkerChoice::GotoChild;
     }
 }
 

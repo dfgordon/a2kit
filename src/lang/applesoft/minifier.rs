@@ -4,8 +4,8 @@ use json;
 
 use tree_sitter;
 use tree_sitter_applesoft;
-use super::super::walker;
-use super::super::walker::Visit;
+use crate::lang;
+use crate::lang::Visit;
 use super::minify_guards;
 
 /// Handles minification of Applesoft BASIC
@@ -17,11 +17,11 @@ pub struct Minifier
 	var_guards: json::JsonValue
 }
 
-impl walker::Visit for Minifier
+impl lang::Visit for Minifier
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> walker::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
     {
-		let node_str: String = walker::node_text(curs.node(),&self.line);
+		let node_str: String = lang::node_text(curs.node(),&self.line);
 
 		// Shorten variable names
 		if curs.node().kind().starts_with("name_") {
@@ -46,7 +46,7 @@ impl walker::Visit for Minifier
 			} else {
 				self.minified_line += &txt;
 			}
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
 		// REM and DATA
@@ -56,17 +56,17 @@ impl walker::Visit for Minifier
 					if let Some(prev) = curs.node().prev_named_sibling() {
 						if prev.kind()=="statement" {
 							// if there is a previous statement we can drop the whole comment
-							return walker::WalkerChoice::GotoSibling;
+							return lang::WalkerChoice::GotoSibling;
 						}
 					}
 					// if no previous statement we have to keep the token
 					self.minified_line += "REM";
-					return walker::WalkerChoice::GotoSibling;
+					return lang::WalkerChoice::GotoSibling;
 				}
 				// for DATA keep everything
 				if tok.kind()=="tok_data" {
 					self.minified_line += &node_str;
-					return walker::WalkerChoice::GotoSibling;
+					return lang::WalkerChoice::GotoSibling;
 				}
 			}
 		}
@@ -74,7 +74,7 @@ impl walker::Visit for Minifier
 		// Strings
 		if curs.node().kind()=="terminal_str" {
 			self.minified_line += &node_str.trim_start();
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="str" {
 			// if trailing nodes at this or any level up to line, keep the unquote
@@ -82,7 +82,7 @@ impl walker::Visit for Minifier
 			while curr.kind()!="line" {
 				if curr.next_sibling()!=None {
 					self.minified_line += &node_str.trim_start();
-					return walker::WalkerChoice::GotoSibling;
+					return lang::WalkerChoice::GotoSibling;
 				}
 				if curr.parent()==None {
 					break;
@@ -90,27 +90,27 @@ impl walker::Visit for Minifier
 				curr = curr.parent().unwrap();
 			}
 			self.minified_line += &node_str[0..node_str.len()-1].trim_start();
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
 		// Extraneous separators
 		if !curs.node().is_named() && node_str==":" {
 			if let Some(next) = curs.node().next_sibling() {
-				if !next.is_named() && walker::node_text(next, &self.line)==":" {
-					return walker::WalkerChoice::GotoSibling; // trailing node is another separator
+				if !next.is_named() && lang::node_text(next, &self.line)==":" {
+					return lang::WalkerChoice::GotoSibling; // trailing node is another separator
 				}
 			} else {
-				return walker::WalkerChoice::GotoSibling; // there is no trailing node
+				return lang::WalkerChoice::GotoSibling; // there is no trailing node
 			}
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().child_count()==0 {
 			self.minified_line += &node_str.replace(" ","");
-			return walker::WalkerChoice::GotoSibling;
+			return lang::WalkerChoice::GotoSibling;
 		}
 
-		return walker::WalkerChoice::GotoChild;
+		return lang::WalkerChoice::GotoChild;
     }
 }
 

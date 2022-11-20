@@ -1,7 +1,12 @@
-//! # Module to walk any syntax tree
+//! # Language Module
 //! 
 //! Objects that want to walk a syntax tree can provide the `Visit` trait.
 //! Such objects can take some action depending on the status of `TreeCursor`.
+//! Language specific operations such as tokenization are in the submodules.
+
+pub mod applesoft;
+pub mod integer;
+pub mod merlin;
 
 use tree_sitter;
 use colored::*;
