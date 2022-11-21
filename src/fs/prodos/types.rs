@@ -97,9 +97,9 @@ pub const TYPE_MAP_DISP: [(u8,&str);39] = [
 ];
 
 /// Enumerates a subset of ProDOS file types, available conversions are:
-/// * Type to u8: `as u8`
-/// * u8 to Type: `FromPrimitive::from_u8`
-/// * &str to Type: `Type::from_str`, str can be a number or mnemonic
+/// * FileType to u8,u16,u32: `as u8` etc.
+/// * u8,u16,u32 to FileType: `FileType::from_u8` etc., (use FromPrimitive trait)
+/// * &str to Type: `FileType::from_str`, str can be a number or mnemonic
 #[derive(FromPrimitive)]
 pub enum FileType {
     None = 0x00,
@@ -119,7 +119,7 @@ impl FromStr for FileType {
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         // string can be the number itself
         if let Ok(num) = u8::from_str(s) {
-            return match FromPrimitive::from_u8(num) {
+            return match FileType::from_u8(num) {
                 Some(typ) => Ok(typ),
                 _ => Err(Error::FileTypeMismatch)
             };

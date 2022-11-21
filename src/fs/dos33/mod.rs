@@ -12,6 +12,7 @@ mod directory;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
+use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
 use log::info;
 
@@ -326,6 +327,8 @@ impl Disk
             return Err(Box::new(Error::FileNotFound));
         }
         let mut ans = disk_base::FileImage::new(256);
+        ans.file_system = String::from("a2 dos");
+        ans.version = 3;
         let mut buf = vec![0;256];
         let mut count: usize = 0;
         // loop up to a maximum, if it is reached panic
@@ -342,7 +345,7 @@ impl Disk
                 count += 1;
             }
             if tslist.next_track==0 {
-                ans.new_type(&ftype.to_string());
+                ans.fs_type = ftype as u32;
                 return Ok(ans);
             }
             next_tslist = [tslist.next_track,tslist.next_sector];
@@ -379,9 +382,9 @@ impl Disk
             let mut dir = DirectorySector::from_bytes(&dir_buf);
             dir.entries[e as usize].tsl_track = tslist_ts[0];
             dir.entries[e as usize].tsl_sector = tslist_ts[1];
-            match Type::from_str(&fimg.fs_type) {
-                Ok(t) => dir.entries[e as usize].file_type = t as u8,
-                Err(e) => return Err(Box::new(e))
+            match FileType::from_u32(fimg.fs_type) {
+                Some(t) => dir.entries[e as usize].file_type = t as u8,
+                None => return Err(Box::new(Error::Range))
             } 
             dir.entries[e as usize].name = string_to_file_name(name);
             dir.entries[e as usize].sectors = [tslist_sectors as u8 + data_sectors as u8 ,0];
@@ -445,7 +448,7 @@ impl Disk
                         entry.name = string_to_file_name(new_name);
                     }
                     if let Some(ftype) = maybe_ftype {
-                        match Type::from_str(ftype) {
+                        match FileType::from_str(ftype) {
                             Ok(typ) => entry.file_type = typ as u8,
                             Err(e) => return Err(Box::new(e))
                         }
@@ -587,8 +590,8 @@ impl disk_base::DiskFS for Disk {
     }
     fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
-            Ok(v) => {
-                let ans = types::BinaryData::from_bytes(&v.sequence());
+            Ok(fimg) => {
+                let ans = types::BinaryData::from_bytes(&fimg.sequence());
                 Ok((u16::from_le_bytes(ans.start),ans.data))
             },
             Err(e) => Err(e)
@@ -600,31 +603,37 @@ impl disk_base::DiskFS for Disk {
             Some(v) => [file.to_bytes(),v.clone()].concat(),
             None => file.to_bytes()
         };
-        return self.write_file(name, &disk_base::FileImage::desequence(256, &padded).new_type("bin"));
+        let mut fimg = disk_base::FileImage::desequence(256, &padded);
+        fimg.fs_type = FileType::Binary as u32;
+        return self.write_file(name, &fimg);
     }
     fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
-            Ok(v) => Ok((0,types::TokenizedProgram::from_bytes(&v.sequence()).program)),
+            Ok(fimg) => Ok((0,types::TokenizedProgram::from_bytes(&fimg.sequence()).program)),
             Err(e) => Err(e)
         }
     }
     fn save(&mut self,name: &str, dat: &Vec<u8>, typ: disk_base::ItemType, trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
-        let file = types::TokenizedProgram::pack(&dat,trailing);
+        let padded = types::TokenizedProgram::pack(&dat,trailing).to_bytes();
         let fs_type = match typ {
-            disk_base::ItemType::ApplesoftTokens => "atok",
-            disk_base::ItemType::IntegerTokens => "itok",
-            _ => panic!("attempt to SAVE non-BASIC data type")
+            disk_base::ItemType::ApplesoftTokens => FileType::Applesoft,
+            disk_base::ItemType::IntegerTokens => FileType::Integer,
+            _ => return Err(Box::new(Error::FileTypeMismatch))
         };
-        return self.write_file(name, &disk_base::FileImage::desequence(256,&file.to_bytes()).new_type(fs_type));
+        let mut fimg = disk_base::FileImage::desequence(256, &padded);
+        fimg.fs_type = fs_type as u32;
+        return self.write_file(name, &fimg);
     }
     fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
-            Ok(sd) => Ok((0,sd.sequence())),
+            Ok(fimg) => Ok((0,fimg.sequence())),
             Err(e) => Err(e)
         }
     }
     fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        return self.write_file(name, &disk_base::FileImage::desequence(256,dat).new_type("txt"));
+        let mut fimg = disk_base::FileImage::desequence(256, dat);
+        fimg.fs_type = FileType::Text as u32;
+        return self.write_file(name, &fimg);
     }
     fn read_records(&self,name: &str,record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
         if record_length==0 {
@@ -644,7 +653,7 @@ impl disk_base::DiskFS for Disk {
     }
     fn write_records(&mut self,name: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x8d));
-        if let Ok(fimg) = records.to_fimg(256,false,encoder) {
+        if let Ok(fimg) = records.to_fimg(256,FileType::Text as u32,false,encoder) {
             return self.write_file(name, &fimg);
         } else {
             Err(Box::new(Error::SyntaxError))

@@ -363,7 +363,7 @@ impl Disk {
             }
             if ptr>0 {
                 self.read_block(buf,ptr as usize,0);
-                fimg.chunks.insert(*count,buf[0..bytes].to_vec());
+                fimg.chunks.insert(*count,buf.clone());
             }
             *count += 1;
             *eof += bytes;
@@ -416,6 +416,7 @@ impl Disk {
     /// when it is expected to be sequential.
     fn read_file(&self,entry: &Entry) -> disk_base::FileImage {
         let mut fimg = disk_base::FileImage::new(512);
+        fimg.file_system = String::from("a2 prodos");
         entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
         let master_ptr = entry.get_ptr();
@@ -424,7 +425,7 @@ impl Disk {
         match entry.storage_type() {
             StorageType::Seedling => {
                 self.read_block(&mut buf, master_ptr as usize, 0);
-                fimg.chunks.insert(0, buf[0..entry.eof()].to_vec());
+                fimg.chunks.insert(0, buf.clone());
                 return fimg;
             },
             StorageType::Sapling => {
@@ -637,7 +638,7 @@ impl Disk {
             }
 
             // update the entry, do last to capture all the changes
-            entry.set_eof(usize::max(entry.eof(),fimg.eof));
+            entry.set_eof(usize::max(entry.eof(),fimg.eof as usize));
             self.write_entry(&loc,&entry);
         }
         return Ok(eof);
@@ -872,7 +873,7 @@ impl disk_base::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                Ok((entry.aux(),ans.sequence()))
+                Ok((entry.aux(),ans.sequence_limited(ans.eof as usize)))
             },
             Err(e) => Err(Box::new(e))
         }
@@ -883,8 +884,8 @@ impl disk_base::DiskFS for Disk {
             None => dat.clone()
         };
         let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, &padded);
-        fimg.fs_type = (FileType::Binary as u8).to_string();
-        fimg.aux = start_addr.to_string();
+        fimg.fs_type = FileType::Binary as u32;
+        fimg.aux = start_addr as u32;
         return self.write_any(path,&fimg);
     }
     fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -892,7 +893,7 @@ impl disk_base::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                return Ok((0,ans.sequence()));
+                return Ok((0,ans.sequence_limited(ans.eof as usize)))
             },
             Err(e) => Err(Box::new(e))
         }
@@ -902,14 +903,14 @@ impl disk_base::DiskFS for Disk {
         match typ {
             disk_base::ItemType::ApplesoftTokens => {
                 let addr = applesoft::deduce_address(dat);
-                fimg.fs_type = (FileType::ApplesoftCode as u8).to_string();
-                fimg.aux = addr.to_string();
+                fimg.fs_type = FileType::ApplesoftCode as u32;
+                fimg.aux = addr as u32;
                 info!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
             },
             disk_base::ItemType::IntegerTokens => {
-                fimg.fs_type = (FileType::IntegerCode as u8).to_string();
+                fimg.fs_type = FileType::IntegerCode as u32;
             }
-            _ => panic!("cannot write this type of program file")
+            _ => return Err(Box::new(Error::FileTypeMismatch))
         }
         return self.write_any(path,&fimg);
     }
@@ -918,14 +919,14 @@ impl disk_base::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                return Ok((0,ans.sequence()));
+                return Ok((0,ans.sequence_limited(ans.eof as usize)))
             },
             Err(e) => Err(Box::new(e))
         }
     }
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, dat);
-        fimg.fs_type = (FileType::Text as u8).to_string();
+        fimg.fs_type = FileType::Text as u32;
         return self.write_any(path,&fimg);
     }
     fn read_records(&self,path: &str,_record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
@@ -944,7 +945,7 @@ impl disk_base::DiskFS for Disk {
     }
     fn write_records(&mut self,path: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
-        if let Ok(fimg) = records.to_fimg(BLOCK_SIZE,true,encoder) {
+        if let Ok(fimg) = records.to_fimg(BLOCK_SIZE,FileType::Text as u32,true,encoder) {
             return self.write_any(path,&fimg);
         } else {
             Err(Box::new(Error::Syntax))

@@ -105,7 +105,7 @@ fn mkpascal(vol: &str,boot: bool,blocks: u16,kind: &DiskKind,img_typ: &DiskImage
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
     let mut disk = Box::new(pascal::Disk::new(blocks));
-    match disk.format(vol,kind,None) {
+    match disk.format(vol,0xee,kind,None) {
         Ok(()) => {},
         Err(e) => return Err(Box::new(e))
     }

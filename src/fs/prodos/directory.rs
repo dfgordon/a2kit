@@ -1,7 +1,14 @@
 
+//! # ProDOS directory structures
+//! 
+//! These are all implemented as fixed length structs with private fields.
+//! External interactions are largely trhough the `Directory` trait object,
+//! and the `Entry` struct.  The internals involve a somewhat complex
+//! arrangement of traits and generics.
+
+
 use chrono::{Datelike,Timelike};
 use std::fmt;
-use std::str::FromStr;
 use crate::disk_base::FileImage;
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
@@ -22,7 +29,7 @@ fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
         _ => chrono::Local::now().naive_local()
     };
     let (_is_common_era,year) = now.year_ce();
-    let packed_date = (now.day() + (now.month() << 5) + ((year-2000) << 9)) as u16;
+    let packed_date = (now.day() + (now.month() << 5) + (year%100 << 9)) as u16;
     let packed_time = (now.minute() + (now.hour() << 8)) as u16;
     let bytes_date = u16::to_le_bytes(packed_date);
     let bytes_time = u16::to_le_bytes(packed_time);
@@ -32,7 +39,7 @@ fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
 fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
     let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
     let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
-    let year = 2000 + (date >> 9);
+    let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
     let month = (date >> 5) & 15;
     let day = date & 31;
     let hour = (time >> 8) & 255;
@@ -266,14 +273,14 @@ impl Entry {
         self.blocks_used = u16::to_le_bytes(new_val as u16);
     }
     pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
-        fimg.eof = self.eof();
-        fimg.access = self.access.to_string();
-        fimg.fs_type = self.file_type.to_string();
-        fimg.aux = u16::from_le_bytes(self.aux_type).to_string();
-        fimg.created = u32::from_le_bytes(self.create_time).to_string();
-        fimg.modified = u32::from_le_bytes(self.last_mod).to_string();
-        fimg.version = self.vers.to_string();
-        fimg.min_version = self.min_vers.to_string();
+        fimg.eof = self.eof() as u32;
+        fimg.access = self.access as u32;
+        fimg.fs_type = self.file_type as u32;
+        fimg.aux = u16::from_le_bytes(self.aux_type) as u32;
+        fimg.created = u32::from_le_bytes(self.create_time);
+        fimg.modified = u32::from_le_bytes(self.last_mod);
+        fimg.version = self.vers as u32;
+        fimg.min_version = self.min_vers as u32;
     }
     pub fn create_subdir(name: &str,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
@@ -294,19 +301,22 @@ impl Entry {
         return ans;
     }
     pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,Error> {
+        if fimg.fs_type>255 || fimg.version>255 || fimg.min_version>255 || fimg.aux>65535 {
+            return Err(Error::Range);
+        }
         let mut ans = Self::new();
         let (nibs,fname) = string_to_file_name(&StorageType::Seedling, name);
         ans.stor_len_nibs = nibs;
         ans.name = fname;
-        ans.file_type = match FileType::from_str(&fimg.fs_type) { Ok(t) => t as u8, _ => return Err(Error::FileTypeMismatch) };
+        ans.file_type = fimg.fs_type as u8;
         ans.key_ptr = u16::to_le_bytes(key_ptr);
         ans.blocks_used = [0,0];
         ans.eof = [0,0,0];
         ans.create_time = pack_time(create_time);
-        ans.vers = match u8::from_str_radix(&fimg.version,10) { Ok(v) => v, _ => return Err(Error::Range) };
-        ans.min_vers = match u8::from_str_radix(&fimg.min_version,10) { Ok(v) => v, _ => return Err(Error::Range) };
+        ans.vers = fimg.version as u8;
+        ans.min_vers = fimg.min_version as u8;
         ans.access = STD_ACCESS;
-        ans.aux_type = u16::to_le_bytes(match u16::from_str_radix(&fimg.aux,10) { Ok(v) => v, _ => return Err(Error::Range) });
+        ans.aux_type = u16::to_le_bytes(fimg.aux as u16);
         ans.last_mod = pack_time(create_time);
         ans.header_ptr = u16::to_le_bytes(header_ptr);
         return Ok(ans);
@@ -631,7 +641,7 @@ impl HasName for Entry {
         return file_name_to_string(self.stor_len_nibs, self.name);
     }
     fn storage_type(&self) -> StorageType {
-        match FromPrimitive::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
+        match StorageType::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
             Some(t) => t,
             _ => panic!("encountered unknown storage type")
         }
@@ -646,7 +656,7 @@ impl HasName for VolDirHeader {
         return file_name_to_string(self.stor_len_nibs, self.name);
     }
     fn storage_type(&self) -> StorageType {
-        match FromPrimitive::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
+        match StorageType::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
             Some(t) => t,
             _ => panic!("encountered unknown storage type")
         }
@@ -661,7 +671,7 @@ impl HasName for SubDirHeader {
         return file_name_to_string(self.stor_len_nibs, self.name);
     }
     fn storage_type(&self) -> StorageType {
-        match FromPrimitive::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
+        match StorageType::from_u8((self.stor_len_nibs & 0xf0) >> 4) {
             Some(t) => t,
             _ => panic!("encountered unknown storage type")
         }

@@ -1,6 +1,7 @@
-//! # UCSD Pascal file system module
+//! # Pascal file system module
 //! 
 //! This module is *not* for the Pascal language, but rather the Pascal file system.
+//! Tested only with UCSD Pascal version 1.2.
 
 pub mod types;
 mod boot;
@@ -12,7 +13,7 @@ use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
 use log::{info,error};
-
+use num_traits::FromPrimitive;
 use types::*;
 use crate::disk_base;
 use directory::*;
@@ -24,13 +25,13 @@ fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
         _ => chrono::Local::now().naive_local()
     };
     let (_is_common_era,year) = now.year_ce();
-    let packed_date = (now.month() + (now.day() << 4) + ((year-1900) << 9)) as u16;
+    let packed_date = (now.month() + (now.day() << 4) + ((year%100) << 9)) as u16;
     return u16::to_le_bytes(packed_date);
 }
 
 fn unpack_date(pascal_date: [u8;2]) -> chrono::NaiveDateTime {
     let date = u16::from_le_bytes(pascal_date);
-    let year = 1900 + (date >> 9);
+    let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
     let month = date & 15;
     let day = (date >> 4) & 31;
     return chrono::NaiveDate::from_ymd(year as i32,month as u32,day as u32)
@@ -252,13 +253,17 @@ impl Disk
         return None;
     }
 
-    pub fn format(&mut self, vol_name: &str, disk_kind: &disk_base::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
+    pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &disk_base::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);
         }
-        // Zero everything
-        for iblock in 0..self.blocks.len() {
+        // Zero boot and directory blocks
+        for iblock in 0..6 {
             self.write_block(&[0;BLOCK_SIZE].to_vec(),iblock,0);
+        }
+        // Put `fill` value in all remaining blocks
+        for iblock in 6..self.blocks.len() {
+            self.write_block(&[fill;BLOCK_SIZE].to_vec(),iblock,0);
         }
         // Setup volume directory
         let mut dir = Directory::new();
@@ -282,7 +287,8 @@ impl Disk
                 self.write_block(&boot::PASCAL_525_BLOCK1.to_vec(), 1, 0);
             },
             disk_base::DiskKind::A2_35 => {
-                self.write_block(&boot::PASCAL_35_BLOCK0.to_vec(), 0, 0);
+                error!("unsupported disk type");
+                return Err(Error::NoDev)
             },
             _ => {
                 error!("unsupported disk type");
@@ -316,6 +322,7 @@ impl Disk
         if let (Some(idx),dir) = self.get_file_entry(name) {
             let entry = &dir.entries[idx];
             let mut ans = disk_base::FileImage::new(BLOCK_SIZE);
+            ans.file_system = String::from("a2 pascal");
             let mut buf = vec![0;BLOCK_SIZE];
             let mut count: usize = 0;
             let beg = u16::from_le_bytes(entry.begin_block);
@@ -326,9 +333,9 @@ impl Disk
                 ans.chunks.insert(count,buf.clone());
                 count += 1;
             }
-            ans.new_type(&ftype.to_string());
-            ans.eof = BLOCK_SIZE*ans.chunks.len() - u16::from_le_bytes(entry.bytes_remaining) as usize;
-            ans.modified = u16::from_le_bytes(entry.mod_date).to_string();
+            ans.fs_type = ftype as u32;
+            ans.eof = BLOCK_SIZE as u32*ans.chunks.len() as u32 - u16::from_le_bytes(entry.bytes_remaining) as u32;
+            ans.modified = u16::from_le_bytes(entry.mod_date) as u32;
             return Ok(ans);
         }
         return Err(Box::new(Error::NoFile));
@@ -346,7 +353,7 @@ impl Disk
             // we do not write anything unless there is room
             assert!(dat.chunks.len()>0);
             let data_blocks = dat.chunks.len();
-            if let Ok(fs_type) = Type::from_str(&dat.fs_type) {
+            if let Some(fs_type) = FileType::from_u32(dat.fs_type) {
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16) {
                     for i in 0..dir.entries.len() {
                         if dir.entries[i].begin_block==[0,0] {
@@ -356,7 +363,7 @@ impl Disk
                             dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
                             dir.entries[i].name_len = name.len() as u8;
                             dir.entries[i].name = string_to_file_name(name);
-                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - dat.eof) as u16);
+                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - dat.eof as usize) as u16);
                             dir.entries[i].mod_date = pack_date(None); // None means use system clock
                             dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)+1);
                             dir.header.last_access_date = pack_date(None);
@@ -396,7 +403,7 @@ impl Disk
                 entry.name = string_to_file_name(new_name);
             }
             if let Some(ftype) = maybe_ftype {
-                match Type::from_str(ftype) {
+                match FileType::from_str(ftype) {
                     Ok(typ) => entry.file_type = u16::to_le_bytes(typ as u16),
                     Err(e) => return Err(Box::new(e))
                 }
@@ -561,7 +568,8 @@ impl disk_base::DiskFS for Disk {
             None => dat.clone()
         };
         let mut bin_file = disk_base::FileImage::desequence(BLOCK_SIZE,&padded);
-        return self.write_file(name,&bin_file.new_type("bin"));
+        bin_file.fs_type = FileType::from_str("bin").expect("unreachable") as u32;
+        return self.write_file(name,&bin_file);
     }
     fn load(&self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         eprintln!("pascal implementation does not support operation");
@@ -618,7 +626,7 @@ impl disk_base::DiskFS for Disk {
         return self.read_file(name);
     }
     fn write_any(&mut self,name: &str,dat: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
-        if dat.chunk_len!=BLOCK_SIZE {
+        if dat.chunk_len as usize!=BLOCK_SIZE {
             eprintln!("chunk length {} is incompatible with Pascal",dat.chunk_len);
             return Err(Box::new(Error::DevErr));
         }

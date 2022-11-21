@@ -66,11 +66,11 @@ pub const TYPE_MAP_DISP: [(u8,&str);9] = [
 ];
 
 /// Enumerates the seven basic file types, available conversions are:
-/// * Type to u8: `as u8`
-/// * u8 to Type: `FromPrimitive::from_u8`
-/// * &str to Type: `Type::from_str`, str can be a number or mnemonic
+/// * FileType to u8,u16,u32: `as u8` etc.
+/// * u8,u16,u32 to FileType: `FileType::from_u8` etc., (use FromPrimitive trait)
+/// * &str to FileType: `FileType::from_str`, str can be a number or mnemonic
 #[derive(FromPrimitive)]
-pub enum Type {
+pub enum FileType {
     Non = 0x00,
     Bad = 0x01,
     Code = 0x02,
@@ -82,12 +82,12 @@ pub enum Type {
     Secure = 0x08
 }
 
-impl FromStr for Type {
+impl FromStr for FileType {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         // string can be the number itself
         if let Ok(num) = u8::from_str(s) {
-            return match FromPrimitive::from_u8(num) {
+            return match FileType::from_u8(num) {
                 Some(typ) => Ok(typ),
                 _ => Err(Error::BadMode)
             };
@@ -260,7 +260,7 @@ impl TextEncoder for Encoder {
 
 /// Structured representation of text files on disk.
 /// There is a page structure that we do not put into the structure.
-/// The result of this decoder has to pass over nulls, and encoder has to insert them.
+/// As a result the decoder must pass over nulls, the encoder must insert them.
 pub struct SequentialText {
     pub header: Vec<u8>,
     pub text: Vec<u8>

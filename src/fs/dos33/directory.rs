@@ -1,5 +1,5 @@
 
-//! # Submodule with DOS 3.3 directory elements
+//! # DOS 3.3 directory structures
 //! These are fixed length structures, with the DiskStruct trait.
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.

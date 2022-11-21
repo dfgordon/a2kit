@@ -35,23 +35,23 @@ pub enum Error {
 }
 
 /// Enumerates the four basic file types, available conversions are:
-/// * Type to u8: `as u8`
-/// * u8 to Type: `FromPrimitive::from_u8`
-/// * &str to Type: `Type::from_str`, str can be a number or mnemonic
+/// * FileType to u8,u16,u32: `as u8` etc.
+/// * u8,u16,u32 to FileType: `FileType::from_u8` etc., (use FromPrimitive trait)
+/// * &str to FileType: `FileType::from_str`, str can be a number or mnemonic
 #[derive(FromPrimitive)]
-pub enum Type {
+pub enum FileType {
     Text = 0x00,
     Integer = 0x01,
     Applesoft = 0x02,
     Binary = 0x04
 }
 
-impl FromStr for Type {
+impl FromStr for FileType {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         // string can be the number itself
         if let Ok(num) = u8::from_str(s) {
-            return match FromPrimitive::from_u8(num) {
+            return match FileType::from_u8(num) {
                 Some(typ) => Ok(typ),
                 _ => Err(Error::FileTypeMismatch)
             };

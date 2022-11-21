@@ -35,7 +35,7 @@ const PROG3: &str =
 #[test]
 fn format() {
     let mut disk = pascal::Disk::new(280);
-    disk.format(&String::from("BLANK"),&DiskKind::A2_525_16,None).expect("could not format");
+    disk.format(&String::from("BLANK"),0,&DiskKind::A2_525_16,None).expect("could not format");
     let mut ignore = disk.standardize(0);
     // loop to ignore boot blocks for this test
     for i in 0..1024 {
@@ -77,7 +77,7 @@ fn read_small() {
 fn out_of_space() {
     let mut disk = pascal::Disk::new(280);
     let big: Vec<u8> = vec![0;0x7f00];
-    disk.format(&String::from("TEST"),&DiskKind::A2_525_16,None).expect("could not format");
+    disk.format(&String::from("TEST"),0,&DiskKind::A2_525_16,None).expect("could not format");
     disk.bsave("f1",&big,0x800,None).expect("error");
     disk.bsave("f2",&big,0x800,None).expect("error");
     disk.bsave("f3",&big,0x800,None).expect("error");

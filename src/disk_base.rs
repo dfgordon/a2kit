@@ -128,31 +128,37 @@ pub trait TextEncoder {
     fn decode(&self,raw: &Vec<u8>) -> Option<String>;
 }
 
-/// This is an abstraction of a sparse file, that also can encompass sequential files.
-/// The data is in the form of quantized chunks,
-/// all of the same length. A chunk could be a sector or block, depending on file system.
+/// This is an abstraction of a sparse file and its metadata.
+/// Sequential files are a special case.
+/// Metadata: all fields encoded in a `u32` formed from little-endian interpretation of
+/// whatever byte sequence exists on disk.  `DiskFS` is responsible for encoding/decoding.
+/// The `u32` fields are converted to/from hex strings for external interactions.
+/// Data: quantized chunks of `u8`, all of the same length.
+/// A chunk could be a sector or block, depending on file system.
 /// The chunks can be partially filled, e.g., `desequence` will not pad the last chunk.
 /// This is essentially `Records`, but for raw bytes.  Text should already be
 /// properly encoded by the time it gets put into the chunks.
 pub struct FileImage {
-    /// The length of a chunk
-    pub chunk_len: usize,
-    /// the length of the file were it serialized
-    pub eof: usize,
-    /// The file system type in some string representation
-    pub fs_type: String,
-    /// Auxiliary data in some string representation
-    pub aux: String,
-    /// The access control bits in some string representation
-    pub access: String,
-    /// The creation time in some string representation
-    pub created: String,
-    /// The modified time in some string representation
-    pub modified: String,
-    /// Some version as a string
-    pub version: String,
-    /// Some minimum version as a string
-    pub min_version: String,
+    /// UTF8 string naming the file system
+    pub file_system: String,
+    /// length of a chunk
+    pub chunk_len: u32,
+    /// length of the file were it serialized
+    pub eof: u32,
+    /// file type, encoding varies by file system
+    pub fs_type: u32,
+    /// auxiliary file information, encoding varies by file system
+    pub aux: u32,
+    /// The access control bits, encoding varies by file system
+    pub access: u32,
+    /// The creation time, encoding varies by file system
+    pub created: u32,
+    /// The modified time, encoding varies by file system
+    pub modified: u32,
+    /// Some version
+    pub version: u32,
+    /// Some minimum version
+    pub min_version: u32,
     /// The key is an ordered chunk number starting at 0, no relation to any disk location.
     /// Contraints on the length of the data are undefined at this level.
     pub chunks: HashMap<usize,Vec<u8>>
@@ -161,15 +167,16 @@ pub struct FileImage {
 impl FileImage {
     pub fn new(chunk_len: usize) -> Self {
         Self {
-            chunk_len,
-            fs_type: String::from("bin"),
-            aux: String::from("0"),
+            file_system: String::from(""),
+            chunk_len: chunk_len as u32,
+            fs_type: 0,
+            aux: 0,
             eof: 0,
-            access: String::from("0"),
-            created: String::from("0"),
-            modified: String::from("0"),
-            version: String::from("0"),
-            min_version: String::from("0"),
+            access: 0,
+            created: 0,
+            modified: 0,
+            version: 0,
+            min_version: 0,
             chunks: HashMap::new()
         }
     }
@@ -197,6 +204,14 @@ impl FileImage {
         }
         return ans;
     }
+    /// pack the data sequentially, all structure is lost
+    pub fn sequence_limited(&self,max_len: usize) -> Vec<u8> {
+        let mut ans = self.sequence();
+        if max_len < ans.len() {
+            ans = ans[0..max_len].to_vec();
+        }
+        return ans;
+    }
     /// put any byte stream into a sparse data format
     pub fn desequence(chunk_len: usize, dat: &Vec<u8>) -> Self {
         let mut mark = 0;
@@ -210,36 +225,42 @@ impl FileImage {
             ans.chunks.insert(idx,dat[mark..end].to_vec());
             mark = end;
             if mark == dat.len() {
-                ans.eof = dat.len();
+                ans.eof = dat.len() as u32;
                 return ans;
             }
             idx += 1;
         }
     }
-    pub fn new_type(&mut self,new_type: &str) -> &mut Self {
-        self.fs_type = new_type.to_string();
-        return self;
-    }
-    pub fn new_aux(&mut self,new_aux: &str) -> &mut Self {
-        self.aux = new_aux.to_string();
-        return self;
+    pub fn parse_hex_field(key: &str,parsed: &json::JsonValue) -> Option<u32> {
+        if let Some(s) = parsed[key].as_str() {
+            if let Ok(bytes) = hex::decode(s) {
+                if bytes.len()<5 {
+                    let mut ans: u32 = 0;
+                    for i in 0..bytes.len() {
+                        ans += bytes[i] as u32 * 256_u32.pow(i as u32);
+                    }
+                    return Some(ans);
+                }
+            }
+        }
+        return None;
     }
     /// Get chunks from the JSON string representation
     pub fn from_json(json_str: &str) -> Result<FileImage,Box<dyn Error>> {
         match json::parse(json_str) {
             Ok(parsed) => {
-                let maybe_type = parsed["fimg_type"].as_str();
-                let maybe_len = parsed["chunk_length"].as_usize();
-                let maybe_fs_type = parsed["fs_type"].as_str();
-                let maybe_aux = parsed["aux"].as_str();
-                let maybe_eof = parsed["eof"].as_usize();
-                let maybe_access = parsed["access"].as_str();
-                let maybe_created = parsed["created"].as_str();
-                let maybe_modified = parsed["modified"].as_str();
-                let maybe_vers = parsed["version"].as_str();
-                let maybe_min_version = parsed["min_version"].as_str();
+                let maybe_fs = parsed["file_system"].as_str();
+                let maybe_len = FileImage::parse_hex_field("chunk_len",&parsed);
+                let maybe_fs_type = FileImage::parse_hex_field("fs_type",&parsed);
+                let maybe_aux = FileImage::parse_hex_field("aux",&parsed);
+                let maybe_eof = FileImage::parse_hex_field("eof",&parsed);
+                let maybe_access = FileImage::parse_hex_field("access",&parsed);
+                let maybe_created = FileImage::parse_hex_field("created",&parsed);
+                let maybe_modified = FileImage::parse_hex_field("modified",&parsed);
+                let maybe_vers = FileImage::parse_hex_field("version",&parsed);
+                let maybe_min_version = FileImage::parse_hex_field("min_version",&parsed);
                 if let (
-                    Some(typ),
+                    Some(fs),
                     Some(chunk_len),
                     Some(fs_type),
                     Some(aux),
@@ -250,7 +271,7 @@ impl FileImage {
                     Some(version),
                     Some(min_version)
                 ) = (
-                    maybe_type,
+                    maybe_fs,
                     maybe_len,
                     maybe_fs_type,
                     maybe_aux,
@@ -260,43 +281,39 @@ impl FileImage {
                     maybe_modified,
                     maybe_vers,
                     maybe_min_version) {
-                    if typ=="any" {
-                        let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
-                        let map_obj = &parsed["chunks"];
-                        if map_obj.entries().len()==0 {
-                            eprintln!("no object entries in json records");
-                            return Err(Box::new(CommandError::UnknownFormat));
-                        }
-                        for (key,hex) in map_obj.entries() {
-                            let prev_len = chunks.len();
-                            if let Ok(num) = usize::from_str(key) {
-                                if let Some(hex_str) = hex.as_str() {
-                                    if let Ok(dat) = hex::decode(hex_str) {
-                                        chunks.insert(num,dat);
-                                    }
-                                }
-                            }
-                            if chunks.len()==prev_len {
-                                eprintln!("could not read hex string from chunk");
-                                return Err(Box::new(CommandError::UnknownFormat));
-                            }
-                        }
-                        return Ok(Self {
-                            chunk_len,
-                            eof,
-                            fs_type: fs_type.to_string(),
-                            aux: aux.to_string(),
-                            access: access.to_string(),
-                            created: created.to_string(),
-                            modified: modified.to_string(),
-                            version: version.to_string(),
-                            min_version: min_version.to_string(),
-                            chunks
-                        });
-                    } else {
-                        eprintln!("json metadata type mismatch");
+                    let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
+                    let map_obj = &parsed["chunks"];
+                    if map_obj.entries().len()==0 {
+                        eprintln!("no object entries in json records");
                         return Err(Box::new(CommandError::UnknownFormat));
                     }
+                    for (key,hex) in map_obj.entries() {
+                        let prev_len = chunks.len();
+                        if let Ok(num) = usize::from_str(key) {
+                            if let Some(hex_str) = hex.as_str() {
+                                if let Ok(dat) = hex::decode(hex_str) {
+                                    chunks.insert(num,dat);
+                                }
+                            }
+                        }
+                        if chunks.len()==prev_len {
+                            eprintln!("could not read hex string from chunk");
+                            return Err(Box::new(CommandError::UnknownFormat));
+                        }
+                    }
+                    return Ok(Self {
+                        file_system: fs.to_string(),
+                        chunk_len,
+                        eof,
+                        fs_type,
+                        aux,
+                        access,
+                        created,
+                        modified,
+                        version,
+                        min_version,
+                        chunks
+                    });
                 }
                 eprintln!("json records missing metadata");
                 Err(Box::new(CommandError::UnknownFormat))
@@ -311,16 +328,16 @@ impl FileImage {
             json_map[c.to_string()] = json::JsonValue::String(hex::encode_upper(v));
         }
         let ans = json::object! {
-            fimg_type: "any",
-            fs_type: self.fs_type.clone(),
-            aux: self.aux.clone(),
-            eof: self.eof,
-            access: self.access.clone(),
-            created: self.created.clone(),
-            modified: self.modified.clone(),
-            version: self.version.clone(),
-            min_version: self.min_version.clone(),
-            chunk_length: self.chunk_len,
+            file_system: self.file_system.clone(),
+            chunk_len: hex::encode_upper(u32::to_le_bytes(self.chunk_len)),
+            eof: hex::encode_upper(u32::to_le_bytes(self.eof)),
+            fs_type: hex::encode_upper(u32::to_le_bytes(self.fs_type)),
+            aux: hex::encode_upper(u32::to_le_bytes(self.aux)),
+            access: hex::encode_upper(u32::to_le_bytes(self.access)),
+            created: hex::encode_upper(u32::to_le_bytes(self.created)),
+            modified: hex::encode_upper(u32::to_le_bytes(self.modified)),
+            version: hex::encode_upper(u32::to_le_bytes(self.version)),
+            min_version: hex::encode_upper(u32::to_le_bytes(self.min_version)),
             chunks: json_map
         };
         if indent > 0 {
@@ -362,18 +379,19 @@ impl Records {
         let mut ans = Records::new(record_length);
         let mut list: Vec<usize> = Vec::new();
         // add record index for each starting record boundary that falls within a chunk
+        let chunk_len = dat.chunk_len as usize;
         for c in dat.chunks.keys() {
-            let start_rec = c*dat.chunk_len/record_length + match c*dat.chunk_len%record_length { x if x>0 => 1, _ => 0 };
-            let end_rec = (c+1)*dat.chunk_len/record_length + match (c+1)*dat.chunk_len%record_length { x if x>0 => 1, _ => 0 };
+            let start_rec = c*chunk_len/record_length + match c*chunk_len%record_length { x if x>0 => 1, _ => 0 };
+            let end_rec = (c+1)*chunk_len/record_length + match (c+1)*chunk_len%record_length { x if x>0 => 1, _ => 0 };
             for r in start_rec..end_rec {
                 list.push(r);
             }
         }
         // add only records with complete data
         for r in list {
-            let start_chunk = r*record_length/dat.chunk_len;
-            let end_chunk = 1 + (r+1)*record_length/dat.chunk_len;
-            let start_offset = r*record_length%dat.chunk_len;
+            let start_chunk = r*record_length/chunk_len;
+            let end_chunk = 1 + (r+1)*record_length/chunk_len;
+            let start_offset = r*record_length%chunk_len;
             let mut bytes: Vec<u8> = Vec::new();
             let mut complete = true;
             for chunk_num in start_chunk..end_chunk {
@@ -404,10 +422,10 @@ impl Records {
         return Ok(ans);
     }
     /// create file image from the records, this is usually done before writing to a disk image
-    pub fn to_fimg(&self,chunk_len: usize,require_first: bool,encoder: impl TextEncoder) -> Result<FileImage,Box<dyn Error>> {
+    pub fn to_fimg(&self,chunk_len: usize,fs_type: u32,require_first: bool,encoder: impl TextEncoder) -> Result<FileImage,Box<dyn Error>> {
         let mut ans = FileImage::new(chunk_len);
-        ans.new_type("txt");
-        ans.new_aux(&self.record_len.to_string());
+        ans.fs_type = fs_type;
+        ans.aux = self.record_len as u32;
         ans.eof = 0;
         // always need to have the first chunk referenced on ProDOS
         if require_first {
@@ -441,7 +459,7 @@ impl Records {
                         for i in start_byte..end_byte {
                             buf[i as usize] = data_bytes[chunk_len*(lb-logical_chunk) + i - fwd_offset];
                         }
-                        ans.eof = usize::max(lb*512 + buf.len(),ans.eof);
+                        ans.eof = u32::max((lb*512 + buf.len()) as u32,ans.eof);
                         ans.chunks.insert(lb as usize,buf);
                     }
                 },
