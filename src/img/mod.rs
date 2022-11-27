@@ -8,13 +8,38 @@
 //! Disk images are represented by the `DiskImage` trait.
 
 pub mod disk525;
+pub mod dsk_d13;
 pub mod dsk_do;
 pub mod dsk_po;
 pub mod woz;
 pub mod woz1;
 pub mod woz2;
 
+use log::info;
 const BLOCK_SIZE: usize = 512;
+
+/// Enumerates disk image errors.  The `Display` trait will print equivalent long message.
+#[derive(thiserror::Error,Debug)]
+pub enum Error {
+    #[error("track count did not match request")]
+    TrackCountMismatch,
+	#[error("image size did not match the request")]
+	ImageSizeMismatch,
+    #[error("image type not compatible with request")]
+    ImageTypeMismatch
+}
+
+/// Test a buffer for a size match to DOS-oriented track and sector counts.
+pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usize) -> Result<(),Box<dyn std::error::Error>> {
+    let bytes = dsk.len();
+    for tracks in allowed_track_counts {
+        if bytes==tracks*sectors*256 {
+            return Ok(());
+        }
+    }
+    info!("image size was {}",bytes);
+    return Err(Box::new(Error::ImageSizeMismatch));
+}
 
 /// Get block number and byte offset into block corresponding to
 /// 16-bit track and sector.  Returned in tuple (block,offset)

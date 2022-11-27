@@ -1,6 +1,8 @@
-//! # DOS 3.3 file system module
+//! # DOS 3.x file system module
 //! This manipulates disk images containing one standard bootable
-//! or non-bootable DOS 3.3 small volume (140K).
+//! or non-bootable DOS 3.x volume.  At the level of this module,
+//! wide latitude is allowed for track counts, while sector counts
+//! are restricted to 13, 16, or 32.
 //! 
 //! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `DiskFS` trait
 //! * The module will try to emulate the order in which DOS would access sectors
@@ -24,34 +26,17 @@ use crate::create_fs_from_file;
 
 fn file_name_to_string(fname: [u8;30]) -> String {
     // fname is negative ASCII padded to the end with spaces
-    // UTF8 failure will cause panic
-    let mut copy = fname.clone();
-    for i in 0..30 {
-        copy[i] -= 128;
-    }
-    if let Ok(result) = String::from_utf8(copy.to_vec()) {
-        return result.trim_end().to_string();
-    }
-    panic!("encountered a bad file name");
+    // non-ASCII will go as hex escapes
+    return String::from(crate::escaped_ascii_from_bytes(&fname.to_vec(),true,true).trim_end());
 }
 
 fn string_to_file_name(s: &str) -> [u8;30] {
-    // this assumes the String contains only ASCII characters, if not panic
-    let mut ans: [u8;30] = [32;30]; // load with ascii spaces
-    let mut i = 0;
-    if s.len() > 30 {
-        panic!("file name too long");
-    }
-    for char in s.to_uppercase().chars() {
-        if !char.is_ascii() {
-            panic!("encountered non-ascii while forming file name");
-        }
-        char.encode_utf8(&mut ans[i..]);
-        i += 1;
-    }
-    // Put it all in negative ascii
+    let mut ans: [u8;30] = [0xa0;30]; // fill with negative spaces
+    let unescaped = crate::escaped_ascii_to_bytes(s, true);
     for i in 0..30 {
-        ans[i] += 128;
+        if i<unescaped.len() {
+            ans[i] = unescaped[i];
+        }
     }
     return ans;
 }
@@ -60,18 +45,19 @@ fn string_to_file_name(s: &str) -> [u8;30] {
 /// The primary interface for disk operations.
 pub struct Disk
 {
-    // 16 sectors hard coded here
+    // VTOC works for any DOS 3.x
     vtoc: VTOC,
-    tracks: [[[u8;256];16];35]
+    // Internally, the sectors are always kept in the file system's logical order.
+    tracks: Vec<Vec<[u8;256]>>
 }
 
 impl Disk
 {
-    /// Create an empty disk, every byte of every sector of every track is 0
+    /// Create an empty disk, internal buffer is empty
     pub fn new() -> Self {
         return Self {
             vtoc: VTOC::new(),
-            tracks: [[[0;256];16];35]
+            tracks: Vec::new()
         }
     }
     fn panic_if_ts_bad(&self,track: u8,sector: u8) {
@@ -95,25 +81,25 @@ impl Disk
         // save it in the actual VTOC image
         let vtoc_bytes = self.vtoc.to_bytes();
         for i in 0..vtoc_bytes.len() {
-            self.tracks[17][0][i] = vtoc_bytes[i];
+            self.tracks[VTOC_TRACK as usize][0][i] = vtoc_bytes[i];
         }
     }
     fn update_last_track(&mut self,track: u8) {
         // The last_direction and last_track fields are not discussed in DOS manual.
         // This way of setting them is a guess based on emulator outputs.
         // If/how they are used in the free sector search is yet another question.
-        if track<17 {
+        if track<VTOC_TRACK {
             self.vtoc.last_direction = 255;
             self.vtoc.last_track = track;
         }
-        if track>17 {
+        if track>VTOC_TRACK {
             self.vtoc.last_direction = 1;
             self.vtoc.last_track = track;
         }
         // save it in the actual VTOC image
         let vtoc_bytes = self.vtoc.to_bytes();
         for i in 0..vtoc_bytes.len() {
-            self.tracks[17][0][i] = vtoc_bytes[i];
+            self.tracks[VTOC_TRACK as usize][0][i] = vtoc_bytes[i];
         }
     }
     fn allocate_sector(&mut self,track: u8,sector: u8) {
@@ -166,69 +152,102 @@ impl Disk
             self.tracks[track as usize][sector as usize][i] = data[offset + i];
         }
     }
-    /// Create a standard DOS 3.3 small volume (140K)
-    pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
-        // Zero out everything
-        for track in 0..35 {
-            for sector in 0..16 {
-                for byte in 0..256 {
-                    self.tracks[track][sector][byte] = 0;
-                }
+    /// Create any DOS 3.x volume
+    pub fn init(&mut self,vol:u8,bootable:bool,last_track_written:u8,tracks:u8,sectors:u8) {
+        // Build the internal buffers
+        self.tracks = Vec::new();
+        for track in 0..tracks as usize {
+            self.tracks.push(Vec::new());
+            for _sector in 0..sectors as usize {
+                self.tracks[track].push([0;256]);
             }
         }
-        // First write the Volume Table of Contents (VTOC)
         assert!(vol>0 && vol<255);
-        assert!(last_track_written>0 && last_track_written<35);
+        assert!(tracks>VTOC_TRACK && tracks<=50);
+        assert!(sectors==13 || sectors==16 || sectors==32);
+        assert!(last_track_written>0 && last_track_written<tracks);
 
-        self.vtoc.pad1 = 4;
+        // First write the Volume Table of Contents (VTOC)
+        self.vtoc.pad1 = match sectors {
+            13 => 2,
+            16 | 32 => 4,
+            _ => panic!("unexpected sector count")
+        };
         self.vtoc.vol = vol;
         self.vtoc.last_track = last_track_written;
         self.vtoc.last_direction = 1;
         self.vtoc.max_pairs = 0x7a;
-        self.vtoc.track1 = 17;
-        self.vtoc.sector1 = 15;
-        self.vtoc.version = 3;
+        self.vtoc.track1 = VTOC_TRACK;
+        self.vtoc.sector1 = sectors-1;
+        self.vtoc.version = match sectors {
+            13 => 2,
+            16 | 32 => 3,
+            _ => panic!("unexpected sector count")
+        };
         self.vtoc.bytes = [0,1];
-        self.vtoc.sectors = 16;
-        self.vtoc.tracks = 35;
+        self.vtoc.sectors = sectors;
+        self.vtoc.tracks = tracks;
         // Mark as free except track 0
-        for track in 1..35 {
-            self.vtoc.bitmap[track*4] = 255; // sectors 8-F
-            self.vtoc.bitmap[track*4+1] = 255; // sectors 0-7
+        let all_free: [u8;4] = match sectors {
+            13 => u32::to_be_bytes(0xfff80000),
+            16 => u32::to_be_bytes(0xffff0000),
+            32 => u32::to_be_bytes(0xffffffff),
+            _ => panic!("unexpected sector count")
+        };
+        for track in 1..tracks as usize {
+            self.vtoc.bitmap[track*4+0] = all_free[0];
+            self.vtoc.bitmap[track*4+1] = all_free[1];
+            self.vtoc.bitmap[track*4+2] = all_free[2];
+            self.vtoc.bitmap[track*4+3] = all_free[3];
         }
         // If bootable mark DOS tracks as entirely used
         if bootable {
-            self.vtoc.bitmap[4] = 0;
-            self.vtoc.bitmap[5] = 0;
-            self.vtoc.bitmap[8] = 0;
-            self.vtoc.bitmap[9] = 0;
+            for i in 1*4..3*4 {
+                self.vtoc.bitmap[i] = 0;
+            }
         }
-        // Mark track 17 as entirely used (VTOC and directory)
-        self.vtoc.bitmap[17*4] = 0;
-        self.vtoc.bitmap[17*4+1] = 0;
+        // Mark track VTOC_TRACK as entirely used (VTOC and directory)
+        for i in VTOC_TRACK*4..(VTOC_TRACK+1)*4 {
+            self.vtoc.bitmap[i as usize] = 0;
+        }
         // write the sector and save the records in this object
-        self.write_sector(&self.vtoc.to_bytes(),[17,0],0);
-
-        // Next write the directory tracks
-
+        self.write_sector(&self.vtoc.to_bytes(),[VTOC_TRACK,0],0);
+        // Write the directory tracks
         let mut dir = DirectorySector::new();
-        self.write_sector(&dir.to_bytes(),[17,1],0);
-        for sec in 2 as u8..16 as u8 {
-            dir.next_track = 17;
+        self.write_sector(&dir.to_bytes(),[VTOC_TRACK,1],0);
+        for sec in 2 as u8..sectors as u8 {
+            dir.next_track = VTOC_TRACK;
             dir.next_sector = sec - 1;
-            self.write_sector(&dir.to_bytes(),[17,sec],0);
+            self.write_sector(&dir.to_bytes(),[VTOC_TRACK,sec],0);
         }
-
+        // If bootable write DOS tracks
         if bootable {
-            let flat = boot::DOS33_TRACKS;
+            let flat = match sectors {
+                13 => boot::DOS32_TRACKS.to_vec(),
+                16 => boot::DOS33_TRACKS.to_vec(),
+                _ => panic!("only 13 or 16 sector disks can be made bootable")
+            };
             for track in 0..3 {
-                for sector in 0..16 {
+                for sector in 0..sectors as usize {
                     for byte in 0..256 {
-                        self.tracks[track][sector][byte] = flat[byte + sector*256 + track*256*16]
+                        self.tracks[track][sector][byte] = flat[byte + sector*256 + track*sectors as usize*256];
                     }
                 }
             }
         }
+    }
+    /// Create a standard DOS 3.2 volume (116K)
+    pub fn init32(&mut self,vol:u8,bootable:bool) {
+        self.init(vol,bootable,17,35,13);
+    }
+    /// Create a standard DOS 3.3 small volume (140K)
+    pub fn init33(&mut self,vol:u8,bootable:bool) {
+        self.init(vol,bootable,17,35,16);
+    }
+    /// Create a standard DOS 3.3 small volume (140K)
+    #[deprecated="use init variants instead"]
+    pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
+        self.init(vol, bootable, last_track_written, 35, 16);
     }
     fn num_free_sectors(&self) -> usize {
         let mut ans: usize = 0;
@@ -328,7 +347,7 @@ impl Disk
         }
         let mut ans = disk_base::FileImage::new(256);
         ans.file_system = String::from("a2 dos");
-        ans.version = 3;
+        ans.version = self.vtoc.version as u32;
         let mut buf = vec![0;256];
         let mut count: usize = 0;
         // loop up to a maximum, if it is reached panic
@@ -464,30 +483,34 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Return a disk object if the image data verifies as DOS ordered,
+    /// Return a disk object if the image data verifies as DOS 3.x,
     /// otherwise return None.  Checks for matches to byte counts and selected VTOC fields.
     pub fn from_img(img: &Vec<u8>) -> Option<Self> {
         let mut disk = Self::new();
-        let tlen = 35 as usize;
-        let slen = 16 as usize;
-        let blen = 256 as usize;
-        if img.len()!=tlen*slen*blen {
-            info!("byte count is not correct");
+        let (tlen,slen,blen) = match img.len() {
+            x if x==35*13*256 => (35,13,256),
+            x if x==35*16*256 => (35,16,256),
+            _ => (0,0,0)
+        };
+        if tlen==0 {
+            info!("byte count is unexpected");
             return None;
         }
         for track in 0..tlen {
+            disk.tracks.push(Vec::new());
             for sector in 0..slen {
+                disk.tracks[track].push([0;256]);
                 for byte in 0..blen {
                     disk.tracks[track][sector][byte] = img[byte+sector*blen+track*slen*blen];
                 }
             }
         }
-        disk.vtoc = VTOC::from_bytes(&disk.tracks[17][0].to_vec());
-        if disk.vtoc.track1 != 17 || disk.vtoc.sector1 != 15 {
+        disk.vtoc = VTOC::from_bytes(&disk.tracks[VTOC_TRACK as usize][0].to_vec());
+        if disk.vtoc.track1 != VTOC_TRACK || disk.vtoc.sector1 != slen as u8 - 1 {
             info!("VTOC wrong track1 {}, sector1 {}",disk.vtoc.track1,disk.vtoc.sector1);
             return None;
         }
-        if disk.vtoc.bytes != [0,1] || disk.vtoc.sectors != 16 || disk.vtoc.tracks != 35 {
+        if disk.vtoc.bytes != [0,1] || disk.vtoc.sectors != slen as u8 || disk.vtoc.tracks != tlen as u8 {
             info!("VTOC wrong bytes {:?}, sectors {}, tracks {}",disk.vtoc.bytes,disk.vtoc.sectors,disk.vtoc.tracks);
             return None;
         }
@@ -532,7 +555,7 @@ impl disk_base::DiskFS for Disk {
         return Err(Box::new(Error::IOError));
     }
     fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
-        eprintln!("DOS 3.3 does not support operation");
+        eprintln!("DOS 3.x does not support operation");
         return Err(Box::new(Error::SyntaxError));
     }
     fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -637,7 +660,7 @@ impl disk_base::DiskFS for Disk {
     }
     fn read_records(&self,name: &str,record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
         if record_length==0 {
-            eprintln!("DOS 3.3 requires specifying a non-zero record length");
+            eprintln!("DOS 3.x requires specifying a non-zero record length");
             return Err(Box::new(Error::Range));
         }
         let encoder = Encoder::new(Some(0x8d));
@@ -689,7 +712,7 @@ impl disk_base::DiskFS for Disk {
     }
     fn write_any(&mut self,name: &str,fimg: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if fimg.chunk_len!=256 {
-            eprintln!("chunk length {} is incompatible with DOS 3.3",fimg.chunk_len);
+            eprintln!("chunk length {} is incompatible with DOS 3.x",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
         return self.write_file(name,fimg);
@@ -706,7 +729,8 @@ impl disk_base::DiskFS for Disk {
         }
     }
     fn standardize(&self,_ref_con: u16) -> Vec<usize> {
-        return vec![17*16*256];
+        // ignore first byte of VTOC
+        return vec![VTOC_TRACK as usize*self.vtoc.sectors as usize*256];
     }
     fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
         let emulator_disk = create_fs_from_file(&path.to_str()
@@ -731,7 +755,10 @@ impl disk_base::DiskFS for Disk {
         }
     }
     fn get_ordering(&self) -> disk_base::DiskImageType {
-        return disk_base::DiskImageType::DO;
+        match self.vtoc.sectors {
+            13 => disk_base::DiskImageType::D13,
+            _ => disk_base::DiskImageType::DO
+        }
     }
     fn to_img(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();

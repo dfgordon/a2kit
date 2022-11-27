@@ -1,12 +1,23 @@
 //! # Common components for WOZ1 or WOZ2 disk images
 
 use log::info;
+use super::disk525;
+use crate::img;
 
 pub const INFO_ID: u32 = 0x4f464e49;
 pub const TMAP_ID: u32 = 0x50414d54;
 pub const TRKS_ID: u32 = 0x534b5254;
 pub const WRIT_ID: u32 = 0x54495257;
 pub const META_ID: u32 = 0x4154454D;
+pub const ALLOWED_TRACKS_525: [usize;1] = [35];
+
+/// Trait allowing us to write only 1 set of conversions for both WOZ types.
+/// We end up with some generic functions that get called by methods of the same name.
+pub trait WozConverter {
+	fn num_tracks(&self) -> usize;
+	fn get_track_obj(&self,track: u8) -> disk525::TrackBits;
+	fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8);
+}
 
 const CRC32_TAB: [u32;256] = [
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
@@ -95,5 +106,100 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 			// unknown chunk type
 			return (next,id,None);
 		}
+	}
+}
+
+pub fn update_from_d13<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	let woz_tracks = woz.num_tracks();
+	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
+		info!("track count was {}",woz_tracks);
+		return Err(Box::new(img::Error::TrackCountMismatch));
+	}
+	img::is_dos_size(dsk,&[woz_tracks].to_vec(),13)?;
+	for track in 0..woz_tracks {
+		let mut track_obj = woz.get_track_obj(track as u8);
+		track_obj.set_format_protocol(disk525::SectorAddressFormat::create_std13(),
+			disk525::SectorDataFormat::create_std13(),
+			disk525::NibbleSpecial::None);
+		match track_obj.update_track_with_d13(dsk, track as u8) {
+			Ok(()) => woz.update_track(&mut track_obj,track as u8),
+			Err(e) => {
+				info!("writing WOZ track led to `{}`",e);
+				return Err(Box::new(e))
+			}
+		}
+	}
+	return Ok(());
+}
+pub fn update_from_do<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	let woz_tracks = woz.num_tracks();
+	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
+		info!("track count was {}",woz_tracks);
+		return Err(Box::new(img::Error::TrackCountMismatch));
+	}
+	img::is_dos_size(dsk,&[woz_tracks].to_vec(),16)?;
+	for track in 0..woz_tracks {
+		let mut track_obj = woz.get_track_obj(track as u8);
+		match track_obj.update_track_with_do(dsk, track as u8) {
+			Ok(()) => woz.update_track(&mut track_obj,track as u8),
+			Err(e) => {
+				info!("writing WOZ track led to `{}`",e);
+				return Err(Box::new(e))
+			}
+		}
+	}
+	return Ok(());
+}
+pub fn update_from_po<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	img::is_dos_size(dsk, &ALLOWED_TRACKS_525.to_vec(), 16)?;
+	return update_from_do::<T>(woz,&img::reorder_po_to_do(dsk, 16));
+}
+pub fn to_d13<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+	let woz_tracks = woz.num_tracks();
+	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
+		info!("track count was {}",woz_tracks);
+		return Err(Box::new(img::Error::TrackCountMismatch));
+	}
+	let mut ans: Vec<u8> = Vec::new();
+	for track in 0..woz_tracks {
+		ans.append(&mut [0;256*13].to_vec());
+		let mut track_obj = woz.get_track_obj(track as u8);
+		track_obj.set_format_protocol(disk525::SectorAddressFormat::create_std13(),
+			disk525::SectorDataFormat::create_std13(),
+			disk525::NibbleSpecial::None);
+		match track_obj.update_d13_with_track(&mut ans, track as u8) {
+			Ok(()) => {},
+			Err(e) => {
+				info!("reading WOZ track led to `{}`",e);
+				return Err(Box::new(e))
+			}
+		}
+	}
+	return Ok(ans);
+}
+pub fn to_do<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+	let woz_tracks = woz.num_tracks();
+	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
+		info!("track count was {}",woz_tracks);
+		return Err(Box::new(img::Error::TrackCountMismatch));
+	}
+	let mut ans: Vec<u8> = Vec::new();
+	for track in 0..woz_tracks {
+		ans.append(&mut [0;256*16].to_vec());
+		let mut track_obj = woz.get_track_obj(track as u8);
+		match track_obj.update_do_with_track(&mut ans, track as u8) {
+			Ok(()) => {},
+			Err(e) => {
+				info!("reading WOZ track led to `{}`",e);
+				return Err(Box::new(e))
+			}
+		}
+	}
+	return Ok(ans);
+}
+pub fn to_po<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+	match to_do::<T>(woz) {
+		Ok(v) => Ok(img::reorder_do_to_po(&v, 16)),
+		Err(e) => Err(e)
 	}
 }

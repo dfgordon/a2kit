@@ -130,10 +130,15 @@ impl TMap {
 }
 
 impl Trk {
-    fn create(vol: u8,track: u8) -> Self {
+    fn create(vol: u8,track: u8,kind: disk_base::DiskKind) -> Self {
         let padding_byte = 0x00;
         let mut bits: [u8;TRACK_BYTE_CAPACITY] = [padding_byte;TRACK_BYTE_CAPACITY];
-        let mut track_obj = disk525::create_std_track(vol,track,6646);
+        let mut track_obj = match kind {
+            disk_base::DiskKind::A2_525_13 => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
+            disk_base::DiskKind::A2_525_16 => disk525::create_std_track(vol,track,TRACK_BYTE_CAPACITY),
+            disk_base::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
+            disk_base::DiskKind::A2Max => panic!("HD not allowed")
+        };
         track_obj.read(&mut bits,track_obj.bit_count());
         Self {
             bits,
@@ -149,14 +154,17 @@ impl Trk {
 
 impl Trks {
     fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
+        let tracks: usize = match kind {
+            disk_base::DiskKind::A2_525_13 => 35,
+            disk_base::DiskKind::A2_525_16 => 35,
+            disk_base::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
+            disk_base::DiskKind::A2Max => panic!("HD not allowed")
+        };
         let mut ans = Trks::new();
-        if kind!=disk_base::DiskKind::A2_525_16 {
-            panic!("only 16 sector 5.25 disks allowed");
-        }
         ans.id = u32::to_le_bytes(TRKS_ID);
-        ans.size = u32::to_le_bytes(35 * Trk::new().len() as u32);
-        for track in 0..35 {
-            let trk = Trk::create(vol,track);
+        ans.size = u32::to_le_bytes(tracks as u32 * Trk::new().len() as u32);
+        for track in 0..tracks {
+            let trk = Trk::create(vol,track as u8,kind);
             ans.tracks.push(trk);
         }
         return ans;
@@ -218,8 +226,8 @@ impl Woz1 {
         }
     }
     pub fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
-        if kind!=disk_base::DiskKind::A2_525_16 {
-            panic!("only 16 sector 5.25 disks allowed");
+        if kind==disk_base::DiskKind::A2_35 || kind==disk_base::DiskKind::A2Max {
+            panic!("only 5.25 disks allowed");
         }
         Self {
             header: Header::create(),
@@ -252,6 +260,8 @@ impl Woz1 {
     fn get_trk_struct(&self,track: u8) -> Trk {
         return self.trks.tracks[self.get_trk_idx(track)];
     }
+    /// Get a track with the default formatting protocol.
+    /// Caller can use `set_format_protocol` on the result to adjust.
     fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
         let trk = self.get_trk_struct(track);
         let buf = trk.bits.to_vec();
@@ -263,6 +273,18 @@ impl Woz1 {
         track_obj.reset();
         track_obj.read(&mut self.trks.tracks[idx].bits,track_obj.bit_count());
 
+    }
+}
+
+impl img::woz::WozConverter for Woz1 {
+    fn num_tracks(&self) -> usize {
+        return self.trks.num_tracks();
+    }
+    fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
+        return self.get_track_obj(track);
+    }
+    fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
+        self.update_track(track_obj, track);
     }
 }
 
@@ -294,33 +316,23 @@ impl disk_base::DiskImage for Woz1 {
         }
         return None;
     }
+    fn update_from_d13(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        return img::woz::update_from_d13::<Self>(self,dsk);
+    }
     fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        if dsk.len()!=35*16*256 {
-            return Err(Box::new(disk_base::CommandError::UnsupportedFormat));
-        }
-        for track in 0..35 {
-            let mut track_obj = self.get_track_obj(track);
-            track_obj.update_track_with_do(dsk, track as u8);
-            self.update_track(&mut track_obj,track);
-        }
-        return Ok(());
+        return img::woz::update_from_do::<Self>(self,dsk);
     }
     fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return self.update_from_do(&img::reorder_po_to_do(dsk, 16));
+        return img::woz::update_from_po::<Self>(self,dsk);
+    }
+    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        return img::woz::to_d13::<Self>(self);
     }
     fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        let mut ans: Vec<u8> = [0;512*280].to_vec();
-        for track in 0..35 {
-            let mut track_obj = self.get_track_obj(track);
-            track_obj.update_do_with_track(&mut ans, track as u8);
-        }
-        return Ok(ans);
+        return img::woz::to_do::<Self>(self);
     }
     fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        match self.to_do() {
-            Ok(v) => Ok(img::reorder_do_to_po(&v, 16)),
-            Err(e) => Err(e)
-        }
+        return img::woz::to_po::<Self>(self);
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();

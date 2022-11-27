@@ -11,6 +11,7 @@ pub const BLOCK_SIZE: usize = 512;
 pub const VOL_KEY_BLOCK: u16 = 2;
 pub const STD_ACCESS: u8 = 1+2+32+64+128;
 
+/// Enumerates ProDOS errors
 #[derive(Error,Debug)]
 pub enum Error {
     #[error("RANGE ERROR")]
@@ -139,6 +140,7 @@ impl FromStr for FileType {
     }
 }
 
+/// ProDOS storage type
 #[derive(Clone,Copy,FromPrimitive,PartialEq)]
 pub enum StorageType {
     Inactive = 0x00,
@@ -151,6 +153,7 @@ pub enum StorageType {
     VolDirHeader = 0x0f
 }
 
+/// ProDOS access permissions
 #[derive(Clone,Copy,FromPrimitive)]
 pub enum Access {
     Read = 0x01,
@@ -167,6 +170,8 @@ pub struct EntryLocation {
     pub idx: usize
 }
 
+/// Transforms between UTF8 and ProDOS text encodings.
+/// DOS uses positive ASCII with CR line separators.
 pub struct Encoder {
     line_terminator: Option<u8>
 }
@@ -218,7 +223,8 @@ impl TextEncoder for Encoder {
     }
 }
 
-/// Structured representation of sequential text files on disk.  Will not work for random access files.
+/// Structured representation of sequential text files on disk.
+/// For random access text use `disk_base::Records` instead.
 pub struct SequentialText {
     pub text: Vec<u8>,
     terminator: u8

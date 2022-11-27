@@ -13,6 +13,7 @@ const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
 const MIN_BLOCKS: usize = 280;
 
+/// Wrapper for DO data.
 /// Although this is DOS 3.3 ordered, we allow an extended (and abstract) mapping
 /// from ProDOS blocks to 16 bit track indices.  As a result even a 32MB
 /// ProDOS volume can be mapped into DOS 3.3 ordering.
@@ -41,18 +42,24 @@ impl disk_base::DiskImage for DO {
     fn is_do_or_po(&self) -> bool {
         true
     }
+    fn update_from_d13(&mut self,_dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
     fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         if self.data.len()!=dsk.len() {
-            return Err(Box::new(disk_base::CommandError::UnknownFormat));
+            return Err(Box::new(img::Error::ImageSizeMismatch));
         }
         self.data = dsk.clone();
         return Ok(());
     }
     fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         if self.data.len()!=dsk.len() {
-            return Err(Box::new(disk_base::CommandError::UnknownFormat));
+            return Err(Box::new(img::Error::ImageSizeMismatch));
         }
         return self.update_from_do(&img::reorder_po_to_do(dsk, self.sectors as usize));
+    }
+    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         return Ok(self.data.clone());
@@ -64,9 +71,9 @@ impl disk_base::DiskImage for DO {
         return self.data.clone();
     }
     fn get_track_buf(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        return Err(Box::new(disk_base::CommandError::UnsupportedFormat));
+        return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_bytes(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        return Err(Box::new(disk_base::CommandError::UnsupportedFormat));        
+        return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
 }

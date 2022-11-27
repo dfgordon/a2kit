@@ -5,6 +5,7 @@ use std::fmt;
 use a2kit_macro::DiskStruct;
 use crate::disk_base::TextEncoder;
 
+pub const VTOC_TRACK: u8 = 17;
 pub const MAX_DIRECTORY_REPS: usize = 100;
 pub const MAX_TSLIST_REPS: usize = 1000;
 
@@ -76,6 +77,8 @@ fn append_junk(dat: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Vec<u8> {
     }
 }
 
+/// Transforms between UTF8 and DOS text encodings.
+/// DOS uses negative ASCII with CR line separators.
 pub struct Encoder {
     line_terminator: Option<u8>
 }
@@ -184,7 +187,8 @@ impl DiskStruct for TokenizedProgram {
     }
 }
 
-/// Structured representation of sequential text files on disk.  Will not work for random access files.
+/// Structured representation of sequential text files on disk.
+/// For random access text use `disk_base::Records` instead.
 pub struct SequentialText {
     pub text: Vec<u8>,
     terminator: u8

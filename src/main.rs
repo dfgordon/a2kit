@@ -42,23 +42,25 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
                            | a2kit put -f prog -t atok -d myimg.dsk`
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
+    let img_types = ["d13","do","po","woz1","woz2"];
+    let os_names = ["dos32","dos33","prodos","pascal"];
+    let disk_kinds = ["5.25in","3.5in","hdmax"];
+
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
     .after_long_help(long_help)
     .subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number"))
-        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(["do","po","woz1","woz2"]))
-        .arg(arg!(-o --os <OS> "operating system format").possible_values(["dos33","prodos","pascal"]))
+        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(img_types))
+        .arg(arg!(-o --os <OS> "operating system format").possible_values(os_names))
         .arg(arg!(-b --bootable "make disk bootable").action(ArgAction::SetTrue))
-        .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values([
-            "5.25in",
-            "3.5in",
-            "hdmax"]).required(false)
+        .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values(disk_kinds)
+            .required(false)
             .default_value("5.25in"))
         .about("write a blank disk image to stdout"))
     .subcommand(Command::new("reimage")
         .arg(arg!(-d --dimg <PATH> "path to old disk image"))
-        .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(["do","po","woz1","woz2"]))
+        .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(img_types))
         .about("Transform an image into another type of image"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))

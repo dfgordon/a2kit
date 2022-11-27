@@ -5,7 +5,7 @@
 //! 
 //! ## Architecture
 //! 
-//! Disk image operations are built around two trait objects found in the `disk_base` module:
+//! Disk image operations are built around three trait objects found in the `disk_base` module:
 //! * `DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
 //! * `DiskFS` imposes a file system on the already decoded track data
 //! * `FileImage` provides a representation of a file that can be restored to a disk image
@@ -27,7 +27,7 @@
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
 //! As of this writing `a2kit` supports
-//! * DOS 3.3
+//! * DOS 3.x
 //! * ProDOS
 //! * Pascal File System
 //! 
@@ -51,30 +51,44 @@ use crate::disk_base::{DiskImage,DiskFS,CommandError};
 use std::io::Read;
 use std::fmt::Write;
 use std::error::Error;
-use log::{info};
+use log::{warn,info};
+use regex::Regex;
+use hex;
 
 /// Use the sectors on an `DiskFS` to update the sectors on a `DiskImage` and save the image file
 /// This will almost always be used if we are making permanent changes to a file system.
 pub fn update_img_and_save(img: &mut Box<dyn DiskImage>,disk: &Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
-    let temp_po = match disk.get_ordering() {
-        disk_base::DiskImageType::DO => {
-            let temp_do = img::dsk_do::DO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
-            temp_do.to_po().expect("unexpected file system metrics")
-        },
-        disk_base::DiskImageType::PO => disk.to_img(),
-        _ => panic!("unexpected ordering in file system layer")
-    };
-    match img.update_from_po(&temp_po) {
-        Ok(()) => {
-            std::fs::write(img_path,img.to_bytes()).expect("could not write disk image to disk");
+    match disk.get_ordering() {
+        disk_base::DiskImageType::D13 => {
+            let temp_d13 = img::dsk_d13::D13::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
+            img.update_from_d13(&temp_d13.to_bytes())?;
+            std::fs::write(img_path,img.to_bytes())?;
             Ok(())
         },
-        Err(e) => Err(e)
+        disk_base::DiskImageType::DO => {
+            let temp_do = img::dsk_do::DO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
+            img.update_from_do(&temp_do.to_bytes())?;
+            std::fs::write(img_path,img.to_bytes())?;
+            Ok(())
+        },
+        disk_base::DiskImageType::PO => {
+            let temp_po = img::dsk_po::PO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
+            img.update_from_po(&temp_po.to_bytes())?;
+            std::fs::write(img_path,img.to_bytes())?;
+            Ok(())
+        },
+        _ => panic!("DiskFS using unexpected image type")
     }
 }
 
 /// Return the file system on a disk image, or None if one cannot be found.
 fn try_img(img: &impl DiskImage) -> Option<Box<dyn DiskFS>> {
+    if let Ok(bytestream) = img.to_d13() {
+        if let Some(disk) = fs::dos33::Disk::from_img(&bytestream) {
+            info!("identified DOS 3.2 file system");
+            return Some(Box::new(disk));
+        }
+    }
     if let Ok(bytestream) = img.to_do() {
         if let Some(disk) = fs::dos33::Disk::from_img(&bytestream) {
             info!("identified DOS 3.3 file system");
@@ -111,6 +125,12 @@ pub fn create_img_and_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<(Box
             return Ok((Box::new(img),disk));
         }
     }
+    if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+        info!("Possible D13 image");
+        if let Some(disk) = try_img(&img) {
+            return Ok((Box::new(img),disk));
+        }
+    }
     if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
         info!("Possible DO image");
         if let Some(disk) = try_img(&img) {
@@ -123,6 +143,7 @@ pub fn create_img_and_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<(Box
             return Ok((Box::new(img),disk));
         }
     }
+    warn!("cannot match any file system");
     return Err(Box::new(CommandError::UnknownFormat));
 }
 
@@ -137,6 +158,10 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Dis
         info!("identified woz2 image");
         return Ok(Box::new(img));
     }
+    if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+        info!("Possible D13 image");
+        return Ok(Box::new(img));
+    }
     if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
         info!("Possible DO image");
         return Ok(Box::new(img));
@@ -145,6 +170,7 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Dis
         info!("Possible PO image");
         return Ok(Box::new(img));
     }
+    warn!("cannot match any image format");
     return Err(Box::new(CommandError::UnknownFormat));
 }
 
@@ -267,8 +293,8 @@ pub fn display_track(start_addr: u16,trk: &Vec<u8>) {
                     (0xff,0xff,_) => ">",
                     (_,0xff,0xff) => ">",
                     (_,0xd5,0xaa) => "(",
-                    (0xd5,0xaa,0x96) => "A",
-                    (0xaa,0x96,_) => {addr_count=1;":"},
+                    (0xd5,0xaa,0x96|0xb5) => "A",
+                    (0xaa,0x96|0xb5,_) => {addr_count=1;":"},
                     (0xd5,0xaa,0xad) => "D",
                     (0xaa,0xad,_) => ":",
                     (_,0xde,0xaa) => ":",
@@ -303,4 +329,65 @@ pub fn display_track(start_addr: u16,trk: &Vec<u8>) {
         println!();
         println!("Encountered {} invalid bytes",err_count);
     }
+}
+
+/// This takes any bytes and makes an ascii friendly string
+/// by using hex escapes, e.g., `\xFF`.
+/// if `escape_cc` is true, ascii control characters are also escaped.
+/// if `inverted` is true, assume we have negative ascii bytes.
+pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) -> String {
+    let mut result = String::new();
+    let (lb,ub) = match (escape_cc,inverted) {
+        (true,false) => (0x20,0x7e),
+        (false,false) => (0x00,0x7f),
+        (true,true) => (0xa0,0xfe),
+        (false,true) => (0x80,0xff)
+    };
+    for i in 0..bytes.len() {
+        if bytes[i]>=lb && bytes[i]<=ub {
+            result += std::str::from_utf8(&[bytes[i]-0x80]).expect("unreachable");
+        } else {
+            let mut temp = String::new();
+            write!(&mut temp,"\\x{:02X}",bytes[i]).expect("unreachable");
+            result += &temp;
+        }
+    }
+    return result;
+}
+
+/// Interpret a UTF8 string as pure ascii and put into bytes.
+/// Non-ascii characters are omitted from the result, but arbitrary
+/// bytes can be introduced using escapes, e.g., `\xFF`.
+/// if `inverted` is true the sign of the non-escaped bytes is flipped.
+pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
+    let mut ans: Vec<u8> = Vec::new();
+    let patt = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
+    let mut hexes = patt.find_iter(s);
+    let mut maybe_hex = hexes.next();
+    let mut curs = 0;
+    let mut skip = 0;
+    for c in s.chars() {
+    
+        if skip>0 {
+            skip -= 1;
+            continue;
+        }
+        if let Some(hex) = maybe_hex {
+            if curs==hex.start() {
+                ans.append(&mut hex::decode(s.get(curs+2..curs+4).unwrap()).expect("unreachable"));
+                curs += 4;
+                maybe_hex = hexes.next();
+                skip = 3;
+                continue;
+            }
+        }
+        
+        if c.is_ascii() {
+            let mut buf: [u8;1] = [0;1];
+            c.to_uppercase().next().unwrap().encode_utf8(&mut buf);
+            ans.push(buf[0] + match inverted { true => 128, false => 0 });
+        }
+        curs += 1;
+    }
+    return ans;
 }

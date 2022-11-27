@@ -40,6 +40,7 @@ pub enum DiskKind {
 
 #[derive(PartialEq,Clone,Copy)]
 pub enum DiskImageType {
+    D13,
     DO,
     PO,
     WOZ1,
@@ -86,6 +87,7 @@ impl FromStr for DiskImageType {
     type Err = CommandError;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
+            "d13" => Ok(Self::D13),
             "do" => Ok(Self::DO),
             "po" => Ok(Self::PO),
             "woz1" => Ok(Self::WOZ1),
@@ -130,14 +132,12 @@ pub trait TextEncoder {
 
 /// This is an abstraction of a sparse file and its metadata.
 /// Sequential files are a special case.
-/// Metadata: all fields encoded in a `u32` formed from little-endian interpretation of
-/// whatever byte sequence exists on disk.  `DiskFS` is responsible for encoding/decoding.
-/// The `u32` fields are converted to/from hex strings for external interactions.
-/// Data: quantized chunks of `u8`, all of the same length.
-/// A chunk could be a sector or block, depending on file system.
-/// The chunks can be partially filled, e.g., `desequence` will not pad the last chunk.
-/// This is essentially `Records`, but for raw bytes.  Text should already be
-/// properly encoded by the time it gets put into the chunks.
+/// Supports importing/exporting to an even more general JSON format.
+/// In the JSON format, all data is represented by hex strings directly taken from disk.
+/// Internally, `FileImage` encodes all metadata fields in a `u32` formed from the first four
+/// little-endian hex-bytes in the JSON. `DiskFS` is responsible for further interpretation.
+/// The data itself is in quantized chunks of `u8`, all of the same length.
+/// A chunk could be a sector or block, depending on the file system.
 pub struct FileImage {
     /// UTF8 string naming the file system
     pub file_system: String,
@@ -553,8 +553,10 @@ impl fmt::Display for Records {
 
 pub trait DiskImage {
     fn is_do_or_po(&self) -> bool { false }
+    fn update_from_d13(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
     fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
     fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
+    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn Error>>;
     fn to_do(&self) -> Result<Vec<u8>,Box<dyn Error>>;
     fn to_po(&self) -> Result<Vec<u8>,Box<dyn Error>>;
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;

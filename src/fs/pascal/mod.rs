@@ -252,7 +252,7 @@ impl Disk
         }
         return None;
     }
-
+    /// Format disk for the Pascal file system
     pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &disk_base::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);

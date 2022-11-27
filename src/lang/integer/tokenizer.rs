@@ -149,7 +149,11 @@ impl Tokenizer
 				}
 				if img[addr]<128 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
-						code += &(String::from(" ") + &tok.to_uppercase() + " ");
+						if tok.len()>1 {
+							code += &(String::from(" ") + &tok.to_uppercase() + " ");
+						} else {
+							code += &tok.to_uppercase();
+						}
 						addr += 1;
 					} else {
 						panic!("unrecognized integer BASIC token encountered");

@@ -102,17 +102,8 @@ impl FromStr for FileType {
     }
 }
 
-/// This is for convenience in testing.  Sometimes the emulator will pad the data with random bytes at the end.
-/// We need a way to append these bytes without changing the length calculation for comparisons.
-// fn append_junk(dat: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Vec<u8> {
-//     match trailing {
-//         Some(v) => [dat.clone(),v.clone()].concat(),
-//         None => dat.clone()
-//     }
-// }
-
-/// Pascal text is +ASCII, split into 1024 byte pages padded with nulls.
-/// Newline is 0x0d.
+/// Transforms between UTF8 and Pascal text.
+/// Pascal text is +ASCII, split into 1024 byte pages padded with nulls, with CR line separators.
 /// ASCII 0x10 indicates the next byte is an indentation count + 0x20.
 pub struct Encoder {
     line_terminator: Option<u8>

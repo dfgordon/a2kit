@@ -117,7 +117,7 @@ impl Disk {
         }
         return None;
     }
-
+    /// Format a disk with the ProDOS file system
     pub fn format(&mut self, vol_name: &str, floppy: bool, time: Option<chrono::NaiveDateTime>) {
         // make sure we start with all 0
         for iblock in 0..self.blocks.len() {

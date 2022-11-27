@@ -22,7 +22,7 @@ fn format() {
     // We are compatible with CiderPress.  The "last track" field in the VTOC
     // is left with value 18, *as if* a greeting program had been written there.
     let mut disk = dos33::Disk::new();
-    disk.format(254,true,18);
+    disk.init(254,true,18,35,16);
     disk.compare(&Path::new("tests").join("dos33-boot.do"),&disk.standardize(0));
 }
 
@@ -63,7 +63,7 @@ fn write_small() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file
     let mut disk = dos33::Disk::new();
-    disk.format(254,false,17);
+    disk.init33(254,false);
 
     // save the BASIC program
     let basic_program = "
@@ -97,7 +97,7 @@ fn write_small() {
 fn out_of_space() {
     let mut disk = dos33::Disk::new();
     let big: Vec<u8> = vec![0;0x7f00];
-    disk.format(254,true,17);
+    disk.init33(254,true);
     disk.bsave("f1",&big,0x800,None).expect("error");
     disk.bsave("f2",&big,0x800,None).expect("error");
     disk.bsave("f3",&big,0x800,None).expect("error");
@@ -162,7 +162,7 @@ fn write_big() {
     // This tests a small BASIC program, large binary, and two sparse text files
     let mut buf: Vec<u8>;
     let mut disk = dos33::Disk::new();
-    disk.format(254,false,17);
+    disk.init33(254,false);
 
     // create and save the BASIC program
     let basic_program = "
@@ -212,7 +212,7 @@ fn rename_delete() {
     // Adds deletion and renaming to scenario in `write_big`.
     let mut buf: Vec<u8>;
     let mut disk = dos33::Disk::new();
-    disk.format(254,true,18);
+    disk.init(254,true,18,35,16);
 
     // create and save the BASIC program
     let basic_program = "
