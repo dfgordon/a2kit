@@ -2,12 +2,10 @@
 use std::path::Path;
 use std::fmt::Write;
 use std::collections::HashMap;
-use a2kit::fs::{ChunkSpec,prodos};
+use a2kit::fs::{ChunkSpec,prodos,TextEncoder,DiskFS};
 use a2kit::fs::prodos::types::BLOCK_SIZE;
-use a2kit::img::{woz1,woz2};
-use a2kit::disk_base::TextEncoder;
 use a2kit::lang::applesoft;
-use a2kit::disk_base::{ItemType,DiskFS,DiskImage,DiskKind};
+use a2kit::commands::ItemType;
 use a2kit_macro::DiskStruct;
 
 pub const JSON_REC: &str = "
@@ -30,6 +28,14 @@ fn ignore_boot_blocks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
     }
 }
 
+fn get_tokens(filename: &str) -> Vec<u8> {
+    let basic_program = std::fs::read_to_string(&Path::new("tests").
+        join("disk_builders").
+        join(filename)).expect("failed to read source code");
+    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
+    return tokenizer.tokenize(&basic_program,2049);
+}
+
 #[test]
 fn format() {
     let img = a2kit::img::dsk_po::PO::create(280);
@@ -43,11 +49,14 @@ fn format() {
 fn create_dirs() {
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("DIRTEST"),true,None);
-    disk.create(&String::from("TEST")).expect("unreachable");
+    disk.format(&String::from("NEW.DISK"),true,None);
+    let mut tokens = get_tokens("build_dirs.bas");
+    tokens.push(0xc4); // Virtual II added an extra byte, why?
+    disk.save("hello",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
+    disk.create(&String::from("INNER.DIRS")).expect("unreachable");
     for i in 1..55 {
         let mut path = "".to_string();
-        write!(path,"TEST/T{}",i).expect("unreachable");
+        write!(path,"INNER.DIRS/DIR{}",i).expect("unreachable");
         disk.create(&path).expect("unreachable");
     }
     let ignore = disk.standardize(2);
@@ -56,22 +65,13 @@ fn create_dirs() {
 
 #[test]
 fn read_small() {
-    // Formatting: Copy2Plus, writing: MicroM8:
+    // Formatting: Copy2Plus, writing: Virtual II:
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.do")).expect("failed to read test image file");
     let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
 
     // check the BASIC program
-    let basic_program = "
-    10 D$ =  CHR$ (4)
-    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
-    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
-    40  PRINT D$;\"OPEN THETEXT\"
-    50  PRINT D$;\"WRITE THETEXT\"
-    60  PRINT \"HELLO FROM PRODOS\"
-    70  PRINT D$;\"CLOSE THETEXT\"";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
+    let mut lib_tokens = get_tokens("disk_builder.abas");
     lib_tokens.push(196);
     let disk_tokens = emulator_disk.load("hello").expect("error");
     assert_eq!(disk_tokens,(0,lib_tokens));
@@ -84,28 +84,19 @@ fn read_small() {
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
     let txt = prodos::types::SequentialText::from_bytes(&raw);
     let encoder = prodos::types::Encoder::new(Some(0x0d));
-    assert_eq!(txt.text,encoder.encode("HELLO FROM PRODOS").unwrap());
+    assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
 }
 
 #[test]
 fn write_small() {
-    // Formatting: Copy2Plus, writing: MicroM8:
+    // Formatting: Copy2Plus, writing: Virtual II:
     // This tests a small BASIC program, binary, and text file
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
     // save the BASIC program
-    let basic_program = "
-    10 D$ =  CHR$ (4)
-    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
-    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
-    40  PRINT D$;\"OPEN THETEXT\"
-    50  PRINT D$;\"WRITE THETEXT\"
-    60  PRINT \"HELLO FROM PRODOS\"
-    70  PRINT D$;\"CLOSE THETEXT\"";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
+    let mut lib_tokens = get_tokens("disk_builder.abas");
     lib_tokens.push(196);
     disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("error");
 
@@ -114,7 +105,7 @@ fn write_small() {
 
     // save the text
     let encoder = prodos::types::Encoder::new(Some(0x0d));
-    disk.write_text("thetext",&encoder.encode("HELLO FROM PRODOS").unwrap()).expect("error");
+    disk.write_text("thetext",&encoder.encode("HELLO FROM EMULATOR").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(2);
     ignore_boot_blocks(&mut ignore);
@@ -149,23 +140,8 @@ fn read_big() {
     let mut buf: Vec<u8>;
 
     // check the BASIC program, this is a seedling file
-    let basic_program = "
-    10 d$ = chr$(4)
-    20 print d$;\"open tree1,l128\"
-    30 print d$;\"write tree1,r2000\"
-    40 print \"HELLO FROM TREE 1\"
-    50 print d$;\"close tree1\"
-    60 print d$;\"open tree2,l127\"
-    70 print d$;\"write tree2,r2000\"
-    80 print \"HELLO FROM TREE 2\"
-    90 print d$;\"write tree2,r4000\"
-    100 print \"HELLO FROM TREE 2\"
-    110 print d$;\"close tree2\"
-    120 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
-    130 print d$;\"bsave sapling,a16384,l16384\"";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
-    let disk_tokens = emulator_disk.load("make.big").expect("error");
+    let mut lib_tokens = get_tokens("disk_builder.abas");
+    let disk_tokens = emulator_disk.load("hello").expect("error");
     lib_tokens.push(0xc4); // Virtual II added an extra byte, why?
     assert_eq!(disk_tokens,(0,lib_tokens));
 
@@ -196,30 +172,15 @@ fn write_big() {
     disk.format(&String::from("NEW.DISK"),true,None);
 
     // create and save the BASIC program, this is a seedling file
-    let basic_program = "
-    10 d$ = chr$(4)
-    20 print d$;\"open tree1,l128\"
-    30 print d$;\"write tree1,r2000\"
-    40 print \"HELLO FROM TREE 1\"
-    50 print d$;\"close tree1\"
-    60 print d$;\"open tree2,l127\"
-    70 print d$;\"write tree2,r2000\"
-    80 print \"HELLO FROM TREE 2\"
-    90 print d$;\"write tree2,r4000\"
-    100 print \"HELLO FROM TREE 2\"
-    110 print d$;\"close tree2\"
-    120 for i = 16384 to 32767: poke i,256*((i-16384)/256 - int((i-16384)/256)): next
-    130 print d$;\"bsave sapling,a16384,l16384\"";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut tokens = tokenizer.tokenize(basic_program,2049);
-    tokens.push(0xc4); // Virtual II added an extra byte, why?
-    disk.save("make.big",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
+    let mut lib_tokens = get_tokens("disk_builder.abas");
+    lib_tokens.push(0xc4); // Virtual II added an extra byte, why?
+    disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
 
     // make tree files using random access text module
-    let mut records = a2kit::disk_base::Records::new(128);
+    let mut records = a2kit::fs::Records::new(128);
     records.add_record(2000, "HELLO FROM TREE 1");
     disk.write_records("tree1", &records).expect("dimg error");
-    let records = a2kit::disk_base::Records::from_json(JSON_REC).expect("could not parse JSON");
+    let records = a2kit::fs::Records::from_json(JSON_REC).expect("could not parse JSON");
     disk.write_records("tree2", &records).expect("dimg error");
 
     // write a large binary, this is a non-sparse sapling
@@ -241,28 +202,9 @@ fn fill_dirs() {
     let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
-    let basic_program = "
-    10 D$ =  CHR$ (4)
-    20  PRINT D$;\"create inner.dirs\": PRINT D$;\"prefix /new.disk/inner.dirs\"
-    30  FOR I = 1 TO 54: PRINT D$;\"create dir\";I: NEXT 
-    40  FOR I = 1 TO 4: READ N
-    50  PRINT D$;\"prefix /new.disk/inner.dirs/dir\";N
-    60  PRINT D$;\"open tree,l127\"
-    70  PRINT D$;\"write tree,r4000\"
-    80  PRINT \"hello from tree\"
-    90  PRINT D$;\"close tree\"
-    100  NEXT 
-    110  PRINT \"DELETE AND RENAME? \";: GET A$: IF A$ <  > \"Y\" THEN  END 
-    120  PRINT D$;\"prefix /new.disk/inner.dirs\"
-    130  PRINT D$;\"delete dir1\"
-    140  PRINT D$;\"delete dir32/tree\"
-    150  PRINT D$;\"delete dir32\"
-    160  PRINT D$;\"rename dir53/tree,dir53/tree53\"
-    170  DATA 5,19,32,53";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut tokens = tokenizer.tokenize(basic_program,2049);
+    let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // extra and it was counted
-    disk.save("setup",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
+    disk.save("hello",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
 
     disk.create(&String::from("inner.dirs")).expect("unreachable");
     for i in 1..55 {
@@ -272,8 +214,8 @@ fn fill_dirs() {
     }
 
     // make tree files using random access text module
-    let mut records = a2kit::disk_base::Records::new(127);
-    records.add_record(4000, "hello from tree");
+    let mut records = a2kit::fs::Records::new(127);
+    records.add_record(4000, "HELLO FROM TREE");
 
     let n_set = [5,19,32,53];
     for n in n_set {
@@ -294,28 +236,9 @@ fn rename_delete() {
     let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
-    let basic_program = "
-    10 D$ =  CHR$ (4)
-    20  PRINT D$;\"create inner.dirs\": PRINT D$;\"prefix /new.disk/inner.dirs\"
-    30  FOR I = 1 TO 54: PRINT D$;\"create dir\";I: NEXT 
-    40  FOR I = 1 TO 4: READ N
-    50  PRINT D$;\"prefix /new.disk/inner.dirs/dir\";N
-    60  PRINT D$;\"open tree,l127\"
-    70  PRINT D$;\"write tree,r4000\"
-    80  PRINT \"hello from tree\"
-    90  PRINT D$;\"close tree\"
-    100  NEXT 
-    110  PRINT \"DELETE AND RENAME? \";: GET A$: IF A$ <  > \"Y\" THEN  END 
-    120  PRINT D$;\"prefix /new.disk/inner.dirs\"
-    130  PRINT D$;\"delete dir1\"
-    140  PRINT D$;\"delete dir32/tree\"
-    150  PRINT D$;\"delete dir32\"
-    160  PRINT D$;\"rename dir53/tree,dir53/tree53\"
-    170  DATA 5,19,32,53";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut tokens = tokenizer.tokenize(basic_program,2049);
+    let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // extra and it was counted
-    disk.save("setup",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
+    disk.save("hello",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
 
     disk.create(&String::from("inner.dirs")).expect("unreachable");
     for i in 1..55 {
@@ -325,8 +248,8 @@ fn rename_delete() {
     }
 
     // make tree files using random access text module
-    let mut records = a2kit::disk_base::Records::new(127);
-    records.add_record(4000, "hello from tree");
+    let mut records = a2kit::fs::Records::new(127);
+    records.add_record(4000, "HELLO FROM TREE");
 
     let n_set = [5,19,32,53];
     for n in n_set {
@@ -353,17 +276,7 @@ fn read_big_woz1() {
 
     let buf = Path::new("tests").join("prodos-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
-    let mut disk = a2kit::create_fs_from_file(woz1_path).expect("could not interpret image");
+    let disk = a2kit::create_fs_from_file(woz1_path).expect("could not interpret image");
     let ignore = disk.standardize(2);
-    // As usual we have mysterious trailing byte differences which seem to be a real artifact of the emulators.
-    // When VII saves the WOZ it does not have the trailing byte(s), using DSK in the exact same way does.
-    if let Ok((_x,mut dir_chunk)) = disk.read_chunk("2") {
-        dir_chunk[0x40] = 0x71;
-        disk.write_chunk("2",&dir_chunk).expect("could not apply chunk correction");
-    }
-    if let Ok((_x,mut dir_chunk)) = disk.read_chunk("7") {
-        dir_chunk[0x170] = 0xc4;
-        disk.write_chunk("7",&dir_chunk).expect("could not apply chunk correction");
-    }
     disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
 }

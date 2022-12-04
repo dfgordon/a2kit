@@ -2,7 +2,8 @@ use clap;
 use std::io::Write;
 use std::str::FromStr;
 use std::error::Error;
-use a2kit::disk_base::*;
+use super::{ItemType,CommandError};
+use crate::fs::DiskFS;
 
 const RCH: &str = "unreachable was reached";
 
@@ -18,8 +19,8 @@ fn output_get(
             if atty::is(atty::Stream::Stdout) {
                 match (maybe_typ,maybe_disk) {
                     (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
-                    (Ok(ItemType::Track),None) => a2kit::display_track(tuple.0,&object),
-                    _ => a2kit::display_chunk(tuple.0,&object)
+                    (Ok(ItemType::Track),None) => crate::display_track(tuple.0,&object),
+                    _ => crate::display_chunk(tuple.0,&object)
                 };
             } else {
                 match (maybe_typ,maybe_disk) {
@@ -50,7 +51,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
             // If getting a track, no need to resolve file system, handle differently
             match typ {
                 Ok(ItemType::Track) | Ok(ItemType::RawTrack) => {
-                    match a2kit::create_img_from_file(img_path) {
+                    match crate::create_img_from_file(img_path) {
                         Ok(img) => {
                             let maybe_object = match typ {
                                 Ok(ItemType::Track) => img.get_track_bytes(&src_path),
@@ -64,7 +65,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                 },
                 _ => {}
             }
-            match a2kit::create_fs_from_file(img_path) {
+            match crate::create_fs_from_file(img_path) {
                 Ok(disk) => {
                     // special handling for sparse data
                     if let Ok(ItemType::FileImage) = typ {

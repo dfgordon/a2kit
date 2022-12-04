@@ -5,7 +5,6 @@
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
 use log::trace;
-use crate::disk_base;
 use crate::img;
 use crate::fs::ChunkSpec;
 
@@ -38,7 +37,7 @@ impl DO {
     }
 }
 
-impl disk_base::DiskImage for DO {
+impl img::DiskImage for DO {
     fn track_count(&self) -> usize {
         return self.tracks as usize;
     }
@@ -108,8 +107,8 @@ impl disk_base::DiskImage for DO {
             data: data.clone()
         })
     }
-    fn what_am_i(&self) -> disk_base::DiskImageType {
-        disk_base::DiskImageType::DO
+    fn what_am_i(&self) -> img::DiskImageType {
+        img::DiskImageType::DO
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

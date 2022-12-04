@@ -5,16 +5,14 @@
 //! 
 //! ## Architecture
 //! 
-//! Disk image operations are built around three trait objects found in the `disk_base` module:
-//! * `DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
-//! * `DiskFS` imposes a file system on the already decoded track data
-//! * `FileImage` provides a representation of a file that can be restored to a disk image
+//! Disk image operations are built around three trait objects:
+//! * `img::DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
+//! * `fs::DiskFS` imposes a file system on the already decoded track data
+//! * `fs::FileImage` provides a representation of a file that can be restored to a disk image
 //! 
-//! Internally, the `DiskFS` object contains its own track data,
-//! but always in the `DSK` image format, with the sector order chosen to match the file system.
-//! Because the `DSK` format is at the heart of all file operations,
-//! the beginning and end of many workflows involves transforming between `DSK` and
-//! some other image format (including ordering variants of `DSK`)
+//! When a `DiskFS` object is created it takes ownership of some `DiskImage`.
+//! It then uses this owned image as storage.  The changes are not permanent until the
+//! image is saved to whatever file system is hosting a2kit.
 //! 
 //! Language services are built on tree-sitter parsers.  Generalized syntax checking is in `walker`.
 //! Specific language services are in modules named after the language, at present:
@@ -44,13 +42,13 @@
 
 pub mod fs;
 pub mod lang;
-pub mod disk_base;
 pub mod img;
+pub mod commands;
 
-use crate::disk_base::{DiskImage,DiskFS,CommandError};
+use img::DiskImage;
+use fs::DiskFS;
 use std::io::Read;
 use std::fmt::Write;
-use std::error::Error;
 use log::{warn,info};
 use regex::Regex;
 use hex;
@@ -64,9 +62,9 @@ pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn 
 /// Return the file system on a disk image, or None if one cannot be found.
 /// If found, the file system takes ownership of the disk image.
 fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
-    if fs::dos33::Disk::test_img(&img) {
+    if fs::dos3x::Disk::test_img(&img) {
         info!("identified DOS 3.x file system");
-        return Some(Box::new(fs::dos33::Disk::from_img(img)));
+        return Some(Box::new(fs::dos3x::Disk::from_img(img)));
     }
     if fs::prodos::Disk::test_img(&img) {
         info!("identified ProDOS file system");
@@ -80,7 +78,7 @@ fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
 }
 
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
-pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
     if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
         if let Some(disk) = try_img(Box::new(img)) {
@@ -112,12 +110,12 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Disk
         }
     }
     warn!("cannot match any file system");
-    return Err(Box::new(CommandError::UnknownFormat));
+    return Err(Box::new(fs::Error::FileSystemMismatch));
 }
 
 /// Given a bytestream return a disk image without any file system.
 /// N.b. the ordering cannot always be determined without the file system.
-pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskImage>,Box<dyn Error>> {
+pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskImage>,Box<dyn std::error::Error>> {
     if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
         return Ok(Box::new(img));
@@ -139,12 +137,12 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Dis
         return Ok(Box::new(img));
     }
     warn!("cannot match any image format");
-    return Err(Box::new(CommandError::UnknownFormat));
+    return Err(Box::new(img::Error::ImageTypeMismatch));
 }
 
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn Error>> {
+pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn std::error::Error>> {
     match std::fs::read(img_path) {
         Ok(disk_img_data) => create_img_from_bytestream(&disk_img_data),
         Err(e) => Err(Box::new(e))
@@ -152,7 +150,7 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn
 }
 
 /// Calls `create_fs_from_bytestream` getting the bytes from stdin
-pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
     let mut disk_img_data = Vec::new();
     match std::io::stdin().read_to_end(&mut disk_img_data) {
         Ok(_n) => create_fs_from_bytestream(&disk_img_data),
@@ -162,7 +160,7 @@ pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
 
 /// Calls `create_fs_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
+pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
     match std::fs::read(img_path) {
         Ok(disk_img_data) => create_fs_from_bytestream(&disk_img_data),
         Err(e) => Err(Box::new(e))

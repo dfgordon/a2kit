@@ -4,7 +4,6 @@
 //! If there are 13 sectors in physical order, we have a D13 variant.
 //! For D13 we refuse any alternative orderings.
 
-use crate::disk_base;
 use crate::img;
 use crate::fs::ChunkSpec;
 
@@ -31,7 +30,7 @@ impl D13 {
     }
 }
 
-impl disk_base::DiskImage for D13 {
+impl img::DiskImage for D13 {
     fn track_count(&self) -> usize {
         return self.tracks as usize;
     }
@@ -69,8 +68,8 @@ impl disk_base::DiskImage for D13 {
             data: data.clone()
         })
     }
-    fn what_am_i(&self) -> disk_base::DiskImageType {
-        disk_base::DiskImageType::D13
+    fn what_am_i(&self) -> img::DiskImageType {
+        img::DiskImageType::D13
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

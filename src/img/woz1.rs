@@ -4,7 +4,6 @@
 
 use log::info;
 use std::str::FromStr;
-use crate::disk_base;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -82,7 +81,7 @@ impl Header {
 }
 
 impl Info {
-    fn create(kind: disk_base::DiskKind) -> Self {
+    fn create(kind: img::DiskKind) -> Self {
 
         let creator_str = "a2kit v".to_string() + env!("CARGO_PKG_VERSION");
         let mut creator: [u8;32] = [0x20;32];
@@ -93,7 +92,7 @@ impl Info {
             id: u32::to_le_bytes(INFO_ID),
             size: u32::to_le_bytes(60),
             vers: 1,
-            disk_type: match kind { disk_base::DiskKind::A2_35 => 2, _ => 1 },
+            disk_type: match kind { img::DiskKind::A2_35 => 2, _ => 1 },
             write_protected: 0,
             synchronized: 0,
             cleaned: 0,
@@ -104,10 +103,10 @@ impl Info {
 }
 
 impl TMap {
-    fn create(kind: disk_base::DiskKind) -> Self {
+    fn create(kind: img::DiskKind) -> Self {
         let mut map: [u8;160] = [0xff;160];
         match kind {
-            disk_base::DiskKind::A2_35 => {
+            img::DiskKind::A2_35 => {
                 panic!("3.5 inch disk not supported");
             },
             _ => {
@@ -130,14 +129,14 @@ impl TMap {
 }
 
 impl Trk {
-    fn create(vol: u8,track: u8,kind: disk_base::DiskKind) -> Self {
+    fn create(vol: u8,track: u8,kind: img::DiskKind) -> Self {
         let padding_byte = 0x00;
         let mut bits: [u8;TRACK_BYTE_CAPACITY] = [padding_byte;TRACK_BYTE_CAPACITY];
         let mut track_obj = match kind {
-            disk_base::DiskKind::A2_525_13 => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
-            disk_base::DiskKind::A2_525_16 => disk525::create_std_track(vol,track,TRACK_BYTE_CAPACITY),
-            disk_base::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            disk_base::DiskKind::A2Max => panic!("HD not allowed")
+            img::DiskKind::A2_525_13 => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
+            img::DiskKind::A2_525_16 => disk525::create_std16_track(vol,track,TRACK_BYTE_CAPACITY),
+            img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
+            img::DiskKind::A2Max => panic!("HD not allowed")
         };
         track_obj.read(&mut bits,track_obj.bit_count());
         Self {
@@ -153,12 +152,12 @@ impl Trk {
 }
 
 impl Trks {
-    fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
+    fn create(vol: u8,kind: img::DiskKind) -> Self {
         let tracks: usize = match kind {
-            disk_base::DiskKind::A2_525_13 => 35,
-            disk_base::DiskKind::A2_525_16 => 35,
-            disk_base::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            disk_base::DiskKind::A2Max => panic!("HD not allowed")
+            img::DiskKind::A2_525_13 => 35,
+            img::DiskKind::A2_525_16 => 35,
+            img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
+            img::DiskKind::A2Max => panic!("HD not allowed")
         };
         let mut ans = Trks::new();
         ans.id = u32::to_le_bytes(TRKS_ID);
@@ -225,8 +224,8 @@ impl Woz1 {
             meta: None
         }
     }
-    pub fn create(vol: u8,kind: disk_base::DiskKind) -> Self {
-        if kind==disk_base::DiskKind::A2_35 || kind==disk_base::DiskKind::A2Max {
+    pub fn create(vol: u8,kind: img::DiskKind) -> Self {
+        if kind==img::DiskKind::A2_35 || kind==img::DiskKind::A2Max {
             panic!("only 5.25 disks allowed");
         }
         Self {
@@ -291,7 +290,7 @@ impl img::woz::WozConverter for Woz1 {
     }
 }
 
-impl disk_base::DiskImage for Woz1 {
+impl img::DiskImage for Woz1 {
     fn track_count(&self) -> usize {
         match self.info.disk_type {
             1 => 35,
@@ -304,8 +303,8 @@ impl disk_base::DiskImage for Woz1 {
             _ => panic!("disk type not supported")
         }
     }
-    fn what_am_i(&self) -> disk_base::DiskImageType {
-        disk_base::DiskImageType::WOZ1
+    fn what_am_i(&self) -> img::DiskImageType {
+        img::DiskImageType::WOZ1
     }
     fn read_chunk(&self,addr: crate::fs::ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         super::woz::read_chunk(self, addr)
@@ -363,7 +362,7 @@ impl disk_base::DiskImage for Woz1 {
                 Ok((0,track_obj.to_buffer()))
             },
             Err(e) => Err(Box::new(e)),
-            _ => Err(Box::new(disk_base::CommandError::OutOfRange))
+            _ => Err(Box::new(crate::commands::CommandError::OutOfRange))
         }
     }
     fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -383,7 +382,7 @@ impl disk_base::DiskImage for Woz1 {
                 Ok((0,ans))
             },
             Err(e) => Err(Box::new(e)),
-            _ => Err(Box::new(disk_base::CommandError::OutOfRange))
+            _ => Err(Box::new(crate::commands::CommandError::OutOfRange))
         }
     }
 }

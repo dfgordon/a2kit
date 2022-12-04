@@ -5,7 +5,7 @@ use thiserror::Error;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
-use crate::disk_base::TextEncoder;
+use super::super::TextEncoder;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const VOL_KEY_BLOCK: u16 = 2;
@@ -224,7 +224,7 @@ impl TextEncoder for Encoder {
 }
 
 /// Structured representation of sequential text files on disk.
-/// For random access text use `disk_base::Records` instead.
+/// For random access text use `fs::Records` instead.
 pub struct SequentialText {
     pub text: Vec<u8>,
     terminator: u8

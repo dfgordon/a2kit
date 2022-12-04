@@ -4,7 +4,6 @@
 //! If the sector sequence is ordered as in ProDOS, we have a PO variant.
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
-use crate::disk_base;
 use crate::img;
 use crate::fs::ChunkSpec;
 
@@ -31,7 +30,7 @@ impl PO {
     }
 }
 
-impl disk_base::DiskImage for PO {
+impl img::DiskImage for PO {
     fn track_count(&self) -> usize {
         return self.blocks as usize/8;
     }
@@ -78,8 +77,8 @@ impl disk_base::DiskImage for PO {
             data: data.clone()
         })
     }
-    fn what_am_i(&self) -> disk_base::DiskImageType {
-        disk_base::DiskImageType::PO
+    fn what_am_i(&self) -> img::DiskImageType {
+        img::DiskImageType::PO
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

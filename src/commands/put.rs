@@ -2,7 +2,8 @@ use clap;
 use std::io::Read;
 use std::str::FromStr;
 use std::error::Error;
-use a2kit::disk_base::*;
+use super::{ItemType,CommandError};
+use crate::fs::{Records,FileImage};
 
 const RCH: &str = "unreachable was reached";
 
@@ -34,7 +35,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                 },
                 _ => 768 as u16
             };
-            match a2kit::create_fs_from_file(img_path) {
+            match crate::create_fs_from_file(img_path) {
                 Ok(mut disk) => {
                     let result = match typ {
                         Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
@@ -78,7 +79,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                         }
                     };
                     return match result {
-                        Ok(_len) => a2kit::save_img(&mut disk,img_path),
+                        Ok(_len) => crate::save_img(&mut disk,img_path),
                         Err(e) => Err(e)
                     }
                 },

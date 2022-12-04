@@ -9,12 +9,12 @@
 
 use chrono::{Datelike,Timelike};
 use std::fmt;
-use crate::disk_base::FileImage;
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use regex::Regex;
 use colored::*;
 use super::types::*;
+use super::super::FileImage;
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.

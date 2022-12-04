@@ -65,7 +65,7 @@ pub struct SectorAddressFormat {
 }
 
 impl SectorAddressFormat {
-    pub fn create_std() -> Self {
+    pub fn create_std16() -> Self {
         Self {
             prolog: [0xd5,0xaa,0x96],
             epilog: [0xde,0xaa,0xeb],
@@ -147,7 +147,7 @@ impl TrackBits {
             panic!("buffer cannot hold requested bits");
         }
         Self {
-            adr_fmt: SectorAddressFormat::create_std(),
+            adr_fmt: SectorAddressFormat::create_std16(),
             dat_fmt: SectorDataFormat::create_std(),
             bit_count,
             bit_ptr: 0,
@@ -636,35 +636,35 @@ pub fn logical13_sector(physical_sector: u8) -> u8 {
     return log_sec[physical_sector as usize];
 }
 
-/// Get physical sector from DOS 3.3 logical sector
-pub fn physical_sector(logical_sector: u8) -> u8 {
-    let phys_sec: [u8;16] = [0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15];
-    return phys_sec[logical_sector as usize];
-}
-/// Get DOS 3.3 logical sector from physical sector
-pub fn logical_sector(physical_sector: u8) -> u8 {
-    let log_sec: [u8;16] = [0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15];
-    return log_sec[physical_sector as usize];
-}
+// /// Get physical sector from DOS 3.3 logical sector
+// pub fn physical_sector(logical_sector: u8) -> u8 {
+//     let phys_sec: [u8;16] = [0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15];
+//     return phys_sec[logical_sector as usize];
+// }
+// /// Get DOS 3.3 logical sector from physical sector
+// pub fn logical_sector(physical_sector: u8) -> u8 {
+//     let log_sec: [u8;16] = [0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15];
+//     return log_sec[physical_sector as usize];
+// }
 
-/// Get block number and byte offset into block corresponding to
-/// a given track and sector.  Returned in tuple (block,offset)
-pub fn block_from_ts(track: u8,sector: u8) -> (u8,usize) {
-    let block_offset: [u8;16] = [0,7,6,6,5,5,4,4,3,3,2,2,1,1,0,7];
-    let byte_offset: [usize;16] = [0,0,256,0,256,0,256,0,256,0,256,0,256,0,256,256];
-    return (8*track + block_offset[sector as usize], byte_offset[sector as usize]);
-}
+// /// Get block number and byte offset into block corresponding to
+// /// a given track and sector.  Returned in tuple (block,offset)
+// pub fn block_from_ts(track: u8,sector: u8) -> (u8,usize) {
+//     let block_offset: [u8;16] = [0,7,6,6,5,5,4,4,3,3,2,2,1,1,0,7];
+//     let byte_offset: [usize;16] = [0,0,256,0,256,0,256,0,256,0,256,0,256,0,256,256];
+//     return (8*track + block_offset[sector as usize], byte_offset[sector as usize]);
+// }
 
-/// Get the two track and sector pairs corresponding to a block.
-/// The returned tuple is arranged in order.
-pub fn ts_from_block(block: u16) -> ([u8;2],[u8;2]) {
-    let sector1: [u8;8] = [0,13,11,9,7,5,3,1];
-    let sector2: [u8;8] = [14,12,10,8,6,4,2,15];
-    return (
-        [(block/8) as u8, sector1[block as usize % 8]],
-        [(block/8) as u8, sector2[block as usize % 8]]
-    );
-}
+// /// Get the two track and sector pairs corresponding to a block.
+// /// The returned tuple is arranged in order.
+// pub fn ts_from_block(block: u16) -> ([u8;2],[u8;2]) {
+//     let sector1: [u8;8] = [0,13,11,9,7,5,3,1];
+//     let sector2: [u8;8] = [14,12,10,8,6,4,2,15];
+//     return (
+//         [(block/8) as u8, sector1[block as usize % 8]],
+//         [(block/8) as u8, sector2[block as usize % 8]]
+//     );
+// }
 
 /// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
 /// For 13 sector disks, data segments are filled with high bits.
@@ -714,9 +714,9 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.3 and ProDOS
-pub fn create_std_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
+pub fn create_std16_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
     debug!("create 16 sectors on track {}",track);
-    return create_track(vol,track,buf_len,SectorAddressFormat::create_std(),SectorDataFormat::create_std());
+    return create_track(vol,track,buf_len,SectorAddressFormat::create_std16(),SectorDataFormat::create_std());
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.0, 3.1, and 3.2

@@ -4,19 +4,19 @@
 //! More elaborate subcommands are in the `commands` module in the binary crate.
 //! All other modules are in the library crate.
 
-pub mod commands;
-
 use clap::{arg,Command,ArgAction};
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
-use a2kit::disk_base::*;
+use a2kit::commands;
+use a2kit::commands::{ItemType,CommandError};
 use a2kit::lang;
 use a2kit::lang::applesoft;
 use a2kit::lang::integer;
 use a2kit::lang::merlin;
+use a2kit::img::DiskImageType;
 
 const RCH: &str = "unreachable was reached";
 

@@ -34,12 +34,30 @@ fn invalid_file_type() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn catalog_dos32() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected = 
+r#"DISK VOLUME 254
+
+ I 004 HELLO
+ T 010 TREE1
+ T 019 TREE2
+ B 066 SAPLING"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("dos32-bigfiles.woz"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(expected));
+    Ok(())
+}
+
+#[test]
 fn catalog_dos33() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
 r#"DISK VOLUME 254
 
- A 003 MAKE.BIG
+ A 004 HELLO
  T 010 TREE1
  T 019 TREE2
  B 066 SAPLING"#;
@@ -59,12 +77,12 @@ r#".NEW.DISK
 
  NAME\s+TYPE\s+BLOCKS\s+MODIFIED\s+CREATED\s+ENDFILE\s+SUBTYPE
 
- MAKE.BIG\s+BAS\s+1.*368\s+2049
+ HELLO\s+BAS\s+3.*753\s+2049
  TREE1\s+TXT\s+5.*256018\s+128
  TREE2\s+TXT\s+7.*508018\s+127
  SAPLING\s+BIN\s+33.*16384\s+16384
 
-BLOCKS FREE: 227\s+BLOCKS USED: 53\s+TOTAL BLOCKS: 280"#;
+BLOCKS FREE: 225\s+BLOCKS USED: 55\s+TOTAL BLOCKS: 280"#;
     cmd.arg("catalog")
         .arg("-d").arg(Path::new("tests").join("prodos-bigfiles.woz"))
         .assert()

@@ -3,7 +3,7 @@ use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
-use crate::disk_base::TextEncoder;
+use super::TextEncoder;
 
 pub const VTOC_TRACK: u8 = 17;
 pub const MAX_DIRECTORY_REPS: usize = 100;
@@ -188,7 +188,7 @@ impl DiskStruct for TokenizedProgram {
 }
 
 /// Structured representation of sequential text files on disk.
-/// For random access text use `disk_base::Records` instead.
+/// For random access text use `fs::Records` instead.
 pub struct SequentialText {
     pub text: Vec<u8>,
     terminator: u8

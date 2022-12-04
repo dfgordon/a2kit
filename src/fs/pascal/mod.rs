@@ -15,10 +15,10 @@ use a2kit_macro::DiskStruct;
 use log::{info,debug,error};
 use num_traits::FromPrimitive;
 use types::*;
-use crate::disk_base;
-use super::ChunkSpec;
 use directory::*;
-use crate::create_fs_from_file;
+use super::ChunkSpec;
+use crate::img;
+use crate::commands::ItemType;
 
 fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
     let now = match time {
@@ -106,7 +106,7 @@ fn string_to_vol_name(s: &str) -> [u8;7] {
 
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
-fn get_directory(img: &Box<dyn disk_base::DiskImage>) -> Option<Directory> {
+fn get_directory(img: &Box<dyn img::DiskImage>) -> Option<Directory> {
     let mut ans = Directory::new();
     if let Ok(mut buf) = img.read_chunk(ChunkSpec::PO(VOL_HEADER_BLOCK)) {
         ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE].to_vec());
@@ -146,20 +146,20 @@ fn get_directory(img: &Box<dyn disk_base::DiskImage>) -> Option<Directory> {
 /// The primary interface for disk operations.
 pub struct Disk
 {
-    img: Box<dyn disk_base::DiskImage>
+    img: Box<dyn img::DiskImage>
 }
 
 impl Disk
 {
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
-    pub fn from_img(img: Box<dyn disk_base::DiskImage>) -> Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
         return Self {
             img
         }
     }
     /// Test an image for the Pascal file system.
-    pub fn test_img(img: &Box<dyn disk_base::DiskImage>) -> bool {
+    pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
         // test the volume directory header
         if let Some(directory) = get_directory(img) {
             let beg0 = u16::from_le_bytes(directory.header.begin_block);
@@ -323,14 +323,14 @@ impl Disk
     }
     /// Format disk for the Pascal file system
     /// TODO: why don't we put the DiskKind with the underlying image?
-    pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &disk_base::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
+    pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &img::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);
         }
         let num_blocks = match disk_kind {
-            disk_base::DiskKind::A2_525_16 => 280,
-            disk_base::DiskKind::A2_35 => 1600,
-            disk_base::DiskKind::A2Max => 65535,
+            img::DiskKind::A2_525_16 => 280,
+            img::DiskKind::A2_35 => 1600,
+            img::DiskKind::A2Max => 65535,
             _ => return Err(Error::NoDev)
         };
         // Zero boot and directory blocks
@@ -358,11 +358,11 @@ impl Disk
 
         // boot loader blocks
         match disk_kind {
-            disk_base::DiskKind::A2_525_16 => {
+            img::DiskKind::A2_525_16 => {
                 self.write_block(&boot::PASCAL_525_BLOCK0.to_vec(), 0, 0);
                 self.write_block(&boot::PASCAL_525_BLOCK1.to_vec(), 1, 0);
             },
-            disk_base::DiskKind::A2_35 => {
+            img::DiskKind::A2_35 => {
                 error!("unsupported disk type");
                 return Err(Error::NoDev)
             },
@@ -394,10 +394,10 @@ impl Disk
     /// Read any file into the sparse file format.  The fact that the Pascal FS does not
     /// have sparse files presents no difficulty, since `FileImage` is quite general.
     /// As usual we can use `FileImage::sequence` to make the result sequential.
-    fn read_file(&self,name: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
+    fn read_file(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         if let (Some(idx),dir) = self.get_file_entry(name) {
             let entry = &dir.entries[idx];
-            let mut ans = disk_base::FileImage::new(BLOCK_SIZE);
+            let mut ans = super::FileImage::new(BLOCK_SIZE);
             ans.file_system = String::from("a2 pascal");
             let mut buf = vec![0;BLOCK_SIZE];
             let mut count: usize = 0;
@@ -419,7 +419,7 @@ impl Disk
     /// Write any file using the sparse file format.  The caller must ensure that the
     /// chunks are sequential (Pascal only supports sequential data).  This is easy:
     /// use `FileImage::desequence` to put sequential data into the sparse file format.
-    fn write_file(&mut self,name: &str, dat: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_file(&mut self,name: &str, dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if !is_name_valid(name,false) {
             return Err(Box::new(Error::BadFormat));
         }
@@ -492,7 +492,7 @@ impl Disk
     }
 }
 
-impl disk_base::DiskFS for Disk {
+impl super::DiskFS for Disk {
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let dir = self.get_directory();
@@ -572,7 +572,7 @@ impl disk_base::DiskFS for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        let mut bin_file = disk_base::FileImage::desequence(BLOCK_SIZE,&padded);
+        let mut bin_file = super::FileImage::desequence(BLOCK_SIZE,&padded);
         bin_file.fs_type = FileType::from_str("bin").expect("unreachable") as u32;
         return self.write_file(name,&bin_file);
     }
@@ -580,7 +580,7 @@ impl disk_base::DiskFS for Disk {
         eprintln!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn save(&mut self,_name: &str, _dat: &Vec<u8>, _typ: disk_base::ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn save(&mut self,_name: &str, _dat: &Vec<u8>, _typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         eprintln!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
@@ -594,11 +594,11 @@ impl disk_base::DiskFS for Disk {
         eprintln!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn read_records(&self,_name: &str,_record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
+    fn read_records(&self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         eprintln!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn write_records(&mut self,_name: &str, _records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
         eprintln!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
@@ -627,10 +627,10 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,name: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         return self.read_file(name);
     }
-    fn write_any(&mut self,name: &str,dat: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_any(&mut self,name: &str,dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if dat.chunk_len as usize!=BLOCK_SIZE {
             eprintln!("chunk length {} is incompatible with Pascal",dat.chunk_len);
             return Err(Box::new(Error::DevErr));
@@ -670,7 +670,7 @@ impl disk_base::DiskFS for Disk {
         return ans;
     }
     fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
-        let mut emulator_disk = create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory();
         for block in 0..dir.total_blocks() {
             let addr = ChunkSpec::PO(block);
@@ -692,10 +692,10 @@ impl disk_base::DiskFS for Disk {
             }
         }
     }
-    fn get_ordering(&self) -> disk_base::DiskImageType {
-        return disk_base::DiskImageType::PO;
+    fn get_ordering(&self) -> img::DiskImageType {
+        return img::DiskImageType::PO;
     }
-    fn get_img(&mut self) -> &mut Box<dyn disk_base::DiskImage> {
+    fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
         &mut self.img
     }
 }

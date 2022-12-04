@@ -15,15 +15,14 @@ use colored::*;
 use log::{trace,debug};
 use types::*;
 use directory::*;
-use crate::disk_base;
-use crate::disk_base::TextEncoder;
-use super::ChunkSpec;
+use super::{ChunkSpec,TextEncoder};
 use crate::lang::applesoft;
-use crate::create_fs_from_file;
+use crate::img;
+use crate::commands::ItemType;
 
 /// The primary interface for disk operations.
 pub struct Disk {
-    img: Box<dyn disk_base::DiskImage>,
+    img: Box<dyn img::DiskImage>,
     total_blocks: usize
 }
 
@@ -38,7 +37,7 @@ impl Disk {
     /// Use the given image as storage for a new DiskFS.
     /// The DiskFS takes ownership of the image.
     /// The image may or may not be formatted.
-    pub fn from_img(img: Box<dyn disk_base::DiskImage>) -> Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
         let total_blocks = img.byte_capacity()/512;
         return Self {
             img,
@@ -46,7 +45,7 @@ impl Disk {
         }
     }
     /// Test an image for the ProDOS file system.
-    pub fn test_img(img: &Box<dyn disk_base::DiskImage>) -> bool {
+    pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
         // test the volume directory header to see if this is ProDOS
         if let Ok(buf) = img.read_chunk(ChunkSpec::PO(2)) {
             let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
@@ -403,7 +402,7 @@ impl Disk {
         return Err(Error::PathNotFound);
     }
     /// Read the data referenced by a single index block
-    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,fimg: &mut disk_base::FileImage,count: &mut usize,eof: &mut usize) {
+    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,fimg: &mut super::FileImage,count: &mut usize,eof: &mut usize) {
         self.read_block(buf,index_ptr as usize,0);
         let index_block = buf.clone();
         for idx in 0..256 {
@@ -465,8 +464,8 @@ impl Disk {
     }
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,entry: &Entry) -> disk_base::FileImage {
-        let mut fimg = disk_base::FileImage::new(512);
+    fn read_file(&self,entry: &Entry) -> super::FileImage {
+        let mut fimg = super::FileImage::new(512);
         fimg.file_system = String::from("a2 prodos");
         entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
@@ -538,7 +537,7 @@ impl Disk {
     /// The entry must already exist and point to the next available block.
     /// The creator of `FileImage` must ensure that the first block is allocated.
     /// This writes blocks more often than necessary, would be inadequate for an actual disk.
-    fn write_file(&mut self,loc: EntryLocation,fimg: &disk_base::FileImage) -> Result<usize,Error> {
+    fn write_file(&mut self,loc: EntryLocation,fimg: &super::FileImage) -> Result<usize,Error> {
         let mut storage = StorageType::Seedling;
         let mut master_buf: Vec<u8> = vec![0;512];
         let mut master_ptr: u16 = 0;
@@ -731,7 +730,7 @@ impl Disk {
     }
 }
 
-impl disk_base::DiskFS for Disk {
+impl super::DiskFS for Disk {
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_dir_key_block(path) {
             Ok(b) => {
@@ -887,7 +886,7 @@ impl disk_base::DiskFS for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, &padded);
+        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, &padded);
         fimg.fs_type = FileType::Binary as u32;
         fimg.aux = start_addr as u32;
         return self.write_any(path,&fimg);
@@ -902,16 +901,16 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: disk_base::ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
-        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, dat);
+    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
         match typ {
-            disk_base::ItemType::ApplesoftTokens => {
+            ItemType::ApplesoftTokens => {
                 let addr = applesoft::deduce_address(dat);
                 fimg.fs_type = FileType::ApplesoftCode as u32;
                 fimg.aux = addr as u32;
                 debug!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
             },
-            disk_base::ItemType::IntegerTokens => {
+            ItemType::IntegerTokens => {
                 fimg.fs_type = FileType::IntegerCode as u32;
             }
             _ => return Err(Box::new(Error::FileTypeMismatch))
@@ -929,17 +928,17 @@ impl disk_base::DiskFS for Disk {
         }
     }
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        let mut fimg = disk_base::FileImage::desequence(BLOCK_SIZE, dat);
+        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
         fimg.fs_type = FileType::Text as u32;
         return self.write_any(path,&fimg);
     }
-    fn read_records(&self,path: &str,_record_length: usize) -> Result<disk_base::Records,Box<dyn std::error::Error>> {
+    fn read_records(&self,path: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let fimg = self.read_file(&entry);
-                match disk_base::Records::from_fimg(&fimg,entry.aux() as usize,encoder) {
+                match super::Records::from_fimg(&fimg,entry.aux() as usize,encoder) {
                     Ok(ans) => Ok(ans),
                     Err(e) => Err(e)
                 }
@@ -947,7 +946,7 @@ impl disk_base::DiskFS for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn write_records(&mut self,path: &str, records: &disk_base::Records) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_records(&mut self,path: &str, records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(Some(0x0d));
         if let Ok(fimg) = records.to_fimg(BLOCK_SIZE,FileType::Text as u32,true,encoder) {
             return self.write_any(path,&fimg);
@@ -980,7 +979,7 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,path: &str) -> Result<disk_base::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&self,path: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -989,7 +988,7 @@ impl disk_base::DiskFS for Disk {
             Err(e) => return Err(Box::new(e))
         }
     }
-    fn write_any(&mut self,path: &str,fimg: &disk_base::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if fimg.chunk_len!=512 {
             eprintln!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
@@ -1047,7 +1046,7 @@ impl disk_base::DiskFS for Disk {
         return ans;
     }
     fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
-        let mut emulator_disk = create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory(VOL_KEY_BLOCK as usize);
         for block in 0..dir.total_blocks().unwrap() {
             let addr = ChunkSpec::PO(block);
@@ -1069,10 +1068,10 @@ impl disk_base::DiskFS for Disk {
             }
         }
     }
-    fn get_ordering(&self) -> disk_base::DiskImageType {
-        return disk_base::DiskImageType::PO;
+    fn get_ordering(&self) -> img::DiskImageType {
+        return img::DiskImageType::PO;
     }
-    fn get_img(&mut self) -> &mut Box<dyn disk_base::DiskImage> {
+    fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
         &mut self.img
     }
 }

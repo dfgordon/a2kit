@@ -4,11 +4,10 @@ use std::str::FromStr;
 use std::error::Error;
 use std::num::ParseIntError;
 use log::info;
-use a2kit::disk_base::*;
-use a2kit::fs::dos33;
-use a2kit::fs::prodos;
-use a2kit::fs::pascal;
-use a2kit::img;
+use crate::fs::{DiskFS,dos3x,prodos,pascal};
+use crate::img;
+use crate::img::{DiskKind,DiskImage,DiskImageType};
+use super::CommandError;
 
 const RCH: &str = "unreachable was reached";
 
@@ -47,7 +46,7 @@ fn mkdos3x(vol: Result<u8,ParseIntError>,boot: bool,blocks: u16,img: Box<dyn Dis
                 eprintln!("we can only add the boot tracks if volume number is 254");
                 return Err(Box::new(CommandError::UnsupportedItemType));
             }
-            let mut disk = Box::new(dos33::Disk::from_img(img));
+            let mut disk = Box::new(dos3x::Disk::from_img(img));
             if blocks==228 {
                 disk.init32(v,boot);
             } else {

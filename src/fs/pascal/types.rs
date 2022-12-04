@@ -3,7 +3,7 @@ use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
-use crate::disk_base::TextEncoder;
+use super::super::TextEncoder;
 use log::debug;
 
 pub const BLOCK_SIZE: usize = 512;
