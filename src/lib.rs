@@ -55,92 +55,60 @@ use log::{warn,info};
 use regex::Regex;
 use hex;
 
-/// Use the sectors on an `DiskFS` to update the sectors on a `DiskImage` and save the image file
-/// This will almost always be used if we are making permanent changes to a file system.
-pub fn update_img_and_save(img: &mut Box<dyn DiskImage>,disk: &Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
-    match disk.get_ordering() {
-        disk_base::DiskImageType::D13 => {
-            let temp_d13 = img::dsk_d13::D13::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
-            img.update_from_d13(&temp_d13.to_bytes())?;
-            std::fs::write(img_path,img.to_bytes())?;
-            Ok(())
-        },
-        disk_base::DiskImageType::DO => {
-            let temp_do = img::dsk_do::DO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
-            img.update_from_do(&temp_do.to_bytes())?;
-            std::fs::write(img_path,img.to_bytes())?;
-            Ok(())
-        },
-        disk_base::DiskImageType::PO => {
-            let temp_po = img::dsk_po::PO::from_bytes(&disk.to_img()).expect("unexpected file system metrics");
-            img.update_from_po(&temp_po.to_bytes())?;
-            std::fs::write(img_path,img.to_bytes())?;
-            Ok(())
-        },
-        _ => panic!("DiskFS using unexpected image type")
-    }
+/// Save the image file (make changes permanent)
+pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    std::fs::write(img_path,disk.get_img().to_bytes())?;
+    Ok(())
 }
 
 /// Return the file system on a disk image, or None if one cannot be found.
-fn try_img(img: &impl DiskImage) -> Option<Box<dyn DiskFS>> {
-    if let Ok(bytestream) = img.to_d13() {
-        if let Some(disk) = fs::dos33::Disk::from_img(&bytestream) {
-            info!("identified DOS 3.2 file system");
-            return Some(Box::new(disk));
-        }
+/// If found, the file system takes ownership of the disk image.
+fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
+    if fs::dos33::Disk::test_img(&img) {
+        info!("identified DOS 3.x file system");
+        return Some(Box::new(fs::dos33::Disk::from_img(img)));
     }
-    if let Ok(bytestream) = img.to_do() {
-        if let Some(disk) = fs::dos33::Disk::from_img(&bytestream) {
-            info!("identified DOS 3.3 file system");
-            return Some(Box::new(disk));
-        }
+    if fs::prodos::Disk::test_img(&img) {
+        info!("identified ProDOS file system");
+        return Some(Box::new(fs::prodos::Disk::from_img(img)));
     }
-    if let Ok(bytestream) = img.to_po() {
-        if let Some(disk) = fs::prodos::Disk::from_img(&bytestream) {
-            info!("identified ProDOS file system");
-            return Some(Box::new(disk));
-        }
-        if let Some(disk) = fs::pascal::Disk::from_img(&bytestream) {
-            info!("identified Pascal file system");
-            return Some(Box::new(disk));
-        }
-   }
+    if fs::pascal::Disk::test_img(&img) {
+        info!("identified Pascal file system");
+        return Some(Box::new(fs::pascal::Disk::from_img(img)));
+    }
    return None;
 }
 
-/// Given a bytestream return a tuple with (DiskImage, DiskFS), or Err if the bytestream cannot be interpreted.
-/// DiskImage is the disk structure and data, DiskFS is a higher level representation including a file system (e.g. DOS).
-/// Manipulation of files that may be on the image is done via the DiskFS object.
-/// The changes are only permanent if they are written back to the DiskImage, and explicitly saved to local storage.
-pub fn create_img_and_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<(Box<dyn DiskImage>,Box<dyn DiskFS>),Box<dyn Error>> {
+/// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
     if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
-        if let Some(disk) = try_img(&img) {
-            return Ok((Box::new(img),disk));
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
         }
     }
     if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
         info!("identified woz2 image");
-        if let Some(disk) = try_img(&img) {
-            return Ok((Box::new(img),disk));
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
         }
     }
     if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
         info!("Possible D13 image");
-        if let Some(disk) = try_img(&img) {
-            return Ok((Box::new(img),disk));
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
         }
     }
     if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
         info!("Possible DO image");
-        if let Some(disk) = try_img(&img) {
-            return Ok((Box::new(img),disk));
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
         }
     }
     if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
         info!("Possible PO image");
-        if let Some(disk) = try_img(&img) {
-            return Ok((Box::new(img),disk));
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
         }
     }
     warn!("cannot match any file system");
@@ -180,24 +148,6 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn
     match std::fs::read(img_path) {
         Ok(disk_img_data) => create_img_from_bytestream(&disk_img_data),
         Err(e) => Err(Box::new(e))
-    }
-}
-
-/// Calls `create_img_and_fs_from_bytestream` getting the bytes from a file.
-/// The pathname must already be in the right format for the file system.
-pub fn create_img_and_fs_from_file(img_path: &str) -> Result<(Box<dyn DiskImage>,Box<dyn DiskFS>),Box<dyn Error>> {
-    match std::fs::read(img_path) {
-        Ok(disk_img_data) => create_img_and_fs_from_bytestream(&disk_img_data),
-        Err(e) => Err(Box::new(e))
-    }
-}
-
-/// Given a bytestream try to identify the type of disk image and create a file system object.
-/// N.b. this discards metadata and track layout details, only the high level data remains.
-pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn Error>> {
-    match create_img_and_fs_from_bytestream(disk_img_data) {
-        Ok((_img,disk)) => Ok(disk),
-        Err(e) => Err(e)
     }
 }
 

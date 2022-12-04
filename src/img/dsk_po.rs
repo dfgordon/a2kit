@@ -3,11 +3,10 @@
 //! DSK images are a simple sequential dump of the already-decoded sector data.
 //! If the sector sequence is ordered as in ProDOS, we have a PO variant.
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
-//! Since the file system layer works directly with either DO or PO images,
-//! all this module has to do is reordering and verifications.
 
 use crate::disk_base;
 use crate::img;
+use crate::fs::ChunkSpec;
 
 const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
@@ -19,7 +18,56 @@ pub struct PO {
     data: Vec<u8>
 }
 
+impl PO {
+    pub fn create(blocks: u16) -> Self {
+        let mut data: Vec<u8> = Vec::new();
+        for _i in 0..blocks as usize {
+            data.append(&mut [0;BLOCK_SIZE].to_vec());
+        }
+        Self {
+            blocks,
+            data
+        }
+    }
+}
+
 impl disk_base::DiskImage for PO {
+    fn track_count(&self) -> usize {
+        return self.blocks as usize/8;
+    }
+    fn byte_capacity(&self) -> usize {
+        return self.data.len();
+    }
+    fn read_chunk(&self,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        match addr {
+            ChunkSpec::PO(block) => Ok(self.data[block*BLOCK_SIZE..(block+1)*BLOCK_SIZE].to_vec()),
+            ChunkSpec::DO([t,s]) => {
+                let (block,offset) = crate::fs::block_from_ts(t, s);
+                let beg = block*BLOCK_SIZE + offset;
+                Ok(self.data[beg..beg+256].to_vec())
+            }
+            _ => Err(Box::new(img::Error::ImageTypeMismatch))
+        }
+    }
+    fn write_chunk(&mut self, addr: ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        match addr {
+            ChunkSpec::PO(block) => {
+                for i in 0..dat.len() {
+                    self.data[block*BLOCK_SIZE+i] = dat[i];
+                }
+                Ok(())
+            },
+            ChunkSpec::DO([t,s]) => {
+                let (block,offset) = crate::fs::block_from_ts(t, s);
+                let beg = block*BLOCK_SIZE + offset;
+                for i in 0..dat.len() {
+                    self.data[beg+i] = dat[i];
+                }
+                Ok(())
+            }
+            _ => Err(Box::new(img::Error::ImageTypeMismatch))
+        }
+    }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
         // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
         if data.len()%BLOCK_SIZE > 0 || data.len()/BLOCK_SIZE > MAX_BLOCKS || data.len()/BLOCK_SIZE < MIN_BLOCKS {
@@ -30,36 +78,8 @@ impl disk_base::DiskImage for PO {
             data: data.clone()
         })
     }
-    fn is_do_or_po(&self) -> bool {
-        true
-    }
-    fn update_from_d13(&mut self,_dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));
-    }
-    fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        if self.data.len()!=dsk.len() || self.blocks%8>0 {
-            return Err(Box::new(img::Error::ImageSizeMismatch));
-        }
-        return self.update_from_po(&img::reorder_do_to_po(&dsk, 16));
-    }
-    fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        if self.data.len()!=dsk.len() {
-            return Err(Box::new(img::Error::ImageSizeMismatch));
-        }
-        self.data = dsk.clone();
-        return Ok(());
-    }
-    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));        
-    }
-    fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        if self.data.len()!=self.blocks as usize * BLOCK_SIZE || self.blocks%8>0  {
-            return Err(Box::new(img::Error::ImageSizeMismatch));
-        }
-        return Ok(img::reorder_po_to_do(&self.data, 16));
-    }
-    fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Ok(self.data.clone());
+    fn what_am_i(&self) -> disk_base::DiskImageType {
+        disk_base::DiskImageType::PO
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

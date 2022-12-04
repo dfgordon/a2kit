@@ -1,12 +1,10 @@
 //! # Low level treatment of 5.25 inch floppy disks
 //! 
 //! This handles the detailed track layout of a real floppy disk.
-//! This module is only needed at the disk image implementation level.
-//! At the file system implementation level we use higher level representations.
 //! Acknowledgment: some of this module is adapted from CiderPress.
 
 use thiserror;
-use log::{info,error};
+use log::{debug,trace,warn};
 
 const INVALID_NIB_BYTE: u8 = 0xff;
 const CHUNK53: usize = 0x33;
@@ -54,14 +52,6 @@ enum NibbleType {
     Enc62
 }
 
-/// Enumeration of a few specialized nibble formats
-#[derive(PartialEq)]
-pub enum NibbleSpecial {
-    None,
-    Muse,
-    SkipFirstAddrByte
-}
-
 /// How to find and read the sector address fields
 #[derive(Clone,Copy)]
 pub struct SectorAddressFormat {
@@ -70,7 +60,8 @@ pub struct SectorAddressFormat {
     chk_seed: u8,
     verify_chk: bool,
     verify_track: bool,
-    verify_epilog_count: usize
+    prolog_mask: [u8;3],
+    epilog_mask: [u8;3]
 }
 
 impl SectorAddressFormat {
@@ -81,7 +72,8 @@ impl SectorAddressFormat {
             chk_seed: 0x00,
             verify_chk: true,
             verify_track: true,
-            verify_epilog_count: 2
+            prolog_mask: [0xff,0xff,0xff],
+            epilog_mask: [0xff,0xff,0x00]
         }
     }
     pub fn create_std13() -> Self {
@@ -91,7 +83,8 @@ impl SectorAddressFormat {
             chk_seed: 0x00,
             verify_chk: true,
             verify_track: true,
-            verify_epilog_count: 2
+            prolog_mask: [0xff,0xff,0xff],
+            epilog_mask: [0xff,0xff,0x00]
         }
     }
 }
@@ -103,7 +96,9 @@ pub struct SectorDataFormat {
     epilog: [u8;3],
     chk_seed: u8,
     verify_chk: bool,
-    nib: NibbleType
+    nib: NibbleType,
+    prolog_mask: [u8;3],
+    epilog_mask: [u8;3]
 }
 
 impl SectorDataFormat {
@@ -113,7 +108,9 @@ impl SectorDataFormat {
             epilog: [0xde,0xaa,0xeb],
             chk_seed: 0x00,
             verify_chk: true,
-            nib: NibbleType::Enc62
+            nib: NibbleType::Enc62,
+            prolog_mask: [0xff,0xff,0xff],
+            epilog_mask: [0xff,0xff,0x00]
         }
     }
     pub fn create_std13() -> Self {
@@ -122,7 +119,9 @@ impl SectorDataFormat {
             epilog: [0xde,0xaa,0xeb],
             chk_seed: 0x00,
             verify_chk: true,
-            nib: NibbleType::Enc53
+            nib: NibbleType::Enc53,
+            prolog_mask: [0xff,0xff,0xff],
+            epilog_mask: [0xff,0xff,0x00]
         }
     }
 }
@@ -136,7 +135,6 @@ impl SectorDataFormat {
 pub struct TrackBits {
     adr_fmt: SectorAddressFormat,
     dat_fmt: SectorDataFormat,
-    special: NibbleSpecial,
     bit_count: usize,
     bit_ptr: usize,
     buf: Vec<u8>
@@ -151,7 +149,6 @@ impl TrackBits {
         Self {
             adr_fmt: SectorAddressFormat::create_std(),
             dat_fmt: SectorDataFormat::create_std(),
-            special: NibbleSpecial::None,
             bit_count,
             bit_ptr: 0,
             buf
@@ -160,10 +157,9 @@ impl TrackBits {
     /// Change the formatting protocol (but not the actual format).
     /// This is used when we are given track bits but don't yet know the format.
     /// One may then try a strategy of supposing various formats in sequence until the track is successfully decoded.
-    pub fn set_format_protocol(&mut self,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat,special: NibbleSpecial) {
+    pub fn set_format_protocol(&mut self,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) {
         self.adr_fmt = adr_fmt;
         self.dat_fmt = dat_fmt;
-        self.special = special;
     }
     /// Length of the track buffer in bytes
     pub fn len(&self) -> usize {
@@ -269,18 +265,25 @@ impl TrackBits {
             decode_44([buf[6],buf[7]])
         );
     }
-    /// Collect bytes through the soft latch until a given pattern is matched.
+    /// Collect bytes through the soft latch until a given pattern is matched, or `cap` bytes have been collected.
+    /// Low bits in `mask` will cause corresponding bits in `patt` to automatically match.
+    /// If `cap` is `None` the entire track will be searched.  `mask` must be as long as `patt`.
     /// If pattern is found return the number of bits by which pointer advanced, otherwise return None.
-    fn find_byte_pattern(&mut self,patt: &Vec<u8>) -> Option<usize> {
+    fn find_byte_pattern(&mut self,patt: &[u8],mask: &[u8],cap: Option<usize>) -> Option<usize> {
         if patt.len()==0 {
             return Some(0);
         }
         let mut bit_count: usize = 0;
         let mut matches = 0;
         let mut test_byte: [u8;1] = [0;1];
-        for _tries in 0..self.buf.len() {
+        for tries in 0..self.buf.len() {
+            if let Some(max) = cap {
+                if tries>=max {
+                    return None;
+                }
+            }
             bit_count += self.read_latch(&mut test_byte,1);
-            if test_byte[0]==patt[matches] {
+            if test_byte[0] & mask[matches] == patt[matches] & mask[matches] {
                 matches += 1;
             } else {
                 matches = 0;
@@ -291,60 +294,47 @@ impl TrackBits {
         }
         return None;
     }
-    /// Advance the bit pointer to the sector data, and return the volume, or an error.
-    /// This accounts for a couple special format variants per the `special` argument.
-    fn find_sector_data(&mut self,ts: [u8;2]) -> Result<u8,NibbleError> {
-        // Set up the search patterns
-        let adr_prolog = match self.special {
-            NibbleSpecial::SkipFirstAddrByte => self.adr_fmt.prolog[1..3].to_vec(),
-            _ => self.adr_fmt.prolog.to_vec()
-        };
-        let adr_epilog = self.adr_fmt.epilog[0..self.adr_fmt.verify_epilog_count].to_vec();
+    /// Find the sector as identified by the track's address field value.
+    /// Advance the bit pointer to the end of the address epilog, and return the volume number, or an error.
+    /// We do not go looking for the data prolog at this stage, because it may not exist.
+    /// E.g., DOS 3.2 `INIT` will not write any data fields outside of the boot tracks.
+    fn find_sector(&mut self,ts: [u8;2]) -> Result<u8,NibbleError> {
+        // Copy search patterns
+        let adr_pro = self.adr_fmt.prolog.clone();
+        let adr_pro_mask = self.adr_fmt.prolog_mask.clone();
+        let adr_epi = self.adr_fmt.epilog.clone();
+        let adr_epi_mask = self.adr_fmt.epilog_mask.clone();
         // Loop over attempts to read a sector
         for _try in 0..32 {
-            if let Some(_shift) = self.find_byte_pattern(&adr_prolog) {
-                let (vol,track,mut sector,chksum) = self.decode_addr();
+            if let Some(_shift) = self.find_byte_pattern(&adr_pro,&adr_pro_mask,None) {
+                let (vol,track,sector,chksum) = self.decode_addr();
                 let chk = self.adr_fmt.chk_seed ^ vol ^ track ^ sector ^ chksum;
                 if self.adr_fmt.verify_track && track!=ts[0] {
-                    info!("track mismatch (want {}, got {})",ts[0],track);
+                    warn!("track mismatch (want {}, got {})",ts[0],track);
                     continue;
                 }
                 if self.adr_fmt.verify_chk && chk != 0 {
-                    info!("checksum nonzero ({})",chk);
+                    warn!("checksum nonzero ({})",chk);
                     continue;
                 }
-                if self.find_byte_pattern(&adr_epilog)==None {
-                    info!("missed address epilog");
+                if self.find_byte_pattern(&adr_epi,&adr_epi_mask,Some(10))==None {
+                    warn!("missed address epilog");
                     continue;
                 }
                 // we have a good header
-                if self.special==NibbleSpecial::Muse {
-                    // e.g. original Castle Wolfenstein
-                    if ts[0] > 2 {
-                        if (sector & 0x01) != 0 {
-                            info!("skipping per Muse special case");
-                            continue;
-                        }
-                        sector /= 2;
-                    }
-                }
                 if ts[1] != sector {
-                    //info!("skip sector {}, wait for {},{}",sector,ts[0],ts[1]);
+                    trace!("skip sector {}, wait for {},{}",sector,ts[0],ts[1]);
                     continue;
                 }
-                if let Some(_shift) = self.find_byte_pattern(&self.dat_fmt.prolog.to_vec()) {
-                    //info!("data field found");
-                    return Ok(vol);
-                } else {
-                    return Err(NibbleError::BitPatternNotFound);
-                }
+                return Ok(vol);
             } else {
-                // After circumnavigating the whole track, no prolog ever found
-                return Err(NibbleError::BitPatternNotFound);
+                debug!("no address prolog found on track");
+                return Err(NibbleError::BadTrack);
             }
         }
-        // We tried as many times as there could be sectors, must be a bad track
-        return Err(NibbleError::BadTrack);
+        // We tried as many times as there could be sectors, sector is missing
+        debug!("the sector address was never matched");
+        return Err(NibbleError::SectorNotFound);
     }
     /// Assuming the bit pointer is at sector data, write a 5-3 encoded sector
     /// Should be called only by encode_sector.
@@ -422,14 +412,25 @@ impl TrackBits {
         // now copy the bits into the track from the backing buffer
         self.write(&bak_buf,343*8);
     }
-    /// Encode the sector using the scheme for this track.
-    /// Assumes bit pointer is already at start of sector data.
+    /// This writes sync bytes, prolog, data, and epilog.
+    /// Assumes bit pointer is at the end of the address epilog.
     /// This function is allowed to panic.
     fn encode_sector(&mut self,dat: &Vec<u8>) {
-        match self.dat_fmt.nib {
+        let dat_fmt = self.dat_fmt;
+        match dat_fmt.nib {
             NibbleType::Enc44 => panic!("only 5-3 or 6-2 nibbles allowed in data"),
-            NibbleType::Enc53 => self.encode_sector_53(dat),
-            NibbleType::Enc62 => self.encode_sector_62(dat)
+            NibbleType::Enc53 => {
+                self.write_sync_gap(10,9);
+                self.write(&dat_fmt.prolog,24);
+                self.encode_sector_53(dat);
+                self.write(&dat_fmt.epilog,24);
+            },
+            NibbleType::Enc62 => {
+                self.write_sync_gap(10,10);
+                self.write(&dat_fmt.prolog,24);
+                self.encode_sector_62(dat);
+                self.write(&dat_fmt.epilog,24);
+            }
         }
     }
     /// Assuming the bit pointer is at sector data, decode from 5-3 and return the sector.
@@ -438,7 +439,7 @@ impl TrackBits {
         let mut ans: Vec<u8> = Vec::new();
         // First get the bits into an ordinary byte-aligned buffer
         let mut bak_buf: [u8;411] = [0;411];
-        self.read_latch(&mut bak_buf,411); // TODO: is there a sync-byte issue? address fields?
+        self.read_latch(&mut bak_buf,411);
         // Now decode; adaptation from CiderPress `DecodeNibble53`
         let mut base: [u8;256] = [0;256];
         let mut threes: [u8;154] = [0;154];
@@ -533,12 +534,21 @@ impl TrackBits {
         return Ok(ans);
     }
     /// Decode the sector using the scheme for this track.
-    /// Assumes bit pointer is already at start of sector data.
+    /// Assumes bit pointer is at the end of the address epilog.
     fn decode_sector(&mut self) -> Result<Vec<u8>,NibbleError> {
-        match self.dat_fmt.nib {
-            NibbleType::Enc44 => Err(NibbleError::NibbleType),
-            NibbleType::Enc53 => self.decode_sector_53(),
-            NibbleType::Enc62 => self.decode_sector_62()
+        // Find data prolog without looking ahead too far, for if it does not exist, we
+        // are to interpret the sector as empty.
+        let prolog = self.dat_fmt.prolog.clone();
+        let mask = self.dat_fmt.prolog_mask.clone();
+        if let Some(_shift) = self.find_byte_pattern(&prolog,&mask,Some(40)) {
+            trace!("data field found");
+            return match self.dat_fmt.nib {
+                NibbleType::Enc44 => Err(NibbleError::NibbleType),
+                NibbleType::Enc53 => self.decode_sector_53(),
+                NibbleType::Enc62 => self.decode_sector_62()
+            };
+        } else {
+            return Ok([0;256].to_vec());
         }
     }
     /// Add `num` n-bit sync-bytes to the track, where n = `num_bits`.
@@ -548,79 +558,19 @@ impl TrackBits {
             self.write(&[0xff,0x00],num_bits);
         }
     }
-    /// Update track bits using the data in a 13 sector image
-    pub fn update_track_with_d13(&mut self,d13_img: &Vec<u8>,track: u8) -> Result<(),NibbleError> {
-        for sec in 0..13 {
-            let dos_offset = track as usize * 3328 + sec as usize * 256;
-            let ts = [track,sec];
-            //info!("update track {}, sector {}",track,sec);
-            if let Ok(_vol) = self.find_sector_data(ts) {
-                let sbuf = d13_img[dos_offset..dos_offset+256].to_vec();
-                self.encode_sector(&sbuf);
-            } else {
-                info!("could not find 5-3 type track {}, sector {}",track,sec);
-                return Err(NibbleError::SectorNotFound);
-            }
+    /// Write physical sector (as identified by address field)
+    pub fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError> {
+        match self.find_sector([track,sector]) {
+            Ok(_vol) => Ok(self.encode_sector(dat)),
+            Err(e) => Err(e)
         }
-        Ok(())
     }
-    /// Update track bits using the data in a DOS ordered image
-    pub fn update_track_with_do(&mut self,do_img: &Vec<u8>,track: u8) -> Result<(),NibbleError> {
-        for logical_sector in 0..16 {
-            let dos_offset = track as usize * 4096 + logical_sector as usize * 256;
-            let ts = [track,physical_sector(logical_sector)];
-            //info!("update track {}, logical sector {}, physical sector {}",track,logical_sector,ts[1]);
-            if let Ok(_vol) = self.find_sector_data(ts) {
-                let sbuf = do_img[dos_offset..dos_offset+256].to_vec();
-                self.encode_sector(&sbuf);
-            } else {
-                info!("could not find 6-2 type track {}, sector {}",track,logical_sector);
-                return Err(NibbleError::SectorNotFound);
-            }
+    /// Read physical sector (as identified by address field)
+    pub fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError> {
+        match self.find_sector([track,sector]) {
+            Ok(_vol) => self.decode_sector(),
+            Err(e) => Err(e)
         }
-        Ok(())
-    }
-    /// Update 13 sector image using track bits
-    pub fn update_d13_with_track(&mut self,d13_img: &mut Vec<u8>,track: u8) -> Result<(),NibbleError> {
-        for sec in 0..13 {
-            let dos_offset = track as usize * 3328 + sec as usize * 256;
-            let ts = [track,sec];
-            //info!("update track {}, sector {}",track,sec);
-            if let Ok(_vol) = self.find_sector_data(ts) {
-                if let Ok(sec_data) = self.decode_sector() {
-                    for i in 0..256 {
-                        d13_img[dos_offset+i] = sec_data[i];
-                    }
-                } else {
-                    return Err(NibbleError::BitPatternNotFound);
-                }
-            } else {
-                info!("could not find 5-3 type track {}, sector {}",track,sec);
-                return Err(NibbleError::SectorNotFound);
-            }
-        }
-        Ok(())
-    }
-    /// Update DOS ordered image using track bits
-    pub fn update_do_with_track(&mut self,do_img: &mut Vec<u8>,track: u8) -> Result<(),NibbleError> {
-        for logical_sector in 0..16 {
-            let dos_offset = track as usize * 4096 + logical_sector as usize * 256;
-            let ts = [track,physical_sector(logical_sector)];
-            //info!("update track {}, logical sector {}, physical sector {}",track,logical_sector,ts[1]);
-            if let Ok(_vol) = self.find_sector_data(ts) {
-                if let Ok(sec_data) = self.decode_sector() {
-                    for i in 0..256 {
-                        do_img[dos_offset+i] = sec_data[i];
-                    }
-                } else {
-                    return Err(NibbleError::BitPatternNotFound);
-                }
-            } else {
-                info!("could not find 6-2 type track {}, sector {}",track,logical_sector);
-                return Err(NibbleError::SectorNotFound);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -673,12 +623,14 @@ fn decode_62(byte: u8,inv: [u8;256]) -> u8 {
 
 /// Get physical sector from DOS 3.2 logical sector.
 /// N.b. with DOS 3.2 the address fields contain the logical sector.
+/// Hence the transformation happens only during formatting.
 pub fn physical13_sector(logical_sector: u8) -> u8 {
     let phys_sec: [u8;13] = [0,4,8,12,3,7,11,2,6,10,1,5,9];
     return phys_sec[logical_sector as usize];
 }
 /// Get DOS 3.2 logical sector from physical sector.
 /// N.b. with DOS 3.2 the address fields contain the logical sector.
+/// Hence the transformation happens only during formatting.
 pub fn logical13_sector(physical_sector: u8) -> u8 {
     let log_sec: [u8;13] = [0,10,7,4,1,11,8,5,2,12,9,6,3];
     return log_sec[physical_sector as usize];
@@ -715,11 +667,11 @@ pub fn ts_from_block(block: u16) -> ([u8;2],[u8;2]) {
 }
 
 /// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
-/// The data fields are all empty (nibble-encoded zeroes)
-/// The sync gaps start and end on byte-boundaries (do not assume this condition is persistent).
-pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat, special: NibbleSpecial) -> TrackBits {
-    let bit_count_13 = 40*9 + 13*((3+8+3)*8 + 12*9 + (3+411+3)*8 + 20*9);
-    let bit_count_16 = 40*10 + 16*((3+8+3)*8 + 12*10 + (3+343+3)*8 + 20*10);
+/// For 13 sector disks, data segments are filled with high bits.
+/// For 16 sector disks, the data segment is created, and the data itself is zeroed.
+pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) -> TrackBits {
+    let bit_count_13 = 40*9 + 13*((3+8+3)*8 + 10*9 + (3+411+3)*8 + 20*9);
+    let bit_count_16 = 40*10 + 16*((3+8+3)*8 + 10*10 + (3+343+3)*8 + 20*10);
     let (sectors,bit_count,sync_bits) = match dat_fmt.nib {
         NibbleType::Enc53 => (13,bit_count_13,9),
         NibbleType::Enc62 => (16,bit_count_16,10),
@@ -727,7 +679,7 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
     };
     let buf: Vec<u8> = vec![0;buf_len];
     let mut ans = TrackBits::create(buf,bit_count);
-    ans.set_format_protocol(adr_fmt, dat_fmt, special);
+    ans.set_format_protocol(adr_fmt, dat_fmt);
     ans.write_sync_gap(40,sync_bits);
     for sector in 0..sectors {
         // address field
@@ -744,12 +696,16 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         let chksum = adr_fmt.chk_seed ^ vol ^ track ^ sec_addr;
         ans.write(&encode_44(chksum),16);
         ans.write(&adr_fmt.epilog,24);
-        // sync gap
-        ans.write_sync_gap(12,sync_bits);
-        // data field
-        ans.write(&dat_fmt.prolog,24);
-        ans.encode_sector(&[0;256].to_vec());
-        ans.write(&dat_fmt.epilog,24);
+        // data segment
+        match sectors {
+            13 => {
+                ans.write_sync_gap(10,sync_bits);
+                ans.write(&[0xff;417],417*8);
+            },
+            _ => {
+                ans.encode_sector(&[0;256].to_vec());
+            }
+        }
         //sync gap
         ans.write_sync_gap(20,sync_bits);
     }
@@ -759,13 +715,13 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
 
 /// Convenient form of `create_track` for compatibility with DOS 3.3 and ProDOS
 pub fn create_std_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
-    info!("create 16 sectors on track {}",track);
-    return create_track(vol,track,buf_len,SectorAddressFormat::create_std(),SectorDataFormat::create_std(),NibbleSpecial::None);
+    debug!("create 16 sectors on track {}",track);
+    return create_track(vol,track,buf_len,SectorAddressFormat::create_std(),SectorDataFormat::create_std());
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.0, 3.1, and 3.2
 pub fn create_std13_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
-    info!("create 13 sectors on track {}",track);
-    return create_track(vol,track,buf_len,SectorAddressFormat::create_std13(),SectorDataFormat::create_std13(),NibbleSpecial::None);
+    debug!("create 13 sectors on track {}",track);
+    return create_track(vol,track,buf_len,SectorAddressFormat::create_std13(),SectorDataFormat::create_std13());
 }
 

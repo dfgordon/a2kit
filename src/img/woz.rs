@@ -1,8 +1,8 @@
 //! # Common components for WOZ1 or WOZ2 disk images
 
-use log::info;
-use super::disk525;
-use crate::img;
+use log::{debug,trace};
+use super::disk525::{self, SectorAddressFormat, SectorDataFormat};
+use crate::fs::ChunkSpec;
 
 pub const INFO_ID: u32 = 0x4f464e49;
 pub const TMAP_ID: u32 = 0x50414d54;
@@ -96,7 +96,7 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	if next+8 > buf.len() {
 		next = 0;
 	}
-	info!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
+	debug!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
 	match id {
 		INFO_ID | TMAP_ID | TRKS_ID | WRIT_ID | META_ID => {
 			// found something
@@ -109,97 +109,58 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-pub fn update_from_d13<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-	let woz_tracks = woz.num_tracks();
-	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
-		info!("track count was {}",woz_tracks);
-		return Err(Box::new(img::Error::TrackCountMismatch));
-	}
-	img::is_dos_size(dsk,&[woz_tracks].to_vec(),13)?;
-	for track in 0..woz_tracks {
-		let mut track_obj = woz.get_track_obj(track as u8);
-		track_obj.set_format_protocol(disk525::SectorAddressFormat::create_std13(),
-			disk525::SectorDataFormat::create_std13(),
-			disk525::NibbleSpecial::None);
-		match track_obj.update_track_with_d13(dsk, track as u8) {
-			Ok(()) => woz.update_track(&mut track_obj,track as u8),
-			Err(e) => {
-				info!("writing WOZ track led to `{}`",e);
-				return Err(Box::new(e))
-			}
-		}
-	}
-	return Ok(());
-}
-pub fn update_from_do<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-	let woz_tracks = woz.num_tracks();
-	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
-		info!("track count was {}",woz_tracks);
-		return Err(Box::new(img::Error::TrackCountMismatch));
-	}
-	img::is_dos_size(dsk,&[woz_tracks].to_vec(),16)?;
-	for track in 0..woz_tracks {
-		let mut track_obj = woz.get_track_obj(track as u8);
-		match track_obj.update_track_with_do(dsk, track as u8) {
-			Ok(()) => woz.update_track(&mut track_obj,track as u8),
-			Err(e) => {
-				info!("writing WOZ track led to `{}`",e);
-				return Err(Box::new(e))
-			}
-		}
-	}
-	return Ok(());
-}
-pub fn update_from_po<T: WozConverter>(woz: &mut T,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-	img::is_dos_size(dsk, &ALLOWED_TRACKS_525.to_vec(), 16)?;
-	return update_from_do::<T>(woz,&img::reorder_po_to_do(dsk, 16));
-}
-pub fn to_d13<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-	let woz_tracks = woz.num_tracks();
-	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
-		info!("track count was {}",woz_tracks);
-		return Err(Box::new(img::Error::TrackCountMismatch));
-	}
+/// assumes all chunks are on the same track
+pub fn read_chunk<T: WozConverter>(woz: &T,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
 	let mut ans: Vec<u8> = Vec::new();
-	for track in 0..woz_tracks {
-		ans.append(&mut [0;256*13].to_vec());
-		let mut track_obj = woz.get_track_obj(track as u8);
-		track_obj.set_format_protocol(disk525::SectorAddressFormat::create_std13(),
-			disk525::SectorDataFormat::create_std13(),
-			disk525::NibbleSpecial::None);
-		match track_obj.update_d13_with_track(&mut ans, track as u8) {
-			Ok(()) => {},
-			Err(e) => {
-				info!("reading WOZ track led to `{}`",e);
-				return Err(Box::new(e))
-			}
+	let ts_list = addr.get_ts_list();
+	let track = ts_list[0][0] as u8;
+	// TODO: check if track exists
+	let mut track_obj = woz.get_track_obj(track);
+	// TODO: should we pack the nibble formats with the image?
+	match addr {
+		ChunkSpec::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
+		_ => {}
+	}
+	for ts in ts_list {
+		let [track,sector] = [ts[0] as u8,ts[1] as u8];
+		trace!("woz read track {} sector {}",track,sector);
+		match track_obj.read_sector(track,sector) {
+			Ok(mut v) => ans.append(&mut v),
+			Err(e) => return Err(Box::new(e))
 		}
 	}
 	return Ok(ans);
 }
-pub fn to_do<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-	let woz_tracks = woz.num_tracks();
-	if !ALLOWED_TRACKS_525.contains(&woz_tracks) {
-		info!("track count was {}",woz_tracks);
-		return Err(Box::new(img::Error::TrackCountMismatch));
+
+/// assumes all chunks are on the same track
+pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:ChunkSpec,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	// pad to the largest chunk size we expect
+	let mut padded: Vec<u8> = [0;512].to_vec();
+	for i in 0..512 {
+		padded[i] = match dat.len() {
+			x if i<x => dat[i],
+			_ => 0
+		};
 	}
-	let mut ans: Vec<u8> = Vec::new();
-	for track in 0..woz_tracks {
-		ans.append(&mut [0;256*16].to_vec());
-		let mut track_obj = woz.get_track_obj(track as u8);
-		match track_obj.update_do_with_track(&mut ans, track as u8) {
+	let ts_list = addr.get_ts_list();
+	let track = ts_list[0][0] as u8;
+	// TODO: check if track exists
+	let mut track_obj = woz.get_track_obj(track);
+	// TODO: should we pack the nibble formats with the image?
+	match addr {
+		ChunkSpec::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
+		_ => {}
+	}
+	let mut offset = 0;
+	for ts in ts_list {
+		let [track,sector] = [ts[0] as u8,ts[1] as u8];
+		trace!("woz write track {} sector {}",track,sector);
+		match track_obj.write_sector(&padded[offset..offset+256].to_vec(),track,sector) {
 			Ok(()) => {},
-			Err(e) => {
-				info!("reading WOZ track led to `{}`",e);
-				return Err(Box::new(e))
-			}
+			Err(e) => return Err(Box::new(e))
 		}
+		offset += 256;
 	}
-	return Ok(ans);
-}
-pub fn to_po<T: WozConverter>(woz: &T) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-	match to_do::<T>(woz) {
-		Ok(v) => Ok(img::reorder_do_to_po(&v, 16)),
-		Err(e) => Err(e)
-	}
+	woz.update_track(&mut track_obj, track);
+	return Ok(());
 }

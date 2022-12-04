@@ -7,21 +7,24 @@ mod boot;
 pub mod types;
 mod directory;
 
+use std::collections::HashMap;
 use a2kit_macro::DiskStruct;
 use std::str::FromStr;
 use std::fmt::Write;
 use colored::*;
-use log::info;
+use log::{trace,debug};
 use types::*;
 use directory::*;
 use crate::disk_base;
 use crate::disk_base::TextEncoder;
+use super::ChunkSpec;
 use crate::lang::applesoft;
 use crate::create_fs_from_file;
 
 /// The primary interface for disk operations.
 pub struct Disk {
-    blocks: Vec<[u8;512]>,
+    img: Box<dyn disk_base::DiskImage>,
+    total_blocks: usize
 }
 
 /// put a u16 into an index block in the prescribed fashion
@@ -32,15 +35,51 @@ fn pack_index_ptr(buf: &mut Vec<u8>,ptr: u16,idx: usize) {
 }
 
 impl Disk {
-    /// Create an empty disk, all blocks are zero.
-    pub fn new(num_blocks: u16) -> Self {
-        let mut empty_blocks = Vec::new();
-        for _i in 0..num_blocks {
-            empty_blocks.push([0;512]);
+    /// Use the given image as storage for a new DiskFS.
+    /// The DiskFS takes ownership of the image.
+    /// The image may or may not be formatted.
+    pub fn from_img(img: Box<dyn disk_base::DiskImage>) -> Self {
+        let total_blocks = img.byte_capacity()/512;
+        return Self {
+            img,
+            total_blocks
         }
-        Self {
-            blocks: empty_blocks
+    }
+    /// Test an image for the ProDOS file system.
+    pub fn test_img(img: &Box<dyn disk_base::DiskImage>) -> bool {
+        // test the volume directory header to see if this is ProDOS
+        if let Ok(buf) = img.read_chunk(ChunkSpec::PO(2)) {
+            let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
+            let char_patt = [first_char_patt,"0123456789"].concat();
+            let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&buf);
+            let (nibs,name) = vol_key.header.fname();
+            let total_blocks = u16::from_le_bytes([buf[0x29],buf[0x2A]]);
+            if total_blocks<280 || total_blocks%8>0 {
+                debug!("peculiar block count {}",total_blocks);
+                return false;
+            }
+            if buf[0x23]!=0x27 || buf[0x24]!=0x0D {
+                debug!("unexpected header bytes {}, {}",buf[0x23],buf[0x24]);
+                return false;
+            }
+            if vol_key.prev()!=0 || vol_key.next()!=3 || (nibs >> 4)!=15 {
+                debug!("unexpected volume name length or links");
+                return false;
+            }
+            if !first_char_patt.contains(name[0] as char) {
+                debug!("volume name unexpected character");
+                return false;
+            }
+            for i in 1..(nibs & 0x0F) {
+                if !char_patt.contains(name[i as usize] as char) {
+                    debug!("volume name unexpected character");
+                    return false;
+                }
+            }
+            return true;
         }
+        debug!("ProDOS volume directory was not readable");
+        return false;
     }
     fn allocate_block(&mut self,iblock: usize) {
         let bitmap_ptr = self.get_vol_header().bitmap_ptr;
@@ -48,9 +87,10 @@ impl Disk {
         let byte = (iblock - 4096*boff) / 8;
         let bit = 7 - (iblock - 4096*boff) % 8;
         let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let mut map = self.blocks[bptr][byte];
-        map &= (1 << bit as u8) ^ u8::MAX;
-        self.blocks[bptr][byte] = map;
+        let mut buf: Vec<u8> = vec![0;512];
+        self.read_block(&mut buf, bptr, 0);
+        buf[byte] &= (1 << bit as u8) ^ u8::MAX;
+        self.zap_block(&buf,bptr,0);
     }
     fn deallocate_block(&mut self,iblock: usize) {
         let bitmap_ptr = self.get_vol_header().bitmap_ptr;
@@ -58,9 +98,10 @@ impl Disk {
         let byte = (iblock - 4096*boff) / 8;
         let bit = 7 - (iblock - 4096*boff) % 8;
         let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let mut map = self.blocks[bptr][byte];
-        map |= 1 << bit as u8;
-        self.blocks[bptr][byte] = map;
+        let mut buf: Vec<u8> = vec![0;512];
+        self.read_block(&mut buf, bptr, 0);
+        buf[byte] |= 1 << bit as u8;
+        self.zap_block(&buf,bptr,0);
     }
     fn is_block_free(&self,iblock: usize) -> bool {
         let bitmap_ptr = self.get_vol_header().bitmap_ptr;
@@ -68,12 +109,13 @@ impl Disk {
         let byte = (iblock - 4096*boff) / 8;
         let bit = 7 - (iblock - 4096*boff) % 8;
         let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let map = self.blocks[bptr][byte];
-        return (map & (1 << bit as u8)) > 0;
+        let mut buf: Vec<u8> = vec![0;512];
+        self.read_block(&mut buf, bptr, 0);
+        return (buf[byte] & (1 << bit as u8)) > 0;
     }
     fn num_free_blocks(&self) -> u16 {
         let mut free: u16 = 0;
-        for i in 0..self.blocks.len() {
+        for i in 0..self.total_blocks {
             if self.is_block_free(i) {
                 free += 1;
             }
@@ -87,8 +129,12 @@ impl Disk {
             x if x<=bytes => x,
             _ => bytes
         };
-        for i in 0..actual_len as usize {
-            data[offset + i] = self.blocks[iblock][i];
+        if let Ok(buf) = self.img.read_chunk(ChunkSpec::PO(iblock)) {
+            for i in 0..actual_len as usize {
+                data[offset + i] = buf[i];
+            }
+        } else {
+            panic!("read failed for block {}",iblock);
         }
     }
     /// Write and allocate the block in one step.
@@ -102,15 +148,14 @@ impl Disk {
         let bytes = 512;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in write block"),
-            x if x<=bytes => x,
-            _ => bytes
+            x if x<=bytes => x as usize,
+            _ => bytes as usize
         };
-        for i in 0..actual_len as usize {
-            self.blocks[iblock][i] = data[offset + i];
-        }
+        self.img.write_chunk(ChunkSpec::PO(iblock), &data[offset..offset+actual_len].to_vec()).
+            expect("write failed");
     }
     fn get_available_block(&self) -> Option<u16> {
-        for block in 0..self.blocks.len() {
+        for block in 0..self.total_blocks {
             if self.is_block_free(block) {
                 return Some(block as u16);
             }
@@ -120,31 +165,36 @@ impl Disk {
     /// Format a disk with the ProDOS file system
     pub fn format(&mut self, vol_name: &str, floppy: bool, time: Option<chrono::NaiveDateTime>) {
         // make sure we start with all 0
-        for iblock in 0..self.blocks.len() {
+        trace!("formatting: zero all");
+        for iblock in 0..self.total_blocks {
             self.zap_block(&[0;512].to_vec(),iblock,0);
         }
         // calculate volume parameters and setup volume directory
         let mut volume_dir = KeyBlock::<VolDirHeader>::new();
-        let bitmap_blocks = 1 + self.blocks.len() / 4096;
+        let bitmap_blocks = 1 + self.total_blocks / 4096;
         volume_dir.set_links(Some(0), Some(VOL_KEY_BLOCK+1));
-        volume_dir.header.format(self.blocks.len() as u16,vol_name,time);
+        volume_dir.header.format(self.total_blocks as u16,vol_name,time);
         let first = u16::from_le_bytes(volume_dir.header.bitmap_ptr) as usize;
 
         // volume key block
+        trace!("formatting: volume key");
         self.write_block(&volume_dir.to_bytes(),VOL_KEY_BLOCK as usize,0);
 
         // mark all blocks as free
-        for b in 0..self.blocks.len() {
+        trace!("formatting: free all");
+        for b in 0..self.total_blocks {
             self.deallocate_block(b);
         }
 
         // mark volume key and bitmap blocks as used
+        trace!("formatting: allocate key and bitmap");
         self.allocate_block(VOL_KEY_BLOCK as usize);
         for b in first..first + bitmap_blocks {
             self.allocate_block(b);
         }
         
         // boot loader blocks
+        trace!("formatting: boot loader");
         if floppy {
             self.write_block(&boot::FLOPPY_BLOCK0.to_vec(),0,0);
         }
@@ -154,6 +204,7 @@ impl Disk {
         self.write_block(&vec![0;512],1,0);
 
         // next 3 volume directory blocks
+        trace!("formatting: volume directory");
         for b in 3..6 {
             let mut this = EntryBlock::new();
             if b==5 {
@@ -678,52 +729,6 @@ impl Disk {
         self.write_entry(loc, &entry);
         return Ok(());
     }
-    /// Return a disk object if the image data verifies as ProDOS,
-    /// otherwise return None.  The image is allowed to be any integral
-    /// number of blocks up to the maximum of 65535.  Various fields in the
-    /// volume directory header are checked for consistency.
-    pub fn from_img(dimg: &Vec<u8>) -> Option<Self> {
-        let block_count = dimg.len()/512;
-        if dimg.len()%512 != 0 || block_count > 65535 {
-            return None;
-        }
-        let mut disk = Self::new(block_count as u16);
-
-        for block in 0..block_count {
-            for byte in 0..512 {
-                disk.blocks[block][byte] = dimg[byte+block*512];
-            }
-        }
-        // test the volume directory header to see if this is ProDOS
-        let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
-        let char_patt = [first_char_patt,"0123456789"].concat();
-        let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&disk.blocks[2].to_vec());
-        let (nibs,name) = vol_key.header.fname();
-        let total_blocks = u16::from_le_bytes([disk.blocks[2][0x29],disk.blocks[2][0x2A]]);
-        if disk.blocks[2][0x23]!=0x27 || disk.blocks[2][0x24]!=0x0D {
-            info!("unexpected header bytes {}, {}",disk.blocks[2][0x23],disk.blocks[2][0x24]);
-            return None;
-        }
-        if total_blocks as usize!=block_count {
-            info!("unexpected total blocks {}",total_blocks);
-            return None;
-        }
-        if vol_key.prev()!=0 || vol_key.next()!=3 || (nibs >> 4)!=15 {
-            info!("unexpected volume name length or links");
-            return None;
-        }
-        if !first_char_patt.contains(name[0] as char) {
-            info!("volume name unexpected character");
-            return None;
-        }
-        for i in 1..(nibs & 0x0F) {
-            if !char_patt.contains(name[i as usize] as char) {
-                info!("volume name unexpected character");
-                return None;
-            }
-        }
-        return Some(disk);
-    }
 }
 
 impl disk_base::DiskFS for Disk {
@@ -754,10 +759,9 @@ impl disk_base::DiskFS for Disk {
                     curr = dir.next();
                 }
                 println!();
-                let total = self.blocks.len();
                 let free = self.num_free_blocks() as usize;
-                let used = total-free;
-                println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,total);
+                let used = self.total_blocks-free;
+                println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,self.total_blocks);
                 println!();
                 Ok(())
             }
@@ -905,7 +909,7 @@ impl disk_base::DiskFS for Disk {
                 let addr = applesoft::deduce_address(dat);
                 fimg.fs_type = FileType::ApplesoftCode as u32;
                 fimg.aux = addr as u32;
-                info!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
+                debug!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
             },
             disk_base::ItemType::IntegerTokens => {
                 fimg.fs_type = FileType::IntegerCode as u32;
@@ -955,7 +959,7 @@ impl disk_base::DiskFS for Disk {
         match usize::from_str(num) {
             Ok(block) => {
                 let mut buf: Vec<u8> = vec![0;512];
-                if block>=self.blocks.len() {
+                if block>=self.total_blocks {
                     return Err(Box::new(Error::Range));
                 }
                 self.read_block(&mut buf,block,0);
@@ -967,7 +971,7 @@ impl disk_base::DiskFS for Disk {
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
-                if dat.len() > 512 || block>=self.blocks.len() {
+                if dat.len() > 512 || block>=self.total_blocks {
                     return Err(Box::new(Error::Range));
                 }
                 self.zap_block(dat,block,0);
@@ -1021,40 +1025,44 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,ref_con: u16) -> Vec<usize> {
-        let mut ans: Vec<usize> = Vec::new();
+    fn standardize(&self,ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
+        let mut ans: HashMap<ChunkSpec,Vec<usize>> = HashMap::new();
         let mut curr = ref_con;
         while curr>0 {
             let mut dir = self.get_directory(curr as usize);
             let locs = dir.entry_locations(curr);
-            ans = [ans,dir.standardize(curr as usize*512)].concat();
+            super::add_ignorable_offsets(&mut ans,ChunkSpec::PO(curr as usize),dir.standardize(0));
             for loc in locs {
                 let mut entry = dir.get_entry(&loc);
-                let offset = loc.block as usize*512 + 4 + (loc.idx-1)*0x27;
-                ans = [ans,entry.standardize(offset)].concat();
+                let offset = 4 + (loc.idx-1)*0x27;
+                super::add_ignorable_offsets(&mut ans,ChunkSpec::PO(curr as usize),entry.standardize(offset));
                 if entry.storage_type()==StorageType::SubDirEntry {
-                    ans = [ans,self.standardize(entry.get_ptr())].concat();
+                    // recursively call to get the things in the subdirectory entries we want to ignore
+                    let sub_map = self.standardize(entry.get_ptr());
+                    super::combine_ignorable_offsets(&mut ans, sub_map);
                 }
             }
             curr = dir.next();
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
-        let emulator_disk = create_fs_from_file(&path.to_str()
-            .expect("could not unwrap path"))
-            .expect("could not interpret file system");
-        let mut expected = emulator_disk.to_img();
-        let mut actual = self.to_img();
-        for ignorable in ignore {
-            expected[*ignorable] = 0;
-            actual[*ignorable] = 0;
-        }
-        for block in 0..self.blocks.len() {
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+        let mut emulator_disk = create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let dir = self.get_directory(VOL_KEY_BLOCK as usize);
+        for block in 0..dir.total_blocks().unwrap() {
+            let addr = ChunkSpec::PO(block);
+            let mut actual = self.img.read_chunk(addr).expect("bad sector access");
+            let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
+            if let Some(ignorable) = ignore.get(&addr) {
+                for offset in ignorable {
+                    actual[*offset] = 0;
+                    expected[*offset] = 0;
+                }
+            }
             for row in 0..16 {
                 let mut fmt_actual = String::new();
                 let mut fmt_expected = String::new();
-                let offset = block*512 + row*32;
+                let offset = row*32;
                 write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
                 write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
                 assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
@@ -1064,20 +1072,15 @@ impl disk_base::DiskFS for Disk {
     fn get_ordering(&self) -> disk_base::DiskImageType {
         return disk_base::DiskImageType::PO;
     }
-    fn to_img(&self) -> Vec<u8> {
-        let mut result : Vec<u8> = Vec::new();
-        for block in &self.blocks {
-            for byte in 0..512 {
-                result.push(block[byte]);
-            }
-        }
-        return result;
+    fn get_img(&mut self) -> &mut Box<dyn disk_base::DiskImage> {
+        &mut self.img
     }
 }
 
 #[test]
 fn test_path_normalize() {
-    let mut disk = Disk::new(280);
+    let img = Box::new(crate::img::dsk_po::PO::create(280));
+    let mut disk = Disk::from_img(img);
     disk.format(&String::from("NEW.DISK"),true,None);
     assert_eq!(disk.normalize_path("DIR1"),["NEW.DISK","DIR1"]);
     assert_eq!(disk.normalize_path("dir1/"),["NEW.DISK","DIR1",""]);

@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
 use crate::disk_base::TextEncoder;
-use log::info;
+use log::debug;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const TEXT_PAGE: usize = 1024;
@@ -134,7 +134,7 @@ impl TextEncoder for Encoder {
         }
     }
     fn encode(&self,txt: &str) -> Option<Vec<u8>> {
-        info!("encoding text");
+        debug!("encoding text");
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         let mut starting_line = true;
@@ -295,7 +295,7 @@ impl DiskStruct for SequentialText {
     /// Create structure using flattened bytes (typically from disk)
     /// Due to the pagination, we must keep all the nulls.
     fn from_bytes(dat: &Vec<u8>) -> Self {
-        info!("from_bytes: {}",dat.len());
+        debug!("from_bytes: {}",dat.len());
         Self {
             header: dat[0..TEXT_PAGE].to_vec(),
             text: dat[TEXT_PAGE..].to_vec()
@@ -304,7 +304,7 @@ impl DiskStruct for SequentialText {
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
-        info!("to_bytes: header {} text {}",self.header.len(),self.text.len());
+        debug!("to_bytes: header {} text {}",self.header.len(),self.text.len());
         ans.append(&mut self.header.clone());
         ans.append(&mut self.text.clone());
         return ans;

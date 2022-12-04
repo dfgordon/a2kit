@@ -123,6 +123,7 @@ pub trait HasName {
 }
 
 pub trait Directory: DiskStruct + HasEntries {
+    fn total_blocks(&self) -> Option<usize>;
     fn parent_entry_loc(&self) -> Option<EntryLocation>;
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
@@ -679,14 +680,17 @@ impl HasName for SubDirHeader {
 }
 
 impl Directory for KeyBlock<VolDirHeader> {
+    fn total_blocks(&self) -> Option<usize> {
+        Some(u16::from_le_bytes(self.header.total_blocks) as usize)
+    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
-        return None;
+        None
     }
     fn inc_file_count(&mut self) {
-        self.header.inc_file_count();
+        self.header.inc_file_count()
     }
     fn dec_file_count(&mut self) {
-        self.header.dec_file_count();
+        self.header.dec_file_count()
     }
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         self.header.standardize(offset)
@@ -697,6 +701,9 @@ impl Directory for KeyBlock<VolDirHeader> {
 }
 
 impl Directory for KeyBlock<SubDirHeader> {
+    fn total_blocks(&self) -> Option<usize> {
+        None
+    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         return Some(EntryLocation {
             block: u16::from_le_bytes(self.header.parent_ptr),
@@ -718,6 +725,9 @@ impl Directory for KeyBlock<SubDirHeader> {
 }
 
 impl Directory for EntryBlock {
+    fn total_blocks(&self) -> Option<usize> {
+        None
+    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         panic!("attempt to get parent from EntryBlock");
     }

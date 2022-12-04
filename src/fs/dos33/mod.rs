@@ -16,10 +16,11 @@ use std::str::FromStr;
 use std::fmt::Write;
 use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
-use log::info;
+use log::debug;
 
 use types::*;
 use crate::disk_base::TextEncoder;
+use super::ChunkSpec;
 use directory::*;
 use crate::disk_base;
 use crate::create_fs_from_file;
@@ -47,17 +48,97 @@ pub struct Disk
 {
     // VTOC works for any DOS 3.x
     vtoc: VTOC,
-    // Internally, the sectors are always kept in the file system's logical order.
-    tracks: Vec<Vec<[u8;256]>>
+    img: Box<dyn disk_base::DiskImage>
 }
 
 impl Disk
 {
-    /// Create an empty disk, internal buffer is empty
-    pub fn new() -> Self {
-        return Self {
-            vtoc: VTOC::new(),
-            tracks: Vec::new()
+    /// Create a disk file system using the given image as storage.
+    /// The DiskFS takes ownership of the image.
+    pub fn from_img(img: Box<dyn disk_base::DiskImage>) -> Self {
+        if let Ok(dat) = img.read_chunk(ChunkSpec::D13([17,0])) {
+            return Self {
+                vtoc: VTOC::from_bytes(&dat),
+                img
+            };
+        }
+        if let Ok(dat) = img.read_chunk(ChunkSpec::DO([17,0])) {
+            return Self {
+                vtoc: VTOC::from_bytes(&dat),
+                img
+            };
+        }
+        panic!("unexpected failure to read chunk");
+    }
+    fn test_img_13(img: &Box<dyn disk_base::DiskImage>) -> bool {
+        if let Ok(dat) = img.read_chunk(ChunkSpec::D13([17,0])) {
+            let vtoc = VTOC::from_bytes(&dat);
+            let (tlen,slen) = (35,13);
+            if vtoc.version>2 {
+                debug!("D13: VTOC wrong version {}",vtoc.version);
+                return false;
+            }
+            if vtoc.vol<1 || vtoc.vol>254 {
+                debug!("D13: Volume {} out of range",vtoc.vol);
+                return false;
+            }
+            if vtoc.track1 != VTOC_TRACK || vtoc.sector1 != slen-1 {
+                debug!("D13: VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
+                return false;
+            }
+            if vtoc.bytes != [0,1] || vtoc.sectors != slen as u8 || vtoc.tracks != tlen as u8 {
+                debug!("D13: VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
+                return false;
+            }
+            return true;
+        }
+        debug!("VTOC sector was not readable as D13");
+        return false;
+    }
+    fn test_img_16(img: &Box<dyn disk_base::DiskImage>) -> bool {
+        if let Ok(dat) = img.read_chunk(ChunkSpec::DO([17,0])) {
+            let vtoc = VTOC::from_bytes(&dat);
+            let (tlen,slen) = (35,16);
+            if vtoc.version<3 {
+                debug!("VTOC wrong version {}",vtoc.version);
+                return false;
+            }
+            if vtoc.vol<1 || vtoc.vol>254 {
+                debug!("Volume {} out of range",vtoc.vol);
+                return false;
+            }
+            if vtoc.track1 != VTOC_TRACK || vtoc.sector1 != slen-1 {
+                debug!("VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
+                return false;
+            }
+            if vtoc.bytes != [0,1] || vtoc.sectors != slen as u8 || vtoc.tracks != tlen as u8 {
+                debug!("VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
+                return false;
+            }
+            return true;
+        }
+        debug!("VTOC sector was not readable as DO");
+        return false;
+    }
+    /// Test an image to see if it already contains DOS 3.x.
+    pub fn test_img(img: &Box<dyn disk_base::DiskImage>) -> bool {
+        let tlen = img.track_count();
+        if tlen!=35 {
+            debug!("track count is unexpected");
+            return false;
+        }
+        if Self::test_img_13(img) {
+            return true;
+        }
+        if Self::test_img_16(img) {
+            return true;
+        }
+        return false;
+    }
+    fn addr(&self,ts: [u8;2]) -> ChunkSpec {
+        match self.vtoc.sectors {
+            13 => ChunkSpec::D13([ts[0] as usize,ts[1] as usize]),
+            _ => ChunkSpec::DO([ts[0] as usize,ts[1] as usize])
         }
     }
     fn panic_if_ts_bad(&self,track: u8,sector: u8) {
@@ -79,10 +160,7 @@ impl Disk
         self.vtoc.bitmap[i+2] = slice[2];
         self.vtoc.bitmap[i+3] = slice[3];
         // save it in the actual VTOC image
-        let vtoc_bytes = self.vtoc.to_bytes();
-        for i in 0..vtoc_bytes.len() {
-            self.tracks[VTOC_TRACK as usize][0][i] = vtoc_bytes[i];
-        }
+        self.img.write_chunk(self.addr([VTOC_TRACK,0]), &self.vtoc.to_bytes()).expect("write error");
     }
     fn update_last_track(&mut self,track: u8) {
         // The last_direction and last_track fields are not discussed in DOS manual.
@@ -97,10 +175,7 @@ impl Disk
             self.vtoc.last_track = track;
         }
         // save it in the actual VTOC image
-        let vtoc_bytes = self.vtoc.to_bytes();
-        for i in 0..vtoc_bytes.len() {
-            self.tracks[VTOC_TRACK as usize][0][i] = vtoc_bytes[i];
-        }
+        self.img.write_chunk(self.addr([VTOC_TRACK,0]), &self.vtoc.to_bytes()).expect("write error");
     }
     fn allocate_sector(&mut self,track: u8,sector: u8) {
         let mut map = self.get_track_map(track);
@@ -119,17 +194,21 @@ impl Disk
         let eff_sec: u32 = (sector + 32 - self.vtoc.sectors) as u32;
         return (map & (1 << eff_sec)) > 0;
     }
+    /// Read a sector of data into buffer `data`, starting at `offset` within the buffer.
+    /// If `data` is shorter than the sector, the partial sector is copied.
     fn read_sector(&self,data: &mut Vec<u8>,ts: [u8;2], offset: usize) {
-        // copy data from track and sector
         let bytes = u16::from_le_bytes(self.vtoc.bytes) as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read sector"),
             x if x<=bytes => x,
             _ => bytes
         };
-        let [track,sector] = ts;
-        for i in 0..actual_len as usize {
-            data[offset + i] = self.tracks[track as usize][sector as usize][i];
+        if let Ok(buf) = self.img.read_chunk(self.addr(ts)) {
+            for i in 0..actual_len as usize {
+                data[offset + i] = buf[i];
+            }
+        } else {
+            panic!("read failed for track {} sector {}",ts[0],ts[1]);
         }
     }
     /// Zap and allocate the sector in one step.
@@ -144,24 +223,14 @@ impl Disk
         let bytes = u16::from_le_bytes(self.vtoc.bytes) as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in write sector"),
-            x if x<=bytes => x,
-            _ => bytes
+            x if x<=bytes => x as usize,
+            _ => bytes as usize
         };
-        let [track,sector] = ts;
-        for i in 0..actual_len as usize {
-            self.tracks[track as usize][sector as usize][i] = data[offset + i];
-        }
+        self.img.write_chunk(self.addr(ts), &data[offset..offset+actual_len].to_vec()).
+            expect("write failed");
     }
     /// Create any DOS 3.x volume
     pub fn init(&mut self,vol:u8,bootable:bool,last_track_written:u8,tracks:u8,sectors:u8) {
-        // Build the internal buffers
-        self.tracks = Vec::new();
-        for track in 0..tracks as usize {
-            self.tracks.push(Vec::new());
-            for _sector in 0..sectors as usize {
-                self.tracks[track].push([0;256]);
-            }
-        }
         assert!(vol>0 && vol<255);
         assert!(tracks>VTOC_TRACK && tracks<=50);
         assert!(sectors==13 || sectors==16 || sectors==32);
@@ -212,7 +281,7 @@ impl Disk
         }
         // write the sector and save the records in this object
         self.write_sector(&self.vtoc.to_bytes(),[VTOC_TRACK,0],0);
-        // Write the directory tracks
+        // Write the directory sectors
         let mut dir = DirectorySector::new();
         self.write_sector(&dir.to_bytes(),[VTOC_TRACK,1],0);
         for sec in 2 as u8..sectors as u8 {
@@ -229,9 +298,8 @@ impl Disk
             };
             for track in 0..3 {
                 for sector in 0..sectors as usize {
-                    for byte in 0..256 {
-                        self.tracks[track][sector][byte] = flat[byte + sector*256 + track*sectors as usize*256];
-                    }
+                    let offset = track*sectors as usize*256 + sector*256;
+                    self.write_sector(&flat,[track as u8,sector as u8],offset)
                 }
             }
         }
@@ -483,39 +551,6 @@ impl Disk
         }
         panic!("the disk image directory seems to be damaged");
     }
-    /// Return a disk object if the image data verifies as DOS 3.x,
-    /// otherwise return None.  Checks for matches to byte counts and selected VTOC fields.
-    pub fn from_img(img: &Vec<u8>) -> Option<Self> {
-        let mut disk = Self::new();
-        let (tlen,slen,blen) = match img.len() {
-            x if x==35*13*256 => (35,13,256),
-            x if x==35*16*256 => (35,16,256),
-            _ => (0,0,0)
-        };
-        if tlen==0 {
-            info!("byte count is unexpected");
-            return None;
-        }
-        for track in 0..tlen {
-            disk.tracks.push(Vec::new());
-            for sector in 0..slen {
-                disk.tracks[track].push([0;256]);
-                for byte in 0..blen {
-                    disk.tracks[track][sector][byte] = img[byte+sector*blen+track*slen*blen];
-                }
-            }
-        }
-        disk.vtoc = VTOC::from_bytes(&disk.tracks[VTOC_TRACK as usize][0].to_vec());
-        if disk.vtoc.track1 != VTOC_TRACK || disk.vtoc.sector1 != slen as u8 - 1 {
-            info!("VTOC wrong track1 {}, sector1 {}",disk.vtoc.track1,disk.vtoc.sector1);
-            return None;
-        }
-        if disk.vtoc.bytes != [0,1] || disk.vtoc.sectors != slen as u8 || disk.vtoc.tracks != tlen as u8 {
-            info!("VTOC wrong bytes {:?}, sectors {}, tracks {}",disk.vtoc.bytes,disk.vtoc.sectors,disk.vtoc.tracks);
-            return None;
-        }
-        return Some(disk);
-    }
 }
 
 impl disk_base::DiskFS for Disk {
@@ -728,25 +763,27 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> Vec<usize> {
+    fn standardize(&self,_ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
         // ignore first byte of VTOC
-        return vec![VTOC_TRACK as usize*self.vtoc.sectors as usize*256];
+        return HashMap::from([(self.addr([VTOC_TRACK,0]),vec![0])]);
     }
-    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
-        let emulator_disk = create_fs_from_file(&path.to_str()
-            .expect("could not unwrap path")).expect("could not interpret file system");
-        let mut expected = emulator_disk.to_img();
-        let mut actual = self.to_img();
-        for ignorable in ignore {
-            expected[*ignorable] = 0;
-            actual[*ignorable] = 0;
-        }
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+        let mut emulator_disk = create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         for track in 0..self.vtoc.tracks as usize {
             for sector in 0..self.vtoc.sectors as usize {
+                let addr = self.addr([track as u8,sector as u8]);
+                let mut actual = self.img.read_chunk(addr).expect("bad sector access");
+                let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
+                if let Some(ignorable) = ignore.get(&addr) {
+                    for offset in ignorable {
+                        actual[*offset] = 0;
+                        expected[*offset] = 0;
+                    }
+                }
                 for row in 0..8 {
                     let mut fmt_actual = String::new();
                     let mut fmt_expected = String::new();
-                    let offset = track*16*256 + sector*256 + row*32;
+                    let offset = row*32;
                     write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
                     write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
                     assert_eq!(fmt_actual,fmt_expected," at track {}, sector {}, row {}",track,sector,row)
@@ -760,15 +797,7 @@ impl disk_base::DiskFS for Disk {
             _ => disk_base::DiskImageType::DO
         }
     }
-    fn to_img(&self) -> Vec<u8> {
-        let mut result : Vec<u8> = Vec::new();
-        for track in 0..self.vtoc.tracks as usize {
-            for sector in 0..self.vtoc.sectors as usize {
-                for byte in 0..u16::from_le_bytes(self.vtoc.bytes) as usize {
-                    result.push(self.tracks[track][sector][byte]);
-                }
-            }
-        }
-        return result;
+    fn get_img(&mut self) -> &mut Box<dyn disk_base::DiskImage> {
+        &mut self.img
     }
 }

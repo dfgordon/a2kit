@@ -12,10 +12,11 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
-use log::{info,error};
+use log::{info,debug,error};
 use num_traits::FromPrimitive;
 use types::*;
 use crate::disk_base;
+use super::ChunkSpec;
 use directory::*;
 use crate::create_fs_from_file;
 
@@ -103,47 +104,32 @@ fn string_to_vol_name(s: &str) -> [u8;7] {
     return ans;
 }
 
-/// The primary interface for disk operations.
-pub struct Disk
-{
-    blocks: Vec<[u8;BLOCK_SIZE]>
-}
-
-impl Disk
-{
-    /// Create an empty disk, all blocks are zero.
-    pub fn new(num_blocks: u16) -> Self {
-        let mut empty_blocks = Vec::new();
-        for _i in 0..num_blocks {
-            empty_blocks.push([0;512]);
-        }
-        Self {
-            blocks: empty_blocks
-        }
-    }
-    /// Load directory structure from disk.  This is also used in identifying the
-    /// file system, so has to not panic if `testing` is true.
-    fn get_directory(&self,testing: bool) -> Directory {
-        let mut ans = Directory::new();
-        let mut buf: Vec<u8> = vec![0;512];
-        self.read_block(&mut buf,VOL_HEADER_BLOCK,0);
+/// Load directory structure from a borrowed disk image.
+/// This is used to test images, as well as being called during FS operations.
+fn get_directory(img: &Box<dyn disk_base::DiskImage>) -> Option<Directory> {
+    let mut ans = Directory::new();
+    if let Ok(mut buf) = img.read_chunk(ChunkSpec::PO(VOL_HEADER_BLOCK)) {
         ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE].to_vec());
         let beg0 = u16::from_le_bytes(ans.header.begin_block);
         let beg = VOL_HEADER_BLOCK as u16;
         let end = u16::from_le_bytes(ans.header.end_block);
-        if beg0!=0 || end<=beg || (end as usize)>self.blocks.len() {
-            if testing {
-                info!("bad header: begin block {}, end block {}",beg,end);
-                return ans;
-            } else {
-                panic!("bad header: begin block {}, end block {}",beg,end);
-            }
+        if beg0!=0 || end<=beg || (end as usize)>ans.total_blocks() {
+            debug!("bad header: begin block {}, end block {}",beg,end);
+            return None;
         }
         // gather up all the directory blocks in a contiguous buffer; this is convenient
         // since the entries are allowed to span 2 blocks.
         buf = vec![0;BLOCK_SIZE*(end as usize - beg as usize)];
         for iblock in beg..end {
-            self.read_block(&mut buf,iblock as usize,(iblock-beg) as usize * BLOCK_SIZE);
+            let offset = (iblock-beg) as usize * BLOCK_SIZE;
+            if let Ok(temp) = img.read_chunk(ChunkSpec::PO(iblock as usize)) {
+                for i in 0..BLOCK_SIZE {
+                    buf[offset+i] = temp[i];
+                }
+            } else {
+                debug!("can't get block {}",iblock);
+                return None;
+            }
         }
         // create all possible entries whether in use or not
         let max_num_entries = buf.len()/ENTRY_SIZE - 1;
@@ -152,7 +138,87 @@ impl Disk
             ans.entries.push(DirectoryEntry::from_bytes(&buf[offset..offset+ENTRY_SIZE].to_vec()));
             offset += ENTRY_SIZE;
         }
-        return ans;
+        return Some(ans);
+    }
+    return None;
+}
+
+/// The primary interface for disk operations.
+pub struct Disk
+{
+    img: Box<dyn disk_base::DiskImage>
+}
+
+impl Disk
+{
+    /// Create a disk file system using the given image as storage.
+    /// The DiskFS takes ownership of the image.
+    pub fn from_img(img: Box<dyn disk_base::DiskImage>) -> Self {
+        return Self {
+            img
+        }
+    }
+    /// Test an image for the Pascal file system.
+    pub fn test_img(img: &Box<dyn disk_base::DiskImage>) -> bool {
+        // test the volume directory header
+        if let Some(directory) = get_directory(img) {
+            let beg0 = u16::from_le_bytes(directory.header.begin_block);
+            let beg = VOL_HEADER_BLOCK as u16;
+            let end = u16::from_le_bytes(directory.header.end_block);
+            let tot = u16::from_le_bytes(directory.header.total_blocks);
+            if beg0!=0 || end<=beg || end>20 {
+                debug!("header begin {} end {}",beg0,end);
+                return false;
+            }
+            // if (tot as usize) != block_count {
+            //     debug!("header total blocks {}",tot);
+            //     return false;
+            // }
+            if directory.header.name_len>7 || directory.header.name_len==0 {
+                debug!("header name length {}",directory.header.name_len);
+                return false;
+            }
+            if directory.header.file_type != [0,0] {
+                debug!("header type {}",u16::from_le_bytes(directory.header.file_type));
+                return false;
+            }
+            for i in 0..directory.header.name_len {
+                let c = directory.header.name[i as usize];
+                if c<32 || c>126 {
+                    debug!("header name character {}",c);
+                    return false;
+                }
+            }
+            // test every directory entry
+            for i in 0..u16::from_le_bytes(directory.header.num_files) {
+                let entry = directory.entries[i as usize];
+                let ebeg = u16::from_le_bytes(entry.begin_block);
+                let eend = u16::from_le_bytes(entry.end_block);
+                if ebeg>0 {
+                    if ebeg<end || eend<=ebeg || (eend as u16) > tot {
+                        debug!("entry begin {} end {}",ebeg,eend);
+                        return false;
+                    }
+                    if entry.name_len>15 || entry.name_len==0 {
+                        debug!("entry name length {}",entry.name_len);
+                        return false;
+                    }
+                    for i in 0..entry.name_len {
+                        let c = entry.name[i as usize];
+                        if c<32 || c>126 {
+                            debug!("entry name char {}",c);
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+        debug!("pascal directory was not readable");
+        return false;
+    }
+    fn get_directory(&self) -> Directory {
+        return get_directory(&self.img).expect("directory broken");
     }
     fn save_directory(&mut self,dir: &Directory) {
         let beg = VOL_HEADER_BLOCK as u16;
@@ -177,11 +243,11 @@ impl Disk
     }
     /// Return tuple with (free blocks,largest contiguous span of blocks)
     fn num_free_blocks(&self) -> (u16,u16) {
-        let directory = self.get_directory(false);
+        let directory = self.get_directory();
         let mut free: u16 = 0;
         let mut count: u16 = 0;
         let mut largest: u16 = 0;
-        for i in 0..self.blocks.len() {
+        for i in 0..directory.total_blocks() {
             if self.is_block_free(i,&directory) {
                 count += 1;
                 free += 1;
@@ -206,8 +272,12 @@ impl Disk
             x if x<=bytes => x,
             _ => bytes
         };
-        for i in 0..actual_len as usize {
-            data[offset + i] = self.blocks[iblock][i];
+        if let Ok(buf) = self.img.read_chunk(ChunkSpec::PO(iblock)) {
+            for i in 0..actual_len as usize {
+                data[offset + i] = buf[i];
+            }
+        } else {
+            panic!("read failed for block {}",iblock);
         }
     }
     /// Writes a block of data from buffer `data`, starting at `offset` within the buffer.
@@ -222,19 +292,18 @@ impl Disk
         let bytes = 512;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in write block"),
-            x if x<=bytes => x,
-            _ => bytes
+            x if x<=bytes => x as usize,
+            _ => bytes as usize
         };
-        for i in 0..actual_len as usize {
-            self.blocks[iblock][i] = data[offset + i];
-        }
+        self.img.write_chunk(ChunkSpec::PO(iblock), &data[offset..offset+actual_len].to_vec()).
+            expect("write failed");
     }
     /// Try to find `num` contiguous free blocks.  If found return the first block index.
     fn get_available_blocks(&self,num: u16) -> Option<u16> {
-        let directory = self.get_directory(false);
+        let directory = self.get_directory();
         let mut start = 0;
         let mut count = 0;
-        for block in 0..self.blocks.len() as u16 {
+        for block in 0..directory.total_blocks() as u16 {
             if self.is_block_free(block as usize,&directory) {
                 if count==0 {
                     start = block;
@@ -253,16 +322,23 @@ impl Disk
         return None;
     }
     /// Format disk for the Pascal file system
+    /// TODO: why don't we put the DiskKind with the underlying image?
     pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &disk_base::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);
         }
+        let num_blocks = match disk_kind {
+            disk_base::DiskKind::A2_525_16 => 280,
+            disk_base::DiskKind::A2_35 => 1600,
+            disk_base::DiskKind::A2Max => 65535,
+            _ => return Err(Error::NoDev)
+        };
         // Zero boot and directory blocks
         for iblock in 0..6 {
             self.write_block(&[0;BLOCK_SIZE].to_vec(),iblock,0);
         }
         // Put `fill` value in all remaining blocks
-        for iblock in 6..self.blocks.len() {
+        for iblock in 6..num_blocks {
             self.write_block(&[fill;BLOCK_SIZE].to_vec(),iblock,0);
         }
         // Setup volume directory
@@ -272,7 +348,7 @@ impl Disk
         dir.header.file_type = u16::to_le_bytes(0);
         dir.header.name_len = vol_name.len() as u8;
         dir.header.name = string_to_vol_name(vol_name);
-        dir.header.total_blocks = u16::to_le_bytes(self.blocks.len() as u16);
+        dir.header.total_blocks = u16::to_le_bytes(num_blocks as u16);
         dir.header.num_files = u16::to_le_bytes(0);
         dir.header.last_access_date = u16::to_le_bytes(0);
         dir.header.last_set_date = pack_date(time);
@@ -301,13 +377,13 @@ impl Disk
     /// Scan the directory to find the named file and return (Option<entry index>, directory).
     /// N.b. Pascal FS always keeps files in contiguous blocks.
     fn get_file_entry(&self,name: &str) -> (Option<usize>,Directory) {
-        let directory = self.get_directory(false);
+        let directory = self.get_directory();
         let fname = string_to_file_name(name);
         for i in 0..u16::from_le_bytes(directory.header.num_files) {
             let entry = &directory.entries[i as usize];
             let beg = u16::from_le_bytes(entry.begin_block);
             let end = u16::from_le_bytes(entry.end_block);
-            if beg>0 && end>beg && (end as usize)<self.blocks.len() {
+            if beg>0 && end>beg && (end as usize)<directory.total_blocks() {
                 if fname[0..entry.name_len as usize]==entry.name[0..entry.name_len as usize] {
                     return (Some(i as usize),directory);
                 }
@@ -357,7 +433,7 @@ impl Disk
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16) {
                     for i in 0..dir.entries.len() {
                         if dir.entries[i].begin_block==[0,0] {
-                            info!("using entry {}, {}",i,file_name_to_string(dir.entries[i].name,dir.entries[i].name_len));
+                            debug!("using entry {}, {}",i,file_name_to_string(dir.entries[i].name,dir.entries[i].name_len));
                             dir.entries[i].begin_block = u16::to_le_bytes(beg);
                             dir.entries[i].end_block = u16::to_le_bytes(beg+data_blocks as u16);
                             dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
@@ -414,83 +490,13 @@ impl Disk
             return Err(Box::new(Error::NoFile));
         }
     }
-    /// Return a disk object if the image data verifies as Pascal,
-    /// otherwise return None.  The image is allowed to be any integral
-    /// number of blocks up to the maximum of 65535.  Various directory
-    /// fields are checked for consistency.
-    pub fn from_img(dimg: &Vec<u8>) -> Option<Self> {
-        let block_count = dimg.len()/BLOCK_SIZE;
-        if dimg.len()%BLOCK_SIZE != 0 || block_count > 65535 {
-            info!("blocks {} remainder {}",block_count,dimg.len()%BLOCK_SIZE);
-            return None;
-        }
-        let mut disk = Self::new(block_count as u16);
-
-        for block in 0..block_count {
-            for byte in 0..512 {
-                disk.blocks[block][byte] = dimg[byte+block*512];
-            }
-        }
-        // test the volume directory header
-        let directory = disk.get_directory(true);
-        let beg0 = u16::from_le_bytes(directory.header.begin_block);
-        let beg = VOL_HEADER_BLOCK as u16;
-        let end = u16::from_le_bytes(directory.header.end_block);
-        let tot = u16::from_le_bytes(directory.header.total_blocks);
-        if beg0!=0 || end<=beg || end>20 {
-            info!("header begin {} end {}",beg0,end);
-            return None;
-        }
-        if (tot as usize) != block_count {
-            info!("header total blocks {}",tot);
-            return None;
-        }
-        if directory.header.name_len>7 || directory.header.name_len==0 {
-            info!("header name length {}",directory.header.name_len);
-            return None;
-        }
-        if directory.header.file_type != [0,0] {
-            info!("header type {}",u16::from_le_bytes(directory.header.file_type));
-            return None;
-        }
-        for i in 0..directory.header.name_len {
-            let c = directory.header.name[i as usize];
-            if c<32 || c>126 {
-                info!("header name character {}",c);
-                return None;
-            }
-        }
-        // test every directory entry
-        for i in 0..u16::from_le_bytes(directory.header.num_files) {
-            let entry = directory.entries[i as usize];
-            let ebeg = u16::from_le_bytes(entry.begin_block);
-            let eend = u16::from_le_bytes(entry.end_block);
-            if ebeg>0 {
-                if ebeg<end || eend<=ebeg || (eend as usize) > block_count {
-                    info!("entry begin {} end {}",ebeg,eend);
-                    return None;
-                }
-                if entry.name_len>15 || entry.name_len==0 {
-                    info!("entry name length {}",entry.name_len);
-                    return None;
-                }
-                for i in 0..entry.name_len {
-                    let c = entry.name[i as usize];
-                    if c<32 || c>126 {
-                        info!("entry name char {}",c);
-                        return None;
-                    }
-                }
-            }
-        }
-        return Some(disk);
-    }
 }
 
 impl disk_base::DiskFS for Disk {
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
-        let dir = self.get_directory(false);
+        let dir = self.get_directory();
+        let total = dir.total_blocks();
         println!();
         println!("{}:",vol_name_to_string(dir.header.name,dir.header.name_len));
         let expected_count = u16::from_le_bytes(dir.header.num_files);
@@ -498,7 +504,7 @@ impl disk_base::DiskFS for Disk {
         for entry in dir.entries {
             let beg = u16::from_le_bytes(entry.begin_block);
             let end = u16::from_le_bytes(entry.end_block);
-            if beg!=0 && end>beg && (end as usize)<self.blocks.len() {
+            if beg!=0 && end>beg && (end as usize)<total {
                 let name = file_name_to_string(entry.name,entry.name_len);
                 let blocks = end - beg;
                 let mut date = "<NO DATE>".to_string();
@@ -514,7 +520,6 @@ impl disk_base::DiskFS for Disk {
             }
         }
         println!();
-        let total = self.blocks.len();
         let (free,largest) = self.num_free_blocks();
         let used = total-free as usize;
         println!("{}/{} files<listed/in-dir>, {} blocks used, {} unused, {} in largest",file_count,expected_count,used,free,largest);
@@ -600,12 +605,10 @@ impl disk_base::DiskFS for Disk {
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
-                let mut buf: Vec<u8> = vec![0;BLOCK_SIZE];
-                if block>=self.blocks.len() {
-                    return Err(Box::new(Error::DevErr));
+                match self.img.read_chunk(ChunkSpec::PO(block)) {
+                    Ok(buf) => Ok((0,buf)),
+                    Err(e) => Err(e)
                 }
-                self.read_block(&mut buf,block,0);
-                Ok((0,buf))
             },
             Err(e) => Err(Box::new(e))
         }
@@ -613,11 +616,13 @@ impl disk_base::DiskFS for Disk {
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
-                if dat.len() > BLOCK_SIZE || block>=self.blocks.len() {
+                if dat.len() > BLOCK_SIZE {
                     return Err(Box::new(Error::DevErr));
                 }
-                self.zap_block(dat,block,0);
-                Ok(dat.len())
+                match self.img.write_chunk(ChunkSpec::PO(block), dat) {
+                    Ok(()) => Ok(dat.len()),
+                    Err(e) => Err(e)
+                }
             },
             Err(e) => Err(Box::new(e))
         }
@@ -643,40 +648,44 @@ impl disk_base::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> Vec<usize> {
+    fn standardize(&self,_ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
         // want to ignore dates, these occur at offest 18 and 20 in the header,
         // and at offset 24 in every entry
-        let mut ans: Vec<usize> = Vec::new();
-        let dir = self.get_directory(false);
+        let mut ans: HashMap<ChunkSpec,Vec<usize>> = HashMap::new();
+        let dir = self.get_directory();
         let beg = VOL_HEADER_BLOCK; // begin_block points to boot block
         let end = u16::from_le_bytes(dir.header.end_block);
-        let mut offset = BLOCK_SIZE*(beg as usize);
-        ans.append(&mut vec![18,19,20,21].iter().map(|x| x + offset).collect());
+        let mut offset = 0;
+        ans.insert(ChunkSpec::PO(beg),vec![18,19,20,21]);
         offset += dir.header.len();
         loop {
             if offset+25 >= BLOCK_SIZE*(end as usize) {
                 break;
             }
-            ans.append(&mut vec![offset+24,offset+25]);
+            let key = ChunkSpec::PO(beg+offset/BLOCK_SIZE);
+            let val = vec![(24+offset)%BLOCK_SIZE, (25+offset)%BLOCK_SIZE];
+            super::add_ignorable_offsets(&mut ans, key, val);
             offset += ENTRY_SIZE;
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>) {
-        let emulator_disk = create_fs_from_file(&path.to_str()
-            .expect("could not unwrap path"))
-            .expect("could not interpret file system");
-        let mut expected = emulator_disk.to_img();
-        let mut actual = self.to_img();
-        for ignorable in ignore {
-            expected[*ignorable] = 0;
-            actual[*ignorable] = 0;
-        }
-        for block in 0..self.blocks.len() {
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+        let mut emulator_disk = create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let dir = self.get_directory();
+        for block in 0..dir.total_blocks() {
+            let addr = ChunkSpec::PO(block);
+            let mut actual = self.img.read_chunk(addr).expect("bad sector access");
+            let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
+            if let Some(ignorable) = ignore.get(&addr) {
+                for offset in ignorable {
+                    actual[*offset] = 0;
+                    expected[*offset] = 0;
+                }
+            }
             for row in 0..16 {
                 let mut fmt_actual = String::new();
                 let mut fmt_expected = String::new();
-                let offset = block*512 + row*32;
+                let offset = row*32;
                 write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
                 write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
                 assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
@@ -686,13 +695,7 @@ impl disk_base::DiskFS for Disk {
     fn get_ordering(&self) -> disk_base::DiskImageType {
         return disk_base::DiskImageType::PO;
     }
-    fn to_img(&self) -> Vec<u8> {
-        let mut result : Vec<u8> = Vec::new();
-        for block in &self.blocks {
-            for byte in 0..512 {
-                result.push(block[byte]);
-            }
-        }
-        return result;
+    fn get_img(&mut self) -> &mut Box<dyn disk_base::DiskImage> {
+        &mut self.img
     }
 }

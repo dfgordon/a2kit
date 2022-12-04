@@ -46,6 +46,12 @@ pub struct Directory {
     pub entries: Vec<DirectoryEntry>
 }
 
+impl Directory {
+    pub fn total_blocks(&self) -> usize {
+        u16::from_le_bytes(self.header.total_blocks) as usize
+    }
+}
+
 // The DiskStruct trait is not ideally suited to a scheme where structures
 // are allowed to cross block-boundaries, but can be made to serve.
 impl DiskStruct for Directory {

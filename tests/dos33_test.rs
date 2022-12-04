@@ -1,8 +1,10 @@
 // test of dos33 disk image module
+use std::collections::HashMap;
 use std::path::Path;
-use a2kit::fs::dos33;
-use a2kit::disk_base::TextEncoder;
-use a2kit::disk_base::{ItemType,DiskFS};
+use a2kit::img;
+use a2kit::fs::{ChunkSpec,dos33};
+use a2kit::disk_base::{ItemType,TextEncoder};
+use a2kit::disk_base::DiskFS;
 use a2kit::lang::applesoft;
 use a2kit_macro::DiskStruct;
 
@@ -16,12 +18,25 @@ pub const JSON_REC: &str = "
     }
 }";
 
+fn ignore_boot_tracks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+    for t in 0..3 {
+        for s in 0..16 {
+            let mut all = vec![0;256];
+            for i in 0..256 {
+                all[i] = i;
+            }
+            ignore.insert(ChunkSpec::DO([t,s]),all);
+        }
+    }
+}
+
 #[test]
 fn format() {
     // DOS tracks can vary some depending on who did the formatting.
     // We are compatible with CiderPress.  The "last track" field in the VTOC
     // is left with value 18, *as if* a greeting program had been written there.
-    let mut disk = dos33::Disk::new();
+    let img = img::dsk_do::DO::create(35, 16);
+    let mut disk = dos33::Disk::from_img(Box::new(img));
     disk.init(254,true,18,35,16);
     disk.compare(&Path::new("tests").join("dos33-boot.do"),&disk.standardize(0));
 }
@@ -62,7 +77,8 @@ fn read_small() {
 fn write_small() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file
-    let mut disk = dos33::Disk::new();
+    let img = img::dsk_do::DO::create(35, 16);
+    let mut disk = dos33::Disk::from_img(Box::new(img));
     disk.init33(254,false);
 
     // save the BASIC program
@@ -86,16 +102,14 @@ fn write_small() {
     disk.write_text("thetext",&encoder.encode("HELLO FROM DOS 3.3").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(0);
-    // loop to ignore boot tracks for this test
-    for i in 0..3*16*256 {
-        ignore.push(i);
-    }
+    ignore_boot_tracks(&mut ignore);
     disk.compare(&Path::new("tests").join("dos33-smallfiles.dsk"),&ignore);
 }
 
 #[test]
 fn out_of_space() {
-    let mut disk = dos33::Disk::new();
+    let img = img::dsk_do::DO::create(35, 16);
+    let mut disk = dos33::Disk::from_img(Box::new(img));
     let big: Vec<u8> = vec![0;0x7f00];
     disk.init33(254,true);
     disk.bsave("f1",&big,0x800,None).expect("error");
@@ -161,7 +175,8 @@ fn write_big() {
     // Formatting: Copy2Plus, Writing: MicroM8
     // This tests a small BASIC program, large binary, and two sparse text files
     let mut buf: Vec<u8>;
-    let mut disk = dos33::Disk::new();
+    let img = img::dsk_do::DO::create(35, 16);
+    let mut disk = dos33::Disk::from_img(Box::new(img));
     disk.init33(254,false);
 
     // create and save the BASIC program
@@ -199,10 +214,7 @@ fn write_big() {
     disk.bsave("sapling",&buf,16384,None).expect("dimg error");
 
     let mut ignore = disk.standardize(0);
-    // loop to ignore boot tracks for this test
-    for i in 0..3*16*256 {
-        ignore.push(i);
-    }
+    ignore_boot_tracks(&mut ignore);
     disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);
 }
 
@@ -211,7 +223,8 @@ fn rename_delete() {
     // Formatting: CiderPress, Writing: Virtual II
     // Adds deletion and renaming to scenario in `write_big`.
     let mut buf: Vec<u8>;
-    let mut disk = dos33::Disk::new();
+    let img = img::dsk_do::DO::create(35, 16);
+    let mut disk = dos33::Disk::from_img(Box::new(img));
     disk.init(254,true,18,35,16);
 
     // create and save the BASIC program
@@ -265,18 +278,13 @@ fn rename_delete() {
 fn read_big_woz1() {
     // Formatting: Copy2Plus, Writing: MicroM8
     // This tests the same file system information used for read_big and write_big.
-    // We do not expect our WOZ track bits to be identical to those from an emulator.
-    // So the strategy is to load the WOZ image as created by the emulator,
-    // convert to DSK, and compare with a DSK that was also created via the emulator.
-    // In testing the conversion we test a lot of underlying WOZ machinery.
+    // Here we are simply reading from WOZ1 and DO and making sure we get
+    // the same chunks either way.
 
     let buf = Path::new("tests").join("dos33-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
-    let (_img,disk) = a2kit::create_img_and_fs_from_file(woz1_path).expect("could not get image");
+    let disk = a2kit::create_fs_from_file(woz1_path).expect("could not get image");
     let mut ignore = disk.standardize(2);
-    // loop to ignore boot tracks for this test
-    for i in 0..3*16*256 {
-        ignore.push(i);
-    }
+    ignore_boot_tracks(&mut ignore);
     disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
 }

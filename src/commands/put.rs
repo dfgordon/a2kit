@@ -34,8 +34,8 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                 },
                 _ => 768 as u16
             };
-            match a2kit::create_img_and_fs_from_file(img_path) {
-                Ok((mut img,mut disk)) => {
+            match a2kit::create_fs_from_file(img_path) {
+                Ok(mut disk) => {
                     let result = match typ {
                         Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
                         Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
@@ -78,7 +78,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                         }
                     };
                     return match result {
-                        Ok(_len) => a2kit::update_img_and_save(&mut img,&disk,img_path),
+                        Ok(_len) => a2kit::save_img(&mut disk,img_path),
                         Err(e) => Err(e)
                     }
                 },

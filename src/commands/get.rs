@@ -64,8 +64,8 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                 },
                 _ => {}
             }
-            match a2kit::create_img_and_fs_from_file(img_path) {
-                Ok((_img,disk)) => {
+            match a2kit::create_fs_from_file(img_path) {
+                Ok(disk) => {
                     // special handling for sparse data
                     if let Ok(ItemType::FileImage) = typ {
                         return match disk.read_any(&src_path) {

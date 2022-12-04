@@ -12,6 +12,8 @@ use std::fmt;
 use json;
 use hex;
 
+use crate::fs::ChunkSpec;
+
 #[derive(thiserror::Error,Debug)]
 pub enum CommandError {
     #[error("Item type is not yet supported")]
@@ -552,22 +554,22 @@ impl fmt::Display for Records {
 }
 
 pub trait DiskImage {
-    fn is_do_or_po(&self) -> bool { false }
-    fn update_from_d13(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
-    fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
-    fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn Error>>;
-    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn Error>>;
-    fn to_do(&self) -> Result<Vec<u8>,Box<dyn Error>>;
-    fn to_po(&self) -> Result<Vec<u8>,Box<dyn Error>>;
+    fn track_count(&self) -> usize;
+    fn byte_capacity(&self) -> usize;
+    fn what_am_i(&self) -> DiskImageType;
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
     fn to_bytes(&self) -> Vec<u8>;
+    /// Read a chunk (block or sector) from the image
+    fn read_chunk(&self,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn Error>>;
+    /// Write a chunk (block or sector) to the image
+    fn write_chunk(&mut self, addr: ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn Error>>;
     /// Get the track buffer exactly in the form the image stores it
     fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
     /// Get the track bytes; bits are processed through a soft latch, if applicable
     fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
 }
 
-/// Abstract file system interface.
+/// Abstract file system interface.  Presumed to own an underlying DiskImage.
 /// Provides BASIC-like high level commands, chunk operations, and `any` type operations.
 pub trait DiskFS {
     /// List all the files on disk to standard output, mirrors `CATALOG`
@@ -609,23 +611,24 @@ pub trait DiskFS {
     fn read_any(&self,path: &str) -> Result<FileImage,Box<dyn Error>>;
     /// Write a file from a generalized representation
     fn write_any(&mut self,path: &str,dat: &FileImage) -> Result<usize,Box<dyn Error>>;
-    /// Get a chunk (block or sector) appropriate for this disk
+    /// Get a chunk (block or sector) appropriate for this file system
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn Error>>;
-    /// Put a chunk (block or sector) appropriate for this disk, n.b. this simply zaps the disk image and can easily break it
+    /// Put a chunk (block or sector) appropriate for this file system.
+    /// N.b. this simply zaps the chunk and can break the file system.
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn Error>>;
     /// Underlying ordering of this file system
     fn get_ordering(&self) -> DiskImageType;
-    /// Create disk image bytestream appropriate for the file system on this disk.
-    fn to_img(&self) -> Vec<u8>;
     /// Convert file system text to a UTF8 string
     fn decode_text(&self,dat: &Vec<u8>) -> String;
     /// Convert UTF8 string to file system text
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn Error>>;
     /// Standardize for comparison with other sources of disk images.
-    /// Returns a vector of offsets into the image that are to be zeroed or ignored.
+    /// Returns a map from chunks to offsets within the chunk that are to be zeroed or ignored.
     /// Typically it is important to call this before deletions happen.
     /// May be recursive, ref_con can be used to initialize each recursion.
-    fn standardize(&self,ref_con: u16) -> Vec<usize>;
+    fn standardize(&self,ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>>;
     /// Compare this disk with a reference disk for testing purposes.  Panics if comparison fails.
-    fn compare(&self,path: &std::path::Path,ignore: &Vec<usize>);
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>);
+    /// Mutably borrow the underlying disk image
+    fn get_img(&mut self) -> &mut Box<dyn DiskImage>;
 }

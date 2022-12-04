@@ -6,49 +6,71 @@
 
 use crate::disk_base;
 use crate::img;
+use crate::fs::ChunkSpec;
 
-const TRACK_SIZE: usize = 13*256;
+const SECTOR_SIZE: usize = 256;
+const TRACK_SIZE: usize = 13*SECTOR_SIZE;
 const MIN_TRACKS: usize = 35;
 
 /// Wrapper for D13 data
 pub struct D13 {
+    tracks: u16,
     data: Vec<u8>
 }
 
+impl D13 {
+    pub fn create(tracks: u16) -> Self {
+        let mut data: Vec<u8> = Vec::new();
+        for _i in 0..tracks as usize*13 {
+            data.append(&mut [0;SECTOR_SIZE].to_vec());
+        }
+        Self {
+            tracks,
+            data
+        }
+    }
+}
+
 impl disk_base::DiskImage for D13 {
+    fn track_count(&self) -> usize {
+        return self.tracks as usize;
+    }
+    fn byte_capacity(&self) -> usize {
+        return self.data.len();
+    }
+    fn read_chunk(&self,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        match addr {
+            ChunkSpec::D13([t,s]) => {
+                let offset = t*TRACK_SIZE + s*SECTOR_SIZE;
+                Ok(self.data[offset..offset+SECTOR_SIZE].to_vec())
+            },
+            _ => Err(Box::new(img::Error::ImageTypeMismatch))
+        }
+    }
+    fn write_chunk(&mut self, addr: ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        match addr {
+            ChunkSpec::D13([t,s]) => {
+                let offset = t*TRACK_SIZE + s*SECTOR_SIZE;
+                for i in 0..dat.len() {
+                    self.data[offset+i] = dat[i];
+                }
+                Ok(())
+            },
+            _ => Err(Box::new(img::Error::ImageTypeMismatch))
+        }
+    }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
         // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
         if data.len()%TRACK_SIZE > 0 || data.len()/TRACK_SIZE < MIN_TRACKS {
             return None;
         }
         Some(Self {
+            tracks: (data.len()/TRACK_SIZE) as u16,
             data: data.clone()
         })
     }
-    fn is_do_or_po(&self) -> bool {
-        false
-    }
-    fn update_from_d13(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        if self.data.len()!=dsk.len() {
-            return Err(Box::new(img::Error::ImageSizeMismatch));
-        }
-        self.data = dsk.clone();
-        return Ok(());
-    }
-    fn update_from_do(&mut self,_dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));
-    }
-    fn update_from_po(&mut self,_dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));
-    }
-    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Ok(self.data.clone());
-    }
-    fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));
-    }
-    fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return Err(Box::new(img::Error::ImageTypeMismatch));
+    fn what_am_i(&self) -> disk_base::DiskImageType {
+        disk_base::DiskImageType::D13
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

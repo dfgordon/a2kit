@@ -30,6 +30,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
 The subcommands are generally designed to function as nodes in a pipeline.
 PowerShell users may need to wrap the pipeline in a native shell.
 Set RUST_LOG environment variable to control logging level.
+  levels: trace,debug,info,warn,error
 
 Examples:
 ---------
@@ -120,23 +121,19 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("read from stdin, detokenize, write to stdout"))
     .get_matches();
     
-    // Transform an image into another type of image
+    // TODO: Transform an image into another type of image
 
     if let Some(cmd) = matches.subcommand_matches("reimage") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+        let new_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();
         // we need to get the file system also in order to determine the ordering
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((img,_disk)) => {
-                let maybe_bytes = match DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap() {
-                    DiskImageType::DO => img.to_do(),
-                    DiskImageType::PO => img.to_po(),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(disk) => {
+                match new_typ {
                     _ => {
                         return Err(Box::new(CommandError::UnsupportedFormat))
                     }
                 };
-                if let Ok(bytestream) = maybe_bytes {
-                    std::io::stdout().write_all(&bytestream).expect("write to stdout failed");
-                }
                 Ok(())
             },
             Err(e) => Err(e)
@@ -325,9 +322,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     if let Some(cmd) = matches.subcommand_matches("mkdir") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.create(&path_in_img) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.create(&path_in_img) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)
@@ -338,9 +335,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     if let Some(cmd) = matches.subcommand_matches("delete") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.delete(&path_in_img) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.delete(&path_in_img) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)
@@ -351,9 +348,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     if let Some(cmd) = matches.subcommand_matches("lock") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.lock(&path_in_img) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.lock(&path_in_img) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)
@@ -364,9 +361,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     if let Some(cmd) = matches.subcommand_matches("unlock") {
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.unlock(&path_in_img) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.unlock(&path_in_img) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)
@@ -378,9 +375,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
         let name = String::from(cmd.value_of("name").expect(RCH));
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.rename(&path_in_img,&name) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.rename(&path_in_img,&name) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)
@@ -393,9 +390,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         let path_in_img = String::from(cmd.value_of("file").expect(RCH));
         let typ = String::from(cmd.value_of("type").expect(RCH));
         let aux = String::from(cmd.value_of("aux").expect(RCH));
-        return match a2kit::create_img_and_fs_from_file(&path_to_img) {
-            Ok((mut img,mut disk)) => match disk.retype(&path_in_img,&typ,&aux) {
-                Ok(()) => a2kit::update_img_and_save(&mut img,&disk,&path_to_img),
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.retype(&path_in_img,&typ,&aux) {
+                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
                 Err(e) => Err(e)
             },
             Err(e) => Err(e)

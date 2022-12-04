@@ -1,7 +1,9 @@
 // test of prodos disk image module
 use std::path::Path;
 use std::fmt::Write;
-use a2kit::fs::prodos;
+use std::collections::HashMap;
+use a2kit::fs::{ChunkSpec,prodos};
+use a2kit::fs::prodos::types::BLOCK_SIZE;
 use a2kit::img::{woz1,woz2};
 use a2kit::disk_base::TextEncoder;
 use a2kit::lang::applesoft;
@@ -18,16 +20,29 @@ pub const JSON_REC: &str = "
     }
 }";
 
+fn ignore_boot_blocks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+    for block in 0..2 {
+        let mut all: Vec<usize> = Vec::new();
+        for i in 0..BLOCK_SIZE {
+            all.push(i);
+        }
+        ignore.insert(ChunkSpec::PO(block),all);
+    }
+}
+
 #[test]
 fn format() {
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
-    disk.compare(&Path::new("tests").join("prodos-blank.po"),&disk.standardize(2));
+    let ignore = disk.standardize(2);
+    disk.compare(&Path::new("tests").join("prodos-blank.po"),&ignore);
 }
 
 #[test]
 fn create_dirs() {
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("DIRTEST"),true,None);
     disk.create(&String::from("TEST")).expect("unreachable");
     for i in 1..55 {
@@ -76,7 +91,8 @@ fn read_small() {
 fn write_small() {
     // Formatting: Copy2Plus, writing: MicroM8:
     // This tests a small BASIC program, binary, and text file
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
     // save the BASIC program
@@ -101,16 +117,14 @@ fn write_small() {
     disk.write_text("thetext",&encoder.encode("HELLO FROM PRODOS").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(2);
-    // loop to ignore boot blocks for this test
-    for i in 0..1024 {
-        ignore.push(i);
-    }
+    ignore_boot_blocks(&mut ignore);
     disk.compare(&Path::new("tests").join("prodos-smallfiles.do"),&ignore);
 }
 
 #[test]
 fn out_of_space() {
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("NEW.DISK"),true,None);
     disk.bsave("f1",&big,0x800,None).expect("error");
@@ -177,7 +191,8 @@ fn write_big() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a seedling, a sapling, and two trees (both sparse)
     let mut buf: Vec<u8>;
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
     // create and save the BASIC program, this is a seedling file
@@ -222,7 +237,8 @@ fn write_big() {
 fn fill_dirs() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // Make a lot of directories and put sparse files in a few of them
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
     let basic_program = "
@@ -274,7 +290,8 @@ fn fill_dirs() {
 fn rename_delete() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // test delete and rename of sparse tree files and directories inside a large subdirectory
-    let mut disk = prodos::Disk::new(280);
+    let img = a2kit::img::dsk_po::PO::create(280);
+    let mut disk = prodos::Disk::from_img(Box::new(img));
     disk.format(&String::from("NEW.DISK"),true,None);
 
     let basic_program = "
@@ -333,14 +350,10 @@ fn rename_delete() {
 fn read_big_woz1() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests the same file system information used for read_big and write_big.
-    // We do not expect our WOZ track bits to be identical to those from an emulator.
-    // So the strategy is to load the WOZ image as created by the emulator,
-    // convert to DSK, and compare with a DSK that was also created via the emulator.
-    // In testing the conversion we test a lot of underlying WOZ machinery.
 
     let buf = Path::new("tests").join("prodos-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
-    let (_img,mut disk) = a2kit::create_img_and_fs_from_file(woz1_path).expect("could not interpret image");
+    let mut disk = a2kit::create_fs_from_file(woz1_path).expect("could not interpret image");
     let ignore = disk.standardize(2);
     // As usual we have mysterious trailing byte differences which seem to be a real artifact of the emulators.
     // When VII saves the WOZ it does not have the trailing byte(s), using DSK in the exact same way does.
@@ -353,48 +366,4 @@ fn read_big_woz1() {
         disk.write_chunk("7",&dir_chunk).expect("could not apply chunk correction");
     }
     disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
-}
-
-#[test]
-fn read_write_small_woz1_and_woz2() {
-    // To verify we can write to WOZ, we create a DiskFS, save it to a WOZ, regenerate the DiskFS
-    let mut disk = prodos::Disk::new(280);
-    disk.format(&String::from("NEW.DISK"),true,None);
-
-    // save the BASIC program
-    let basic_program = "
-    10 D$ =  CHR$ (4)
-    20  POKE 768,6: POKE 769,5: POKE 770,0: POKE 771,2
-    30  PRINT D$;\"BSAVE THECHIP,A768,L4\"
-    40  PRINT D$;\"OPEN THETEXT\"
-    50  PRINT D$;\"WRITE THETEXT\"
-    60  PRINT \"HELLO FROM PRODOS\"
-    70  PRINT D$;\"CLOSE THETEXT\"";
-    let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-    let mut lib_tokens = tokenizer.tokenize(basic_program,2049);
-    lib_tokens.push(196);
-    disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("error");
-
-    // save the binary
-    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
-
-    // save the text
-    let encoder = prodos::types::Encoder::new(Some(0x0d));
-    disk.write_text("thetext",&encoder.encode("HELLO FROM PRODOS").unwrap()).expect("error");
-    
-    // Check we can go to WOZ1 and back
-
-    let mut woz = woz1::Woz1::create(254, DiskKind::A2_525_16);
-    woz.update_from_po(&disk.to_img()).expect("could not form WOZ");
-    let other_img = woz.to_po().expect("could not unform WOZ");
-
-    assert_eq!(disk.to_img(),other_img);
-
-    // Check we can go to WOZ2 and back
-
-    let mut woz = woz2::Woz2::create(254, DiskKind::A2_525_16);
-    woz.update_from_po(&disk.to_img()).expect("could not form WOZ");
-    let other_img = woz.to_po().expect("could not unform WOZ");
-
-    assert_eq!(disk.to_img(),other_img);
 }

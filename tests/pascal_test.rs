@@ -1,6 +1,8 @@
 // test of pascal disk image module
 use std::path::Path;
-use a2kit::fs::pascal;
+use std::collections::HashMap;
+use a2kit::fs::pascal::types::BLOCK_SIZE;
+use a2kit::fs::{ChunkSpec,pascal};
 use a2kit::disk_base::TextEncoder;
 use a2kit::disk_base::{DiskFS,DiskKind};
 use a2kit_macro::DiskStruct;
@@ -32,15 +34,23 @@ const PROG3: &str =
        WRITE('HELLO FROM TEST3')
     END.";
 
+fn ignore_boot_blocks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+    for block in 0..2 {
+        let mut all: Vec<usize> = Vec::new();
+        for i in 0..BLOCK_SIZE {
+            all.push(i);
+        }
+        ignore.insert(ChunkSpec::PO(block),all);
+    }
+}
+
 #[test]
 fn format() {
-    let mut disk = pascal::Disk::new(280);
+    let img = a2kit::img::dsk_do::DO::create(35,16);
+    let mut disk = pascal::Disk::from_img(Box::new(img));
     disk.format(&String::from("BLANK"),0,&DiskKind::A2_525_16,None).expect("could not format");
     let mut ignore = disk.standardize(0);
-    // loop to ignore boot blocks for this test
-    for i in 0..1024 {
-        ignore.push(i);
-    }
+    ignore_boot_blocks(&mut ignore);
     disk.compare(&Path::new("tests").join("pascal-blank.do"),&ignore);
 }
 
@@ -75,7 +85,8 @@ fn read_small() {
 
 #[test]
 fn out_of_space() {
-    let mut disk = pascal::Disk::new(280);
+    let img = a2kit::img::dsk_do::DO::create(35,16);
+    let mut disk = pascal::Disk::from_img(Box::new(img));
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),0,&DiskKind::A2_525_16,None).expect("could not format");
     disk.bsave("f1",&big,0x800,None).expect("error");

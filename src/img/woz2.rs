@@ -338,6 +338,27 @@ impl img::woz::WozConverter for Woz2 {
 }
 
 impl disk_base::DiskImage for Woz2 {
+    fn track_count(&self) -> usize {
+        match self.info.disk_type {
+            1 => 35,
+            _ => panic!("disk type not supported")
+        }
+    }
+    fn byte_capacity(&self) -> usize {
+        match self.info.disk_type {
+            1 => self.track_count()*16*256,
+            _ => panic!("disk type not supported")
+        }
+    }
+    fn what_am_i(&self) -> disk_base::DiskImageType {
+        disk_base::DiskImageType::WOZ2
+    }
+    fn read_chunk(&self,addr: crate::fs::ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        super::woz::read_chunk(self, addr)
+    }
+    fn write_chunk(&mut self, addr: crate::fs::ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        super::woz::write_chunk(self, addr, dat)
+    }
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
         if buf.len()<12 {
             return None;
@@ -372,24 +393,6 @@ impl disk_base::DiskImage for Woz2 {
             return Some(ans);
         }
         return None;
-    }
-    fn update_from_d13(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return img::woz::update_from_d13::<Self>(self,dsk);
-    }
-    fn update_from_do(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return img::woz::update_from_do::<Self>(self,dsk);
-    }
-    fn update_from_po(&mut self,dsk: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        return img::woz::update_from_po::<Self>(self,dsk);
-    }
-    fn to_d13(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return img::woz::to_d13::<Self>(self);
-    }
-    fn to_do(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return img::woz::to_do::<Self>(self);
-    }
-    fn to_po(&self) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        return img::woz::to_po::<Self>(self);
     }
     fn to_bytes(&self) -> Vec<u8> {
         if self.track_bits_offset!=1536 {
