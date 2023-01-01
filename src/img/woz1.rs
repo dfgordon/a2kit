@@ -62,6 +62,7 @@ pub struct Trks {
 }
 
 pub struct Woz1 {
+    kind: img::DiskKind,
     header: Header,
     info: Info,
     tmap: TMap,
@@ -92,7 +93,12 @@ impl Info {
             id: u32::to_le_bytes(INFO_ID),
             size: u32::to_le_bytes(60),
             vers: 1,
-            disk_type: match kind { img::DiskKind::A2_35 => 2, _ => 1 },
+            disk_type: match kind {
+                img::DiskKind::A2_525_13 => 1,
+                img::DiskKind::A2_525_16 => 1,
+                img::DiskKind::A2_35 => 2,
+                _ => panic!("WOZ rejected disk kind")
+            },
             write_protected: 0,
             synchronized: 0,
             cleaned: 0,
@@ -136,7 +142,9 @@ impl Trk {
             img::DiskKind::A2_525_13 => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
             img::DiskKind::A2_525_16 => disk525::create_std16_track(vol,track,TRACK_BYTE_CAPACITY),
             img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            img::DiskKind::A2Max => panic!("HD not allowed")
+            img::DiskKind::A2Max => panic!("HD not allowed"),
+            img::DiskKind::CPM1_8_26 => panic!("8 inch disks not allowed"),
+            img::DiskKind::Unknown => panic!("Unknown disk kind not allowed")
         };
         track_obj.read(&mut bits,track_obj.bit_count());
         Self {
@@ -157,7 +165,9 @@ impl Trks {
             img::DiskKind::A2_525_13 => 35,
             img::DiskKind::A2_525_16 => 35,
             img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            img::DiskKind::A2Max => panic!("HD not allowed")
+            img::DiskKind::A2Max => panic!("HD not allowed"),
+            img::DiskKind::CPM1_8_26 => panic!("8 inch disks not allowed"),
+            img::DiskKind::Unknown => panic!("Unknown disk kind not allowed")
         };
         let mut ans = Trks::new();
         ans.id = u32::to_le_bytes(TRKS_ID);
@@ -217,6 +227,7 @@ impl DiskStruct for Trks {
 impl Woz1 {
     fn new() -> Self {
         Self {
+            kind: img::DiskKind::Unknown,
             header: Header::new(),
             info: Info::new(),
             tmap: TMap::new(),
@@ -225,10 +236,11 @@ impl Woz1 {
         }
     }
     pub fn create(vol: u8,kind: img::DiskKind) -> Self {
-        if kind==img::DiskKind::A2_35 || kind==img::DiskKind::A2Max {
+        if kind!=img::DiskKind::A2_525_16 && kind!=img::DiskKind::A2_525_13 {
             panic!("only 5.25 disks allowed");
         }
         Self {
+            kind,
             header: Header::create(),
             info: Info::create(kind),
             tmap: TMap::create(kind),
@@ -306,10 +318,13 @@ impl img::DiskImage for Woz1 {
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::WOZ1
     }
-    fn read_chunk(&self,addr: crate::fs::ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn kind(&self) -> img::DiskKind {
+        self.kind
+    }
+    fn read_chunk(&self,addr: crate::fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         super::woz::read_chunk(self, addr)
     }
-    fn write_chunk(&mut self, addr: crate::fs::ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_chunk(&mut self, addr: crate::fs::Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         super::woz::write_chunk(self, addr, dat)
     }
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
@@ -335,6 +350,12 @@ impl img::DiskImage for Woz1 {
             ptr = next;
         }
         if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 {
+            // TODO: can we figure if this is a 13 sector disk at this point?
+            ans.kind = match ans.info.disk_type {
+                1 => img::DiskKind::A2_525_16,
+                2 => img::DiskKind::A2_35,
+                _ => panic!("WOZ encountered unexpected disk type in INFO chunk")
+            };
             return Some(ans);
         }
         return None;

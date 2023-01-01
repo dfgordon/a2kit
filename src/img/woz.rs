@@ -2,7 +2,7 @@
 
 use log::{debug,trace};
 use super::disk525::{self, SectorAddressFormat, SectorDataFormat};
-use crate::fs::ChunkSpec;
+use crate::fs::Chunk;
 
 pub const INFO_ID: u32 = 0x4f464e49;
 pub const TMAP_ID: u32 = 0x50414d54;
@@ -10,6 +10,9 @@ pub const TRKS_ID: u32 = 0x534b5254;
 pub const WRIT_ID: u32 = 0x54495257;
 pub const META_ID: u32 = 0x4154454D;
 pub const ALLOWED_TRACKS_525: [usize;1] = [35];
+const DOS_LSEC_TO_DOS_PSEC: [usize;16] = [0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15];
+const CPM_LSEC_TO_DOS_PSEC: [usize;32] = [0,0,3,3,6,6,9,9,12,12,15,15,2,2,5,5,8,8,11,11,14,14,1,1,4,4,7,7,10,10,13,13];
+//const CPM_LSEC_TO_DOS_OFFSET: [usize;32] = [0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128];
 
 /// Trait allowing us to write only 1 set of conversions for both WOZ types.
 /// We end up with some generic functions that get called by methods of the same name.
@@ -75,7 +78,7 @@ pub fn crc32(crc_seed: u32, buf: &Vec<u8>) -> u32
 	return crc ^ !(0 as u32);
 }
 
-/// Return tuple (ptr,id,Option(chunk)).
+/// Get the next WOZ metadata chunk.  Return tuple (ptr,id,Option(chunk)).
 /// Here `ptr` is the index to the subsequent chunk, which can be passed back in.
 /// If `ptr`=0 no more chunks. Option(chunk)=None means unknown id or incongruous size.
 /// The returned chunk buffer includes the id and size in the first 8 bytes.
@@ -109,16 +112,44 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-/// assumes all chunks are on the same track
-pub fn read_chunk<T: WozConverter>(woz: &T,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+/// Get the ordered physical track-sector list for any chunk
+fn get_ts_list(addr: Chunk) -> Vec<[usize;2]> {
+	match addr {
+		Chunk::D13([t,s]) => vec![[t,s]],
+		Chunk::DO([t,s]) => vec![[t,DOS_LSEC_TO_DOS_PSEC[s]]],
+		Chunk::PO(block) => {
+			let [[t1,s1],[t2,s2]] = super::ts_from_prodos_block(block);
+			vec![[t1,DOS_LSEC_TO_DOS_PSEC[s1]],[t2,DOS_LSEC_TO_DOS_PSEC[s2]]]
+		},
+		Chunk::CPM((_block,_bsh,_off)) => {
+			let mut ans: Vec<[usize;2]> = Vec::new();
+			let lsecs = addr.get_lsecs(32);
+			// the following assumes blocks are aligned to even lsecs; also the list must be ordered.
+			for ts in lsecs {
+				if ts[1]%2==0 {
+					ans.push([ts[0],CPM_LSEC_TO_DOS_PSEC[ts[1]]]);
+				}
+			}
+			ans
+		}
+	}
+}
+
+/// Find the file system allocation unit given by `addr` and return the data or an error.
+/// Blocks are not allowed to cross track boundaries.
+pub fn read_chunk<T: WozConverter>(woz: &T,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+	trace!("reading {}",addr);
 	let mut ans: Vec<u8> = Vec::new();
-	let ts_list = addr.get_ts_list();
-	let track = ts_list[0][0] as u8;
-	// TODO: check if track exists
-	let mut track_obj = woz.get_track_obj(track);
+	let ts_list = get_ts_list(addr);
+	let track = ts_list[0][0];
+	if track >= woz.num_tracks() {
+		return Err(Box::new(super::Error::TrackCountMismatch));
+	}
+	let mut track_obj = woz.get_track_obj(track as u8);
+	// Update nibble format if necessary
 	// TODO: should we pack the nibble formats with the image?
 	match addr {
-		ChunkSpec::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
+		Chunk::D13(_) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
 		_ => {}
 	}
 	for ts in ts_list {
@@ -132,23 +163,21 @@ pub fn read_chunk<T: WozConverter>(woz: &T,addr: ChunkSpec) -> Result<Vec<u8>,Bo
 	return Ok(ans);
 }
 
-/// assumes all chunks are on the same track
-pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:ChunkSpec,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-	// pad to the largest chunk size we expect
-	let mut padded: Vec<u8> = [0;512].to_vec();
-	for i in 0..512 {
-		padded[i] = match dat.len() {
-			x if i<x => dat[i],
-			_ => 0
-		};
+/// Write the given buffer to the file system allocation unit given by `addr`.
+/// Blocks are not allowed to cross track boundaries.
+pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:Chunk,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	trace!("writing {}",addr);
+	let ts_list = get_ts_list(addr);
+	let track = ts_list[0][0];
+	let padded = super::quantize_chunk(dat, ts_list.len()*256);
+	let mut track_obj = woz.get_track_obj(track as u8);
+	if track >= woz.num_tracks() {
+		return Err(Box::new(super::Error::TrackCountMismatch));
 	}
-	let ts_list = addr.get_ts_list();
-	let track = ts_list[0][0] as u8;
-	// TODO: check if track exists
-	let mut track_obj = woz.get_track_obj(track);
+	// Update nibble format if necessary
 	// TODO: should we pack the nibble formats with the image?
 	match addr {
-		ChunkSpec::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
+		Chunk::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
 		_ => {}
 	}
 	let mut offset = 0;
@@ -161,6 +190,6 @@ pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:ChunkSpec,dat: &Vec<u8>) ->
 		}
 		offset += 256;
 	}
-	woz.update_track(&mut track_obj, track);
+	woz.update_track(&mut track_obj, track as u8);
 	return Ok(());
 }

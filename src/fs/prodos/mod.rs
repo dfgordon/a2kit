@@ -12,10 +12,10 @@ use a2kit_macro::DiskStruct;
 use std::str::FromStr;
 use std::fmt::Write;
 use colored::*;
-use log::{trace,debug};
+use log::{trace,debug,error};
 use types::*;
 use directory::*;
-use super::{ChunkSpec,TextEncoder};
+use super::{Chunk,TextEncoder};
 use crate::lang::applesoft;
 use crate::img;
 use crate::commands::ItemType;
@@ -47,7 +47,7 @@ impl Disk {
     /// Test an image for the ProDOS file system.
     pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
         // test the volume directory header to see if this is ProDOS
-        if let Ok(buf) = img.read_chunk(ChunkSpec::PO(2)) {
+        if let Ok(buf) = img.read_chunk(Chunk::PO(2)) {
             let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
             let char_patt = [first_char_patt,"0123456789"].concat();
             let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&buf);
@@ -128,7 +128,7 @@ impl Disk {
             x if x<=bytes => x,
             _ => bytes
         };
-        if let Ok(buf) = self.img.read_chunk(ChunkSpec::PO(iblock)) {
+        if let Ok(buf) = self.img.read_chunk(Chunk::PO(iblock)) {
             for i in 0..actual_len as usize {
                 data[offset + i] = buf[i];
             }
@@ -150,7 +150,7 @@ impl Disk {
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        self.img.write_chunk(ChunkSpec::PO(iblock), &data[offset..offset+actual_len].to_vec()).
+        self.img.write_chunk(Chunk::PO(iblock), &data[offset..offset+actual_len].to_vec()).
             expect("write failed");
     }
     fn get_available_block(&self) -> Option<u16> {
@@ -351,6 +351,22 @@ impl Disk {
         }
         return path_nodes;
     }
+    /// split the path into the last node (file or directory) and its parent path
+    fn split_path(&self,path: &str) -> Result<[String;2],Error> {
+        let mut path_nodes = self.normalize_path(path);
+        // if last node is empty, remove it (means we have a directory)
+        if path_nodes[path_nodes.len()-1].len()==0 {
+            path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
+        }
+        let name = path_nodes[path_nodes.len()-1].clone();
+        if path_nodes.len()<2 {
+            return Err(Error::PathNotFound);
+        } else {
+            path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
+        }
+        let parent_path: String = path_nodes.iter().map(|s| "/".to_string() + s).collect::<Vec<String>>().concat();
+        return Ok([parent_path,name]);
+    }
     fn search_volume(&self,file_types: &Vec<StorageType>,path: &str) -> Result<EntryLocation,Error> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         let path_nodes = self.normalize_path(path);
@@ -499,23 +515,24 @@ impl Disk {
             _ => panic!("cannot read file of this type")
         }
     }
+    /// Verify that the new name does not already exist
+    fn ok_to_rename(&self,path: &str,new_name: &str) -> Result<(),Error> {
+        let types = vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree,StorageType::SubDirEntry];
+        let [parent_path,_old_name] = self.split_path(path)?;
+        if let Ok(key_block) = self.find_dir_key_block(&parent_path) {
+            if let Some(_loc) = self.search_entries(&types, &new_name.to_string(), key_block) {
+                return Err(Error::DuplicateFilename);
+            }
+        }
+        return Ok(());
+    }
     /// Prepare a directory for a new file or subdirectory.  This will modify the disk only if the directory needs to grow.
-    fn prepare_to_write(&mut self,path: &str,types: &Vec<StorageType>) -> Result<(String,u16,EntryLocation,u16),Error> {
-        // following builds the subdirectory path
-        let mut path_nodes = self.normalize_path(path);
-        if path_nodes[path_nodes.len()-1].len()==0 {
-            path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
-        }
-        let name = path_nodes[path_nodes.len()-1].clone();
-        if path_nodes.len()<2 {
-            return Err(Error::PathNotFound);
-        } else {
-            path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
-        }
-        let subdir_path: String = path_nodes.iter().map(|s| "/".to_string() + s).collect::<Vec<String>>().concat();
+    fn prepare_to_write(&mut self,path: &str) -> Result<(String,u16,EntryLocation,u16),Error> {
+        let types = vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree,StorageType::SubDirEntry];
+        let [parent_path,name] = self.split_path(path)?;
         // find the parent key block, entry location, and new data block (or new key block if directory)
-        if let Ok(key_block) = self.find_dir_key_block(&subdir_path) {
-            if let Some(_loc) = self.search_entries(types, &name, key_block) {
+        if let Ok(key_block) = self.find_dir_key_block(&parent_path) {
+            if let Some(_loc) = self.search_entries(&types, &name, key_block) {
                 return Err(Error::DuplicateFilename);
             }
             match self.get_available_entry(key_block) {
@@ -538,6 +555,10 @@ impl Disk {
     /// The creator of `FileImage` must ensure that the first block is allocated.
     /// This writes blocks more often than necessary, would be inadequate for an actual disk.
     fn write_file(&mut self,loc: EntryLocation,fimg: &super::FileImage) -> Result<usize,Error> {
+        if fimg.chunks.len()==0 {
+            error!("empty data is not allowed for ProDOS file images");
+            return Err(Error::EndOfData);
+        }
         let mut storage = StorageType::Seedling;
         let mut master_buf: Vec<u8> = vec![0;512];
         let mut master_ptr: u16 = 0;
@@ -689,6 +710,7 @@ impl Disk {
 
             // update the entry, do last to capture all the changes
             entry.set_eof(usize::max(entry.eof(),fimg.eof as usize));
+            entry.set_all_access(fimg.access[0]);
             self.write_entry(&loc,&entry);
         }
         return Ok(eof);
@@ -768,7 +790,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn create(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
-        match self.prepare_to_write(path, &vec![StorageType::SubDirEntry]) {
+        match self.prepare_to_write(path) {
             Ok((name,key_block,loc,new_block)) => {
                 // update the file count in the parent key block
                 let mut dir = self.get_directory(key_block as usize);
@@ -849,6 +871,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn std::error::Error>> {
+        self.ok_to_rename(path, name)?;
         if let Ok(loc) = self.find_file(path) {
             return self.modify(&loc,None,Some(name),None,None);
         }
@@ -888,6 +911,7 @@ impl super::DiskFS for Disk {
         };
         let mut fimg = super::FileImage::desequence(BLOCK_SIZE, &padded);
         fimg.fs_type = FileType::Binary as u32;
+        fimg.access = vec![STD_ACCESS];
         fimg.aux = start_addr as u32;
         return self.write_any(path,&fimg);
     }
@@ -903,6 +927,7 @@ impl super::DiskFS for Disk {
     }
     fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
         let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
+        fimg.access = vec![STD_ACCESS];
         match typ {
             ItemType::ApplesoftTokens => {
                 let addr = applesoft::deduce_address(dat);
@@ -930,10 +955,11 @@ impl super::DiskFS for Disk {
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
         fimg.fs_type = FileType::Text as u32;
+        fimg.access = vec![STD_ACCESS];
         return self.write_any(path,&fimg);
     }
     fn read_records(&self,path: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
-        let encoder = Encoder::new(Some(0x0d));
+        let encoder = Encoder::new(vec![0x0d]);
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -947,8 +973,9 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_records(&mut self,path: &str, records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
-        let encoder = Encoder::new(Some(0x0d));
-        if let Ok(fimg) = records.to_fimg(BLOCK_SIZE,FileType::Text as u32,true,encoder) {
+        let encoder = Encoder::new(vec![0x0d]);
+        if let Ok(mut fimg) = records.to_fimg(BLOCK_SIZE,FileType::Text as u32,true,encoder) {
+            fimg.access = vec![STD_ACCESS];
             return self.write_any(path,&fimg);
         } else {
             Err(Box::new(Error::Syntax))
@@ -993,7 +1020,7 @@ impl super::DiskFS for Disk {
             eprintln!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
-        match self.prepare_to_write(path, &vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree]) {
+        match self.prepare_to_write(path) {
             Ok((name,dir_key_block,loc,new_key_block)) => {
                 // update the file count in the parent key block
                 let mut dir = self.get_directory(dir_key_block as usize);
@@ -1024,17 +1051,17 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
-        let mut ans: HashMap<ChunkSpec,Vec<usize>> = HashMap::new();
+    fn standardize(&self,ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+        let mut ans: HashMap<Chunk,Vec<usize>> = HashMap::new();
         let mut curr = ref_con;
         while curr>0 {
             let mut dir = self.get_directory(curr as usize);
             let locs = dir.entry_locations(curr);
-            super::add_ignorable_offsets(&mut ans,ChunkSpec::PO(curr as usize),dir.standardize(0));
+            super::add_ignorable_offsets(&mut ans,Chunk::PO(curr as usize),dir.standardize(0));
             for loc in locs {
                 let mut entry = dir.get_entry(&loc);
                 let offset = 4 + (loc.idx-1)*0x27;
-                super::add_ignorable_offsets(&mut ans,ChunkSpec::PO(curr as usize),entry.standardize(offset));
+                super::add_ignorable_offsets(&mut ans,Chunk::PO(curr as usize),entry.standardize(offset));
                 if entry.storage_type()==StorageType::SubDirEntry {
                     // recursively call to get the things in the subdirectory entries we want to ignore
                     let sub_map = self.standardize(entry.get_ptr());
@@ -1045,11 +1072,11 @@ impl super::DiskFS for Disk {
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory(VOL_KEY_BLOCK as usize);
         for block in 0..dir.total_blocks().unwrap() {
-            let addr = ChunkSpec::PO(block);
+            let addr = Chunk::PO(block);
             let mut actual = self.img.read_chunk(addr).expect("bad sector access");
             let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
             if let Some(ignorable) = ignore.get(&addr) {
@@ -1067,9 +1094,6 @@ impl super::DiskFS for Disk {
                 assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
             }
         }
-    }
-    fn get_ordering(&self) -> img::DiskImageType {
-        return img::DiskImageType::PO;
     }
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
         &mut self.img

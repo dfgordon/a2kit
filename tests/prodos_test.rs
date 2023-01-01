@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::fmt::Write;
 use std::collections::HashMap;
-use a2kit::fs::{ChunkSpec,prodos,TextEncoder,DiskFS};
+use a2kit::fs::{Chunk,prodos,TextEncoder,DiskFS};
 use a2kit::fs::prodos::types::BLOCK_SIZE;
 use a2kit::lang::applesoft;
 use a2kit::commands::ItemType;
@@ -18,13 +18,13 @@ pub const JSON_REC: &str = "
     }
 }";
 
-fn ignore_boot_blocks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+fn ignore_boot_blocks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
     for block in 0..2 {
         let mut all: Vec<usize> = Vec::new();
         for i in 0..BLOCK_SIZE {
             all.push(i);
         }
-        ignore.insert(ChunkSpec::PO(block),all);
+        ignore.insert(Chunk::PO(block),all);
     }
 }
 
@@ -83,7 +83,7 @@ fn read_small() {
     // check the sequential text file
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
     let txt = prodos::types::SequentialText::from_bytes(&raw);
-    let encoder = prodos::types::Encoder::new(Some(0x0d));
+    let encoder = prodos::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
 }
 
@@ -104,7 +104,7 @@ fn write_small() {
     disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
 
     // save the text
-    let encoder = prodos::types::Encoder::new(Some(0x0d));
+    let encoder = prodos::types::Encoder::new(vec![0x0d]);
     disk.write_text("thetext",&encoder.encode("HELLO FROM EMULATOR").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(2);

@@ -1,8 +1,7 @@
 //! # Command Line Interface
 //! 
 //! Simple subcommands are directly in `main.rs`.
-//! More elaborate subcommands are in the `commands` module in the binary crate.
-//! All other modules are in the library crate.
+//! More elaborate subcommands are in the `commands` module.
 
 use clap::{arg,Command,ArgAction};
 use env_logger;
@@ -43,9 +42,9 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
                            | a2kit put -f prog -t atok -d myimg.dsk`
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
-    let img_types = ["d13","do","po","woz1","woz2"];
-    let os_names = ["dos32","dos33","prodos","pascal"];
-    let disk_kinds = ["5.25in","3.5in","hdmax"];
+    let img_types = ["d13","do","po","woz1","woz2","imd"];
+    let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
+    let disk_kinds = ["8in","5.25in","3.5in","hdmax"];
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")

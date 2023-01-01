@@ -1,7 +1,7 @@
 // test of DOS 3.2 support, which resides in the dos3x disk image module
 use std::path::Path;
 use std::collections::HashMap;
-use a2kit::fs::{ChunkSpec,dos3x,TextEncoder,DiskFS};
+use a2kit::fs::{Chunk,dos3x,TextEncoder,DiskFS};
 use a2kit::img::{dsk_d13,woz1};
 use a2kit::commands::ItemType;
 use a2kit::img::DiskKind;
@@ -18,14 +18,14 @@ pub const JSON_REC: &str = "
     }
 }";
 
-fn ignore_boot_tracks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+fn ignore_boot_tracks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
     for t in 0..3 {
         for s in 0..13 {
             let mut all = vec![0;256];
             for i in 0..256 {
                 all[i] = i;
             }
-            ignore.insert(ChunkSpec::D13([t,s]),all);
+            ignore.insert(Chunk::D13([t,s]),all);
         }
     }
 }
@@ -75,7 +75,7 @@ fn read_small() {
     // check the sequential text file
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
     let txt = dos3x::types::SequentialText::from_bytes(&raw);
-    let encoder = dos3x::types::Encoder::new(Some(0x8d));
+    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
     assert_eq!(txt.text,encoder.encode("HELLO FROM DOS 3.2").unwrap());
 }
 
@@ -95,7 +95,7 @@ fn write_small() {
     disk.bsave("thechip",&[6,5,0,2].to_vec(),768,Some(&vec![0x0a])).expect("error");
 
     // save the text
-    let encoder = dos3x::types::Encoder::new(Some(0x8d));
+    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
     disk.write_text("thetext",&encoder.encode("HELLO FROM DOS 3.2").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(0);

@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use a2kit::img;
-use a2kit::fs::{ChunkSpec,dos3x,TextEncoder,DiskFS};
+use a2kit::fs::{Chunk,dos3x,TextEncoder,DiskFS};
 use a2kit::commands::ItemType;
 use a2kit::lang::applesoft;
 use a2kit_macro::DiskStruct;
@@ -17,14 +17,14 @@ pub const JSON_REC: &str = "
     }
 }";
 
-fn ignore_boot_tracks(ignore: &mut HashMap<ChunkSpec,Vec<usize>>) {
+fn ignore_boot_tracks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
     for t in 0..3 {
         for s in 0..16 {
             let mut all = vec![0;256];
             for i in 0..256 {
                 all[i] = i;
             }
-            ignore.insert(ChunkSpec::DO([t,s]),all);
+            ignore.insert(Chunk::DO([t,s]),all);
         }
     }
 }
@@ -68,7 +68,7 @@ fn read_small() {
     // check the sequential text file
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
     let txt = dos3x::types::SequentialText::from_bytes(&raw);
-    let encoder = dos3x::types::Encoder::new(Some(0x8d));
+    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
     assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
 }
 
@@ -89,7 +89,7 @@ fn write_small() {
     disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
 
     // save the text
-    let encoder = dos3x::types::Encoder::new(Some(0x8d));
+    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
     disk.write_text("thetext",&encoder.encode("HELLO FROM EMULATOR").unwrap()).expect("error");
 
     let mut ignore = disk.standardize(0);
@@ -231,6 +231,6 @@ fn read_big_woz1() {
     let disk = a2kit::create_fs_from_file(woz1_path).expect("could not get image");
     let mut ignore = disk.standardize(2);
     ignore_boot_tracks(&mut ignore);
-    a2kit::fs::add_ignorable_offsets(&mut ignore, ChunkSpec::DO([18,12]), vec![243]);
+    a2kit::fs::add_ignorable_offsets(&mut ignore, Chunk::DO([18,12]), vec![243]);
     disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
 }

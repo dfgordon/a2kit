@@ -16,11 +16,11 @@ use std::str::FromStr;
 use std::fmt::Write;
 use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
-use log::debug;
+use log::{debug,error};
 
 use types::*;
 use directory::*;
-use super::{ChunkSpec,TextEncoder};
+use super::{Chunk,TextEncoder};
 use crate::img;
 use crate::commands::ItemType;
 
@@ -55,13 +55,13 @@ impl Disk
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
-        if let Ok(dat) = img.read_chunk(ChunkSpec::D13([17,0])) {
+        if let Ok(dat) = img.read_chunk(Chunk::D13([17,0])) {
             return Self {
                 vtoc: VTOC::from_bytes(&dat),
                 img
             };
         }
-        if let Ok(dat) = img.read_chunk(ChunkSpec::DO([17,0])) {
+        if let Ok(dat) = img.read_chunk(Chunk::DO([17,0])) {
             return Self {
                 vtoc: VTOC::from_bytes(&dat),
                 img
@@ -70,7 +70,7 @@ impl Disk
         panic!("unexpected failure to read chunk");
     }
     fn test_img_13(img: &Box<dyn img::DiskImage>) -> bool {
-        if let Ok(dat) = img.read_chunk(ChunkSpec::D13([17,0])) {
+        if let Ok(dat) = img.read_chunk(Chunk::D13([17,0])) {
             let vtoc = VTOC::from_bytes(&dat);
             let (tlen,slen) = (35,13);
             if vtoc.version>2 {
@@ -95,7 +95,7 @@ impl Disk
         return false;
     }
     fn test_img_16(img: &Box<dyn img::DiskImage>) -> bool {
-        if let Ok(dat) = img.read_chunk(ChunkSpec::DO([17,0])) {
+        if let Ok(dat) = img.read_chunk(Chunk::DO([17,0])) {
             let vtoc = VTOC::from_bytes(&dat);
             let (tlen,slen) = (35,16);
             if vtoc.version<3 {
@@ -134,10 +134,10 @@ impl Disk
         }
         return false;
     }
-    fn addr(&self,ts: [u8;2]) -> ChunkSpec {
+    fn addr(&self,ts: [u8;2]) -> Chunk {
         match self.vtoc.sectors {
-            13 => ChunkSpec::D13([ts[0] as usize,ts[1] as usize]),
-            _ => ChunkSpec::DO([ts[0] as usize,ts[1] as usize])
+            13 => Chunk::D13([ts[0] as usize,ts[1] as usize]),
+            _ => Chunk::DO([ts[0] as usize,ts[1] as usize])
         }
     }
     fn panic_if_ts_bad(&self,track: u8,sector: u8) {
@@ -311,11 +311,6 @@ impl Disk
     pub fn init33(&mut self,vol:u8,bootable:bool) {
         self.init(vol,bootable,17,35,16);
     }
-    /// Create a standard DOS 3.3 small volume (140K)
-    #[deprecated="use init variants instead"]
-    pub fn format(&mut self,vol:u8,bootable:bool,last_track_written:u8) {
-        self.init(vol, bootable, last_track_written, 35, 16);
-    }
     fn num_free_sectors(&self) -> usize {
         let mut ans: usize = 0;
         for track in 0..self.vtoc.tracks {
@@ -442,6 +437,10 @@ impl Disk
     /// into the sparse file format, with no loss of generality.
     /// Unlike DOS, nothing is written unless there is enough space for all the data.
     fn write_file(&mut self,name: &str, fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.chunks.len()==0 {
+            error!("empty data is not allowed for DOS 3.x file images");
+            return Err(Box::new(Error::EndOfData));
+        }
         let (named_ts,_ftype) = self.get_tslist_sector(name);
         if named_ts==[0,0] {
             // this is a new file
@@ -697,7 +696,7 @@ impl super::DiskFS for Disk {
             eprintln!("DOS 3.x requires specifying a non-zero record length");
             return Err(Box::new(Error::Range));
         }
-        let encoder = Encoder::new(Some(0x8d));
+        let encoder = Encoder::new(vec![0x8d]);
         match self.read_file(name) {
             Ok(fimg) => {
                 match super::Records::from_fimg(&fimg,record_length,encoder) {
@@ -709,7 +708,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_records(&mut self,name: &str, records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
-        let encoder = Encoder::new(Some(0x8d));
+        let encoder = Encoder::new(vec![0x8d]);
         if let Ok(fimg) = records.to_fimg(256,FileType::Text as u32,false,encoder) {
             return self.write_file(name, &fimg);
         } else {
@@ -762,11 +761,11 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
+    fn standardize(&self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         // ignore first byte of VTOC
         return HashMap::from([(self.addr([VTOC_TRACK,0]),vec![0])]);
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         for track in 0..self.vtoc.tracks as usize {
             for sector in 0..self.vtoc.sectors as usize {
@@ -788,12 +787,6 @@ impl super::DiskFS for Disk {
                     assert_eq!(fmt_actual,fmt_expected," at track {}, sector {}, row {}",track,sector,row)
                 }
             }
-        }
-    }
-    fn get_ordering(&self) -> img::DiskImageType {
-        match self.vtoc.sectors {
-            13 => img::DiskImageType::D13,
-            _ => img::DiskImageType::DO
         }
     }
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {

@@ -34,6 +34,25 @@ fn invalid_file_type() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn catalog_cpm() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected = 
+r#"A>USER 0
+A>DIR
+
+A: POLARIS  BAK : POLARIS  TXT
+
+found 1 user
+"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("cpm-smallfiles.dsk"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(expected));
+    Ok(())
+}
+
+#[test]
 fn catalog_dos32() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 

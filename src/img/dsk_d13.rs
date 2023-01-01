@@ -5,7 +5,7 @@
 //! For D13 we refuse any alternative orderings.
 
 use crate::img;
-use crate::fs::ChunkSpec;
+use crate::fs::Chunk;
 
 const SECTOR_SIZE: usize = 256;
 const TRACK_SIZE: usize = 13*SECTOR_SIZE;
@@ -37,29 +37,28 @@ impl img::DiskImage for D13 {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&self,addr: ChunkSpec) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_chunk(&self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         match addr {
-            ChunkSpec::D13([t,s]) => {
+            Chunk::D13([t,s]) => {
                 let offset = t*TRACK_SIZE + s*SECTOR_SIZE;
                 Ok(self.data[offset..offset+SECTOR_SIZE].to_vec())
             },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn write_chunk(&mut self, addr: ChunkSpec, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_chunk(&mut self, addr: Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         match addr {
-            ChunkSpec::D13([t,s]) => {
+            Chunk::D13([t,s]) => {
                 let offset = t*TRACK_SIZE + s*SECTOR_SIZE;
-                for i in 0..dat.len() {
-                    self.data[offset+i] = dat[i];
-                }
+                let padded = super::quantize_chunk(dat, SECTOR_SIZE);
+                self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
                 Ok(())
             },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
-        // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
+        // reject anything that cannot be a DOS 3.2 volume
         if data.len()%TRACK_SIZE > 0 || data.len()/TRACK_SIZE < MIN_TRACKS {
             return None;
         }
@@ -70,6 +69,9 @@ impl img::DiskImage for D13 {
     }
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::D13
+    }
+    fn kind(&self) -> img::DiskKind {
+        img::DiskKind::A2_525_13
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

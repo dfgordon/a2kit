@@ -16,7 +16,7 @@ use log::{info,debug,error};
 use num_traits::FromPrimitive;
 use types::*;
 use directory::*;
-use super::ChunkSpec;
+use super::Chunk;
 use crate::img;
 use crate::commands::ItemType;
 
@@ -108,7 +108,7 @@ fn string_to_vol_name(s: &str) -> [u8;7] {
 /// This is used to test images, as well as being called during FS operations.
 fn get_directory(img: &Box<dyn img::DiskImage>) -> Option<Directory> {
     let mut ans = Directory::new();
-    if let Ok(mut buf) = img.read_chunk(ChunkSpec::PO(VOL_HEADER_BLOCK)) {
+    if let Ok(mut buf) = img.read_chunk(Chunk::PO(VOL_HEADER_BLOCK)) {
         ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE].to_vec());
         let beg0 = u16::from_le_bytes(ans.header.begin_block);
         let beg = VOL_HEADER_BLOCK as u16;
@@ -119,13 +119,10 @@ fn get_directory(img: &Box<dyn img::DiskImage>) -> Option<Directory> {
         }
         // gather up all the directory blocks in a contiguous buffer; this is convenient
         // since the entries are allowed to span 2 blocks.
-        buf = vec![0;BLOCK_SIZE*(end as usize - beg as usize)];
+        buf = Vec::new();
         for iblock in beg..end {
-            let offset = (iblock-beg) as usize * BLOCK_SIZE;
-            if let Ok(temp) = img.read_chunk(ChunkSpec::PO(iblock as usize)) {
-                for i in 0..BLOCK_SIZE {
-                    buf[offset+i] = temp[i];
-                }
+            if let Ok(mut temp) = img.read_chunk(Chunk::PO(iblock as usize)) {
+                buf.append(&mut temp);
             } else {
                 debug!("can't get block {}",iblock);
                 return None;
@@ -272,7 +269,7 @@ impl Disk
             x if x<=bytes => x,
             _ => bytes
         };
-        if let Ok(buf) = self.img.read_chunk(ChunkSpec::PO(iblock)) {
+        if let Ok(buf) = self.img.read_chunk(Chunk::PO(iblock)) {
             for i in 0..actual_len as usize {
                 data[offset + i] = buf[i];
             }
@@ -295,7 +292,7 @@ impl Disk
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        self.img.write_chunk(ChunkSpec::PO(iblock), &data[offset..offset+actual_len].to_vec()).
+        self.img.write_chunk(Chunk::PO(iblock), &data[offset..offset+actual_len].to_vec()).
             expect("write failed");
     }
     /// Try to find `num` contiguous free blocks.  If found return the first block index.
@@ -322,12 +319,11 @@ impl Disk
         return None;
     }
     /// Format disk for the Pascal file system
-    /// TODO: why don't we put the DiskKind with the underlying image?
-    pub fn format(&mut self, vol_name: &str, fill: u8, disk_kind: &img::DiskKind, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
+    pub fn format(&mut self, vol_name: &str, fill: u8, time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);
         }
-        let num_blocks = match disk_kind {
+        let num_blocks = match self.img.kind() {
             img::DiskKind::A2_525_16 => 280,
             img::DiskKind::A2_35 => 1600,
             img::DiskKind::A2Max => 65535,
@@ -357,7 +353,7 @@ impl Disk
         self.write_block(&dir.to_bytes(),VOL_HEADER_BLOCK,0);
 
         // boot loader blocks
-        match disk_kind {
+        match self.img.kind() {
             img::DiskKind::A2_525_16 => {
                 self.write_block(&boot::PASCAL_525_BLOCK0.to_vec(), 0, 0);
                 self.write_block(&boot::PASCAL_525_BLOCK1.to_vec(), 1, 0);
@@ -419,7 +415,11 @@ impl Disk
     /// Write any file using the sparse file format.  The caller must ensure that the
     /// chunks are sequential (Pascal only supports sequential data).  This is easy:
     /// use `FileImage::desequence` to put sequential data into the sparse file format.
-    fn write_file(&mut self,name: &str, dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_file(&mut self,name: &str, fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.chunks.len()==0 {
+            error!("empty data is not allowed for Pascal file images");
+            return Err(Box::new(Error::NoFile));
+        }
         if !is_name_valid(name,false) {
             return Err(Box::new(Error::BadFormat));
         }
@@ -427,9 +427,8 @@ impl Disk
         if maybe_idx==None {
             // this is a new file
             // we do not write anything unless there is room
-            assert!(dat.chunks.len()>0);
-            let data_blocks = dat.chunks.len();
-            if let Some(fs_type) = FileType::from_u32(dat.fs_type) {
+            let data_blocks = fimg.chunks.len();
+            if let Some(fs_type) = FileType::from_u32(fimg.fs_type) {
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16) {
                     for i in 0..dir.entries.len() {
                         if dir.entries[i].begin_block==[0,0] {
@@ -439,13 +438,13 @@ impl Disk
                             dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
                             dir.entries[i].name_len = name.len() as u8;
                             dir.entries[i].name = string_to_file_name(name);
-                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - dat.eof as usize) as u16);
+                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - fimg.eof as usize) as u16);
                             dir.entries[i].mod_date = pack_date(None); // None means use system clock
                             dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)+1);
                             dir.header.last_access_date = pack_date(None);
                             self.save_directory(&dir);
                             for b in 0..data_blocks {
-                                self.write_block(&dat.chunks[&b],beg as usize+b,0);
+                                self.write_block(&fimg.chunks[&b],beg as usize+b,0);
                             }
                             return Ok(data_blocks);
                         }
@@ -605,7 +604,7 @@ impl super::DiskFS for Disk {
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
-                match self.img.read_chunk(ChunkSpec::PO(block)) {
+                match self.img.read_chunk(Chunk::PO(block)) {
                     Ok(buf) => Ok((0,buf)),
                     Err(e) => Err(e)
                 }
@@ -619,7 +618,7 @@ impl super::DiskFS for Disk {
                 if dat.len() > BLOCK_SIZE {
                     return Err(Box::new(Error::DevErr));
                 }
-                match self.img.write_chunk(ChunkSpec::PO(block), dat) {
+                match self.img.write_chunk(Chunk::PO(block), dat) {
                     Ok(()) => Ok(dat.len()),
                     Err(e) => Err(e)
                 }
@@ -648,32 +647,32 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>> {
+    fn standardize(&self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         // want to ignore dates, these occur at offest 18 and 20 in the header,
         // and at offset 24 in every entry
-        let mut ans: HashMap<ChunkSpec,Vec<usize>> = HashMap::new();
+        let mut ans: HashMap<Chunk,Vec<usize>> = HashMap::new();
         let dir = self.get_directory();
         let beg = VOL_HEADER_BLOCK; // begin_block points to boot block
         let end = u16::from_le_bytes(dir.header.end_block);
         let mut offset = 0;
-        ans.insert(ChunkSpec::PO(beg),vec![18,19,20,21]);
+        ans.insert(Chunk::PO(beg),vec![18,19,20,21]);
         offset += dir.header.len();
         loop {
             if offset+25 >= BLOCK_SIZE*(end as usize) {
                 break;
             }
-            let key = ChunkSpec::PO(beg+offset/BLOCK_SIZE);
+            let key = Chunk::PO(beg+offset/BLOCK_SIZE);
             let val = vec![(24+offset)%BLOCK_SIZE, (25+offset)%BLOCK_SIZE];
             super::add_ignorable_offsets(&mut ans, key, val);
             offset += ENTRY_SIZE;
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>) {
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory();
         for block in 0..dir.total_blocks() {
-            let addr = ChunkSpec::PO(block);
+            let addr = Chunk::PO(block);
             let mut actual = self.img.read_chunk(addr).expect("bad sector access");
             let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
             if let Some(ignorable) = ignore.get(&addr) {
@@ -691,9 +690,6 @@ impl super::DiskFS for Disk {
                 assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
             }
         }
-    }
-    fn get_ordering(&self) -> img::DiskImageType {
-        return img::DiskImageType::PO;
     }
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
         &mut self.img

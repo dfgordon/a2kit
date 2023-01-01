@@ -101,6 +101,7 @@ pub trait Header {
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
     fn set_access(&mut self,what: Access,which: bool);
+    fn set_all_access(&mut self,what: u8);
     fn standardize(&mut self,offset: usize) -> Vec<usize>;
 }
 
@@ -275,7 +276,7 @@ impl Entry {
     }
     pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
         fimg.eof = self.eof() as u32;
-        fimg.access = self.access as u32;
+        fimg.access = vec![self.access];
         fimg.fs_type = self.file_type as u32;
         fimg.aux = u16::from_le_bytes(self.aux_type) as u32;
         fimg.created = u32::from_le_bytes(self.create_time);
@@ -316,7 +317,7 @@ impl Entry {
         ans.create_time = pack_time(create_time);
         ans.vers = fimg.version as u8;
         ans.min_vers = fimg.min_version as u8;
-        ans.access = STD_ACCESS;
+        ans.access = fimg.access[0];
         ans.aux_type = u16::to_le_bytes(fimg.aux as u16);
         ans.last_mod = pack_time(create_time);
         ans.header_ptr = u16::to_le_bytes(header_ptr);
@@ -331,6 +332,12 @@ impl Entry {
         } else {
             self.access &= u8::MAX ^ what as u8;
         }
+    }
+    // pub fn get_all_access(&self) -> u8 {
+    //     self.access
+    // }
+    pub fn set_all_access(&mut self,what: u8) {
+        self.access = what;
     }
     pub fn rename(&mut self,name: &str) {
         let stor = self.storage_type();
@@ -402,6 +409,9 @@ impl Header for VolDirHeader {
             self.access &= u8::MAX ^ what as u8;
         }
     }
+    fn set_all_access(&mut self,what: u8) {
+        self.access = what;
+    }
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start
         let mut ans: Vec<usize> = Vec::new();
@@ -433,6 +443,9 @@ impl Header for SubDirHeader {
         } else {
             self.access &= u8::MAX ^ what as u8;
         }
+    }
+    fn set_all_access(&mut self,what: u8) {
+        self.access = what;
     }
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start

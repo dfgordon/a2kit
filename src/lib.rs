@@ -11,29 +11,39 @@
 //! * `fs::FileImage` provides a representation of a file that can be restored to a disk image
 //! 
 //! When a `DiskFS` object is created it takes ownership of some `DiskImage`.
-//! It then uses this owned image as storage.  The changes are not permanent until the
+//! It then uses this owned image as storage.  Any changes are not permanent until the
 //! image is saved to whatever file system is hosting a2kit.
 //! 
-//! Language services are built on tree-sitter parsers.  Generalized syntax checking is in `walker`.
+//! ## Language Files
+//! 
+//! Language services are built on tree-sitter parsers.  Generalized syntax checking is in `lang`.
 //! Specific language services are in modules named after the language, at present:
-//! * `applesoft` handles (de)tokenization of Applesoft BASIC
-//! * `integer` handles (de)tokenization of Integer BASIC
-//! * `merlin` handles encodings for Merlin assembly source files
+//! * `lang::applesoft` handles (de)tokenization of Applesoft BASIC
+//! * `lang::integer` handles (de)tokenization of Integer BASIC
+//! * `lang::merlin` handles encodings for Merlin assembly source files
 //! * Pascal source files are handled through the file system module
 //! 
 //! ## File Systems
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
 //! As of this writing `a2kit` supports
+//! * CP/M 1,2, some 3
 //! * DOS 3.x
 //! * ProDOS
 //! * Pascal File System
 //! 
+//! ## Disk Images
+//! 
+//! In order to manipulate tracks and sectors, `a2kit` must understand the way the track data is packed
+//! into a disk image.  As of this writing `a2kit` supports
+//! * DSK, D13, DO, PO
+//! * WOZ1, WOZ2
+//! * IMD
+//! 
 //! ## Disk Encodings
 //! 
-//! The disk hardware used with the Apple II line of computers (and perhaps others)
-//! could not handle an arbitrary sequence of bits, i.e., the bit sequence had to
-//! follow certain rules.  Encoding schemes were developed to represent arbitrary bits using the
+//! The sequence of bits on a disk has to follow certain rules to maintain synchronization.
+//! Encoding schemes were developed to represent arbitrary bits using the
 //! hardware's allowed bit sequences.  There are disks that will not work on an emulator unless the
 //! detailed bit stream of the original is carefully reproduced.  As a result, disk image formats
 //! were invented that emulate a disk down to this level of detail.  As of this writing, the bit-level
@@ -74,11 +84,27 @@ fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         info!("identified Pascal file system");
         return Some(Box::new(fs::pascal::Disk::from_img(img)));
     }
+    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::DiskKind::A2_525_16);
+    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
+        info!("identified CP/M file system on A2 disk");
+        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
+    }
+    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::DiskKind::CPM1_8_26);
+    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
+        info!("identified CP/M file system on IBM SSSD disk");
+        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
+    }
    return None;
 }
 
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
 pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
+    if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+        info!("identified IMD image");
+        if let Some(disk) = try_img(Box::new(img)) {
+            return Ok(disk);
+        }
+    }
     if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
         if let Some(disk) = try_img(Box::new(img)) {
@@ -116,6 +142,10 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Disk
 /// Given a bytestream return a disk image without any file system.
 /// N.b. the ordering cannot always be determined without the file system.
 pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskImage>,Box<dyn std::error::Error>> {
+    if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+        info!("identified IMD image");
+        return Ok(Box::new(img));
+    }
     if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
         info!("identified woz1 image");
         return Ok(Box::new(img));
@@ -293,7 +323,11 @@ pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) 
     };
     for i in 0..bytes.len() {
         if bytes[i]>=lb && bytes[i]<=ub {
-            result += std::str::from_utf8(&[bytes[i]-0x80]).expect("unreachable");
+            if inverted {
+                result += std::str::from_utf8(&[bytes[i]-0x80]).expect("unreachable");
+            } else {
+                result += std::str::from_utf8(&[bytes[i]]).expect("unreachable");
+            }
         } else {
             let mut temp = String::new();
             write!(&mut temp,"\\x{:02X}",bytes[i]).expect("unreachable");

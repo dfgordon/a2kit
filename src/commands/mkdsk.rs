@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::error::Error;
 use std::num::ParseIntError;
 use log::info;
-use crate::fs::{DiskFS,dos3x,prodos,pascal};
+use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType};
 use super::CommandError;
@@ -15,14 +15,15 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,vol: u8) -> Result<Box<dyn Di
 
     return match (img_typ,kind) {
         (DiskImageType::D13,DiskKind::A2_525_13) => Ok(Box::new(img::dsk_d13::D13::create(35))),
-        (DiskImageType::WOZ1,DiskKind::A2_525_13) => Ok(Box::new(img::woz1::Woz1::create(vol,DiskKind::A2_525_13))),
-        (DiskImageType::WOZ2,DiskKind::A2_525_13) => Ok(Box::new(img::woz2::Woz2::create(vol,DiskKind::A2_525_13))),
+        (DiskImageType::WOZ1,DiskKind::A2_525_13) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind))),
+        (DiskImageType::WOZ2,DiskKind::A2_525_13) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
         (DiskImageType::DO,DiskKind::A2_525_16) => Ok(Box::new(img::dsk_do::DO::create(35,16))),
         (DiskImageType::PO,DiskKind::A2_525_16) => Ok(Box::new(img::dsk_po::PO::create(280))),
-        (DiskImageType::WOZ1,DiskKind::A2_525_16) => Ok(Box::new(img::woz1::Woz1::create(vol,DiskKind::A2_525_16))),
-        (DiskImageType::WOZ2,DiskKind::A2_525_16) => Ok(Box::new(img::woz2::Woz2::create(vol,DiskKind::A2_525_16))),
+        (DiskImageType::WOZ1,DiskKind::A2_525_16) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind))),
+        (DiskImageType::WOZ2,DiskKind::A2_525_16) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
         (DiskImageType::PO,DiskKind::A2_35) => Ok(Box::new(img::dsk_po::PO::create(1600))),
         (DiskImageType::PO,DiskKind::A2Max) => Ok(Box::new(img::dsk_po::PO::create(65535))),
+        (DiskImageType::IMD,DiskKind::CPM1_8_26) => Ok(Box::new(img::imd::Imd::create(*kind))),
         _ => Err(Box::new(CommandError::UnsupportedItemType))
     };
 }
@@ -71,13 +72,25 @@ fn mkprodos(vol: &str,boot: bool,floppy: bool,img: Box<dyn DiskImage>) -> Result
     return Ok(disk.get_img().to_bytes());
 }
 
-fn mkpascal(vol: &str,boot: bool,blocks: u16,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+fn mkpascal(vol: &str,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
     if boot {
         eprintln!("Please omit the boot flag, OS file images must be obtained elsewhere");
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
     let mut disk = Box::new(pascal::Disk::from_img(img));
-    match disk.format(vol,0xee,kind,None) {
+    match disk.format(vol,0xee,None) {
+        Ok(()) => Ok(disk.get_img().to_bytes()),
+        Err(e) => return Err(Box::new(e))
+    }
+}
+
+fn mkcpm(vol: &str,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+    if boot {
+        eprintln!("Please omit the boot flag, OS tracks must be obtained elsewhere");
+        return Err(Box::new(CommandError::UnsupportedItemType));
+    }
+    let mut disk = Box::new(cpm::Disk::from_img(img,cpm::types::DiskParameterBlock::create(&kind),[2,2,3]));
+    match disk.format(vol,None) {
         Ok(()) => Ok(disk.get_img().to_bytes()),
         Err(e) => return Err(Box::new(e))
     }
@@ -85,7 +98,7 @@ fn mkpascal(vol: &str,boot: bool,blocks: u16,kind: &DiskKind,img: Box<dyn DiskIm
 
 pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     let which_fs = cmd.value_of("os").expect(RCH);
-    if !["dos32","dos33","prodos","pascal"].contains(&which_fs) {
+    if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs) {
         return Err(Box::new(CommandError::UnknownItemType));
     }
     let str_vol = cmd.value_of("volume").expect(RCH);
@@ -100,7 +113,9 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
         DiskKind::A2_525_13 => (228,true),
         DiskKind::A2_525_16 => (280,true),
         DiskKind::A2_35 => (1600,true),
-        DiskKind::A2Max => (65535,false)
+        DiskKind::A2Max => (65535,false),
+        DiskKind::CPM1_8_26 => (500,true),
+        DiskKind::Unknown => panic!("unknown disk type requested")
     };
     let boot = cmd.get_flag("bootable");
     if boot {
@@ -112,10 +127,11 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     };
     if let Ok(img) = maybe_img {
         let result = match which_fs {
+            "cpm2" => mkcpm(str_vol,boot,&kind,img),
             "dos32" => mkdos3x(dos_vol,boot,228,img),
             "dos33" => mkdos3x(dos_vol,boot,blocks,img),
             "prodos" => mkprodos(str_vol,boot,floppy,img),
-            "pascal" => mkpascal(str_vol,boot,blocks,&kind,img),
+            "pascal" => mkpascal(str_vol,boot,img),
             _ => panic!("unreachable")
         };
         if let Ok(buf) = result {

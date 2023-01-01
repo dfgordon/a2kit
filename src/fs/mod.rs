@@ -1,21 +1,31 @@
 //! # File System Module
 //! 
-//! This is a container for file system modules.  File system modules handle
-//! interactions with directories and files.  They are largely independent
-//! of the `img` module, because they retain their own version of the disk data
-//! in a convenient form.  N.b. this means you have
-//! to explicitly transfer save changes to the original disk image if you want them
-//! to be permanent.
+//! File system modules handle interactions with directories and files.  There is a sub-module for
+//! each supported file system.
 //! 
-//! File systems are represented by the `DiskFS` trait.
+//! File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
+//! some disk image, which it uses as storage.  Files are represented by a `FileImage` trait
+//! object.  This is a low level representation of the file that works for any of the supported
+//! file systems.
+//! 
+//! This module also contains the `Chunk` enumeration, which specifies and locates allocation units.
+//! The enumeration names the file system's allocation system, and its value is a specific chunk.
+//! The value can take any form, e.g., DOS chunks are 2-element lists with [track,sector], whereas
+//! CPM chunks are 3-tuples with (block,BSH,OFF).
+//! 
+//! Sector skews are not handled here.  Transformation of a `Chunk` to a physical disk address is
+//! handled within the `img` module.  Hence the `img` module does contain a small amount of data
+//! that is specific to the various file systems.
 
 pub mod dos3x;
 pub mod prodos;
 pub mod pascal;
+pub mod cpm;
 
 use std::fmt;
 use std::str::FromStr;
 use std::collections::HashMap;
+use log::warn;
 use crate::img;
 use crate::commands::ItemType;
 
@@ -30,67 +40,58 @@ pub enum Error {
     FileFormat
 }
 
-/// Get block number and byte offset into block corresponding to
-/// track and logical sector.  Returned in tuple (block,offset)
-pub fn block_from_ts(track: usize,sector: usize) -> (usize,usize) {
-    let block_offset: [usize;16] = [0,7,6,6,5,5,4,4,3,3,2,2,1,1,0,7];
-    let byte_offset: [usize;16] = [0,0,256,0,256,0,256,0,256,0,256,0,256,0,256,256];
-    return (8*track + block_offset[sector], byte_offset[sector]);
-}
-
-/// Get the two track and logical sector pairs corresponding to a block.
-/// The returned array is arranged in order.
-pub fn ts_from_block(block: usize) -> [[usize;2];2] {
-    let sector1: [usize;8] = [0,13,11,9,7,5,3,1];
-    let sector2: [usize;8] = [14,12,10,8,6,4,2,15];
-    return [
-        [(block/8), sector1[block % 8]],
-        [(block/8), sector2[block % 8]]
-    ];
-}
-
-/// The address (block number, or track-sector number) and type of a file system chunk.
-/// Chunk addresses generally involve some transformation between logical (file system) and physical (disk fields) addresses.
-/// The `ChunkSpec` implementation includes the necessary mappings.
-/// There is a protocol that must be followed by DiskImage:
-/// * Given a D13 chunk, return an error unless the image is 13 sectors.
-/// * Given a DO chunk, always try to get the chunk.
-/// * Given a PO chunk, return an error if the image is 13 sectors.
+/// Encapsulates the disk address and addressing mode used by a file system.
+/// Disk addresses generally involve some transformation between logical (file system) and physical (disk fields) addresses.
+/// The disk image layer has the final responsibility for making this transformation.
+/// The `Chunk` implementation includes a simple mapping from blocks to sectors; disk images can use this or not as appropriate.
+/// Disk images can also decide whether to immediately return an error given certain chunk types; e.g., a PO image might refuse
+/// to locate a DO chunk type.  However, do not get confused, e.g., a DO image should usually be prepared to process a
+/// PO chunk, since there are many ProDOS DSK images that are DOS ordered.
 #[derive(PartialEq,Eq,Clone,Copy,Hash)]
-pub enum ChunkSpec {
+pub enum Chunk {
+    /// value is [track,sector]
     D13([usize;2]),
+    /// value is [track,sector]
     DO([usize;2]),
-    PO(usize)
+    /// value is block number
+    PO(usize),
+    /// value is (absolute block number, BSH, OFF); see cpm::types
+    CPM((usize,u8,u16))
 }
 
-impl ChunkSpec {
-    /// Return an ordered vector of track/sector pairs containing the chunk data.
-    /// The number of pairs will generally be 1 (e.g. DOS) or 2 (e.g. proDOS).
-    /// The returned sectors are physical, i.e., the addresses found on disk.
-    pub fn get_ts_list(&self) -> Vec<[usize;2]> {
-        let phys_sec: [usize;16] = [0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15];
+impl Chunk {
+    /// At this level we can only take sectors per track, and return a track-sector list,
+    /// where a simple monotonically increasing relationship is assumed between chunks and sectors.
+    /// Any further skewing must be handled by the caller.  CP/M offset is accounted for.
+    pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
         match self {
             Self::D13([t,s]) => vec![[*t,*s]],
-            Self::DO([t,s]) => vec![[*t,phys_sec[*s]]],
-            Self::PO(block) => {
-                let [[t1,s1],[t2,s2]] = ts_from_block(*block);
-                vec![[t1,phys_sec[s1]],[t2,phys_sec[s2]]]
+            Self::DO([t,s]) => vec![[*t,*s]],
+            Self::PO(block) => panic!("function `get_lsecs` not appropriate for ProDOS"),
+            Self::CPM((block,bsh,off)) => {
+                let mut ans: Vec<[usize;2]> = Vec::new();
+                let lsecs_per_block = 1 << bsh;
+                for sec_count in block*lsecs_per_block..(block+1)*lsecs_per_block {
+                    ans.push([*off as usize + sec_count/secs_per_track , sec_count%secs_per_track]);
+                }
+                ans
             }
         }
     }
 }
-impl fmt::Display for ChunkSpec {
+impl fmt::Display for Chunk {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::D13([t,s]) => write!(f,"D13 track {} sector {}",t,s),
             Self::DO([t,s]) => write!(f,"DOS track {} sector {}",t,s),
-            Self::PO(b) => write!(f,"ProDOS block {}",b)
+            Self::PO(b) => write!(f,"ProDOS block {}",b),
+            Self::CPM((b,s,o)) => write!(f,"CPM block {} shift {} offset {}",b,s,o)
         }
     }
 }
 
 /// Testing aid, adds offsets to the existing key, or create a new key if needed
-pub fn add_ignorable_offsets(map: &mut HashMap<ChunkSpec,Vec<usize>>,key: ChunkSpec, offsets: Vec<usize>) {
+pub fn add_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,key: Chunk, offsets: Vec<usize>) {
     if let Some(val) = map.get(&key) {
         map.insert(key,[val.clone(),offsets].concat());
     } else {
@@ -99,7 +100,7 @@ pub fn add_ignorable_offsets(map: &mut HashMap<ChunkSpec,Vec<usize>>,key: ChunkS
 }
 
 /// Testing aid, combines offsets from two maps (used to fold in subdirectory offsets)
-pub fn combine_ignorable_offsets(map: &mut HashMap<ChunkSpec,Vec<usize>>,other: HashMap<ChunkSpec,Vec<usize>>) {
+pub fn combine_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,other: HashMap<Chunk,Vec<usize>>) {
     for (k,v) in other.iter() {
         add_ignorable_offsets(map, *k, v.clone());
     }
@@ -107,9 +108,23 @@ pub fn combine_ignorable_offsets(map: &mut HashMap<ChunkSpec,Vec<usize>>,other: 
 
 /// This converts between UTF8+LF/CRLF and the encoding used by the file system
 pub trait TextEncoder {
-    fn new(terminator: Option<u8>) -> Self where Self: Sized;
+    fn new(line_terminator: Vec<u8>) -> Self where Self: Sized;
     fn encode(&self,txt: &str) -> Option<Vec<u8>>;
     fn decode(&self,raw: &Vec<u8>) -> Option<String>;
+    fn is_terminated(bytes: &Vec<u8>,term: &Vec<u8>) -> bool {
+        if term.len()==0 {
+            return true;
+        }
+        if bytes.len()==0 || bytes.len() < term.len() {
+            return false;
+        }
+        for i in 0..term.len() {
+            if bytes[i+bytes.len()-term.len()]!=term[i] {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// This is an abstraction of a sparse file and its metadata.
@@ -132,7 +147,7 @@ pub struct FileImage {
     /// auxiliary file information, encoding varies by file system
     pub aux: u32,
     /// The access control bits, encoding varies by file system
-    pub access: u32,
+    pub access: Vec<u8>,
     /// The creation time, encoding varies by file system
     pub created: u32,
     /// The modified time, encoding varies by file system
@@ -154,7 +169,7 @@ impl FileImage {
             fs_type: 0,
             aux: 0,
             eof: 0,
-            access: 0,
+            access: vec![0],
             created: 0,
             modified: 0,
             version: 0,
@@ -199,6 +214,10 @@ impl FileImage {
         let mut mark = 0;
         let mut idx = 0;
         let mut ans = Self::new(chunk_len);
+        if dat.len()==0 {
+            ans.eof = 0;
+            return ans;
+        }
         loop {
             let mut end = mark + chunk_len;
             if end > dat.len() {
@@ -213,7 +232,15 @@ impl FileImage {
             idx += 1;
         }
     }
-    pub fn parse_hex_field(key: &str,parsed: &json::JsonValue) -> Option<u32> {
+    pub fn parse_hex_to_vec(key: &str,parsed: &json::JsonValue) -> Option<Vec<u8>> {
+        if let Some(s) = parsed[key].as_str() {
+            if let Ok(bytes) = hex::decode(s) {
+                return Some(bytes);
+            }
+        }
+        return None;
+    }
+    pub fn parse_hex_to_u32(key: &str,parsed: &json::JsonValue) -> Option<u32> {
         if let Some(s) = parsed[key].as_str() {
             if let Ok(bytes) = hex::decode(s) {
                 if bytes.len()<5 {
@@ -232,15 +259,15 @@ impl FileImage {
         match json::parse(json_str) {
             Ok(parsed) => {
                 let maybe_fs = parsed["file_system"].as_str();
-                let maybe_len = FileImage::parse_hex_field("chunk_len",&parsed);
-                let maybe_fs_type = FileImage::parse_hex_field("fs_type",&parsed);
-                let maybe_aux = FileImage::parse_hex_field("aux",&parsed);
-                let maybe_eof = FileImage::parse_hex_field("eof",&parsed);
-                let maybe_access = FileImage::parse_hex_field("access",&parsed);
-                let maybe_created = FileImage::parse_hex_field("created",&parsed);
-                let maybe_modified = FileImage::parse_hex_field("modified",&parsed);
-                let maybe_vers = FileImage::parse_hex_field("version",&parsed);
-                let maybe_min_version = FileImage::parse_hex_field("min_version",&parsed);
+                let maybe_len = FileImage::parse_hex_to_u32("chunk_len",&parsed);
+                let maybe_fs_type = FileImage::parse_hex_to_u32("fs_type",&parsed);
+                let maybe_aux = FileImage::parse_hex_to_u32("aux",&parsed);
+                let maybe_eof = FileImage::parse_hex_to_u32("eof",&parsed);
+                let maybe_access = FileImage::parse_hex_to_vec("access",&parsed);
+                let maybe_created = FileImage::parse_hex_to_u32("created",&parsed);
+                let maybe_modified = FileImage::parse_hex_to_u32("modified",&parsed);
+                let maybe_vers = FileImage::parse_hex_to_u32("version",&parsed);
+                let maybe_min_version = FileImage::parse_hex_to_u32("min_version",&parsed);
                 if let (
                     Some(fs),
                     Some(chunk_len),
@@ -266,8 +293,7 @@ impl FileImage {
                     let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
                     let map_obj = &parsed["chunks"];
                     if map_obj.entries().len()==0 {
-                        eprintln!("no object entries in json records");
-                        return Err(Box::new(Error::FileImageFormat));
+                        warn!("file image contains metadata, but no data");
                     }
                     for (key,hex) in map_obj.entries() {
                         let prev_len = chunks.len();
@@ -315,7 +341,7 @@ impl FileImage {
             eof: hex::encode_upper(u32::to_le_bytes(self.eof)),
             fs_type: hex::encode_upper(u32::to_le_bytes(self.fs_type)),
             aux: hex::encode_upper(u32::to_le_bytes(self.aux)),
-            access: hex::encode_upper(u32::to_le_bytes(self.access)),
+            access: hex::encode_upper(self.access.clone()),
             created: hex::encode_upper(u32::to_le_bytes(self.created)),
             modified: hex::encode_upper(u32::to_le_bytes(self.modified)),
             version: hex::encode_upper(u32::to_le_bytes(self.version)),
@@ -534,7 +560,7 @@ impl fmt::Display for Records {
 }
 
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
-/// Provides BASIC-like high level commands, chunk operations, and `any` type operations.
+/// Provides BASIC-like high level commands, chunk operations, and file image operations.
 pub trait DiskFS {
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>>;
@@ -580,8 +606,6 @@ pub trait DiskFS {
     /// Put a chunk (block or sector) appropriate for this file system.
     /// N.b. this simply zaps the chunk and can break the file system.
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>>;
-    /// Underlying ordering of this file system
-    fn get_ordering(&self) -> img::DiskImageType;
     /// Convert file system text to a UTF8 string
     fn decode_text(&self,dat: &Vec<u8>) -> String;
     /// Convert UTF8 string to file system text
@@ -590,9 +614,9 @@ pub trait DiskFS {
     /// Returns a map from chunks to offsets within the chunk that are to be zeroed or ignored.
     /// Typically it is important to call this before deletions happen.
     /// May be recursive, ref_con can be used to initialize each recursion.
-    fn standardize(&self,ref_con: u16) -> HashMap<ChunkSpec,Vec<usize>>;
+    fn standardize(&self,ref_con: u16) -> HashMap<Chunk,Vec<usize>>;
     /// Compare this disk with a reference disk for testing purposes.  Panics if comparison fails.
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<ChunkSpec,Vec<usize>>);
+    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>);
     /// Mutably borrow the underlying disk image
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage>;
 }

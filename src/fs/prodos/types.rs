@@ -173,11 +173,11 @@ pub struct EntryLocation {
 /// Transforms between UTF8 and ProDOS text encodings.
 /// DOS uses positive ASCII with CR line separators.
 pub struct Encoder {
-    line_terminator: Option<u8>
+    line_terminator: Vec<u8>
 }
 
 impl TextEncoder for Encoder {
-    fn new(line_terminator: Option<u8>) -> Self {
+    fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
@@ -197,10 +197,8 @@ impl TextEncoder for Encoder {
                 return None;
             }
         }
-        if let Some(terminator) = self.line_terminator {
-            if ans[ans.len()-1] != terminator {
-                ans.push(terminator);
-            }
+        if !Self::is_terminated(&ans, &self.line_terminator) {
+            ans.append(&mut self.line_terminator.clone());
         }
         return Some(ans);
     }
@@ -235,7 +233,7 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(None);
+        let encoder = Encoder::new(vec![]);
         if let Some(dat) = encoder.encode(s) {
             return Ok(Self {
                 text: dat.clone(),
@@ -251,7 +249,7 @@ impl FromStr for SequentialText {
 /// This changes CR to LF, and nulls out negative ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(None);
+        let encoder = Encoder::new(vec![]);
         if let Some(ans) = encoder.decode(&self.text) {
             return write!(f,"{}",ans);
         }
@@ -281,7 +279,7 @@ impl DiskStruct for SequentialText {
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.text.clone());
-        ans.push(0);
+        ans.push(self.terminator);
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)

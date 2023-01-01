@@ -106,7 +106,7 @@ impl FromStr for FileType {
 /// Pascal text is +ASCII, split into 1024 byte pages padded with nulls, with CR line separators.
 /// ASCII 0x10 indicates the next byte is an indentation count + 0x20.
 pub struct Encoder {
-    line_terminator: Option<u8>
+    line_terminator: Vec<u8>
 }
 
 /// if we moved past a page boundary go back and pad with nulls after the last CR,
@@ -128,7 +128,7 @@ fn paginate(ans: &mut Vec<u8>,page: usize,count_on_page: usize) -> Result<usize,
 }
 
 impl TextEncoder for Encoder {
-    fn new(line_terminator: Option<u8>) -> Self {
+    fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
@@ -203,9 +203,9 @@ impl TextEncoder for Encoder {
             count_on_page = count_on_page % TEXT_PAGE;
         }
         // if CR is required and missing add it
-        if let Some(terminator) = self.line_terminator {
-            if ans[ans.len()-1] != terminator {
-                ans.push(terminator);
+        if !Self::is_terminated(&ans, &self.line_terminator) { // is missing
+            if self.line_terminator.len()>0 { // is required
+                ans.append(&mut self.line_terminator.clone());
                 count_on_page += 1;
                 //starting_line = true;
             }
@@ -261,7 +261,7 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(None);
+        let encoder = Encoder::new(vec![]);
         if let Some(dat) = encoder.encode(s) {
             return Ok(Self {
                 header: [0;TEXT_PAGE].to_vec(),
@@ -276,7 +276,7 @@ impl FromStr for SequentialText {
 /// derives `to_string`, so the structure can be converted to `String`.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(None);
+        let encoder = Encoder::new(vec![]);
         if let Some(ans) = encoder.decode(&self.text) {
             return write!(f,"{}",ans);
         }
