@@ -1,4 +1,4 @@
-//! # CP/M directory structures
+//! ### CP/M directory structures
 //! 
 //! The fundamental structure is a 32-byte entry, which comes in various flavors.
 //! The directory is nothing other than a packed sequence of entries.

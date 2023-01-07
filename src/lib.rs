@@ -40,18 +40,18 @@
 //! * WOZ1, WOZ2
 //! * IMD
 //! 
-//! ## Disk Encodings
+//! ## Disk Kinds
 //! 
-//! The sequence of bits on a disk has to follow certain rules to maintain synchronization.
-//! Encoding schemes were developed to represent arbitrary bits using the
-//! hardware's allowed bit sequences.  There are disks that will not work on an emulator unless the
-//! detailed bit stream of the original is carefully reproduced.  As a result, disk image formats
-//! were invented that emulate a disk down to this level of detail.  As of this writing, the bit-level
-//! formats supported by `a2kit` are `WOZ` versions 1 and 2.  High level operations with WOZ images
-//! are supported to the extent that the track format and file system are supported.
+//! A disk image can typically represent some number of disk kinds (defined by mechanical and magnetic
+//! coding characteristics).  The kinds `a2kit` supports include
+//! * Logical ProDOS volumes
+//! * 3.5 inch Apple formats (400K/800K)
+//! * 5.25 inch Apple formats (114K/140K)
+//! * 8 inch CP/M format (IBM SSSD 250K)
 
 pub mod fs;
 pub mod lang;
+pub mod bios;
 pub mod img;
 pub mod commands;
 
@@ -71,8 +71,8 @@ pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn 
 
 /// Return the file system on a disk image, or None if one cannot be found.
 /// If found, the file system takes ownership of the disk image.
-fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
-    if fs::dos3x::Disk::test_img(&img) {
+fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
+    if fs::dos3x::Disk::test_img(&mut img) {
         info!("identified DOS 3.x file system");
         return Some(Box::new(fs::dos3x::Disk::from_img(img)));
     }
@@ -84,12 +84,12 @@ fn try_img(img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         info!("identified Pascal file system");
         return Some(Box::new(fs::pascal::Disk::from_img(img)));
     }
-    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::DiskKind::A2_525_16);
+    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::names::A2_DOS33_KIND);
     if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
         info!("identified CP/M file system on A2 disk");
         return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
     }
-    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::DiskKind::CPM1_8_26);
+    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::names::IBM_CPM1_KIND);
     if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
         info!("identified CP/M file system on IBM SSSD disk");
         return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));

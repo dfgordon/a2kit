@@ -1,8 +1,8 @@
-//! # Common components for WOZ1 or WOZ2 disk images
+//! ## Common components for WOZ1 or WOZ2 disk images
 
 use log::{debug,trace};
-use super::disk525::{self, SectorAddressFormat, SectorDataFormat};
 use crate::fs::Chunk;
+use crate::bios::skew;
 
 pub const INFO_ID: u32 = 0x4f464e49;
 pub const TMAP_ID: u32 = 0x50414d54;
@@ -10,16 +10,14 @@ pub const TRKS_ID: u32 = 0x534b5254;
 pub const WRIT_ID: u32 = 0x54495257;
 pub const META_ID: u32 = 0x4154454D;
 pub const ALLOWED_TRACKS_525: [usize;1] = [35];
-const DOS_LSEC_TO_DOS_PSEC: [usize;16] = [0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15];
-const CPM_LSEC_TO_DOS_PSEC: [usize;32] = [0,0,3,3,6,6,9,9,12,12,15,15,2,2,5,5,8,8,11,11,14,14,1,1,4,4,7,7,10,10,13,13];
-//const CPM_LSEC_TO_DOS_OFFSET: [usize;32] = [0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128];
 
 /// Trait allowing us to write only 1 set of conversions for both WOZ types.
 /// We end up with some generic functions that get called by methods of the same name.
 pub trait WozConverter {
+	fn kind(&self) -> super::DiskKind;
 	fn num_tracks(&self) -> usize;
-	fn get_track_obj(&self,track: u8) -> disk525::TrackBits;
-	fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8);
+	fn get_track_obj(&self,track: u8) -> Box<dyn super::TrackBits>;
+	fn update_track(&mut self,track_obj: &mut Box<dyn super::TrackBits>,track: u8);
 }
 
 const CRC32_TAB: [u32;256] = [
@@ -112,14 +110,21 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-/// Get the ordered physical track-sector list for any chunk
-fn get_ts_list(addr: Chunk) -> Vec<[usize;2]> {
+/// Get the ordered physical track-sector list and sector size for any chunk
+fn get_ts_list(addr: Chunk,kind: &super::DiskKind) -> (Vec<[usize;2]>,usize) {
 	match addr {
-		Chunk::D13([t,s]) => vec![[t,s]],
-		Chunk::DO([t,s]) => vec![[t,DOS_LSEC_TO_DOS_PSEC[s]]],
+		Chunk::D13([t,s]) => (vec![[t,s]],256),
+		Chunk::DO([t,s]) => (vec![[t,skew::DOS_LSEC_TO_DOS_PSEC[s]]],256),
 		Chunk::PO(block) => {
-			let [[t1,s1],[t2,s2]] = super::ts_from_prodos_block(block);
-			vec![[t1,DOS_LSEC_TO_DOS_PSEC[s1]],[t2,DOS_LSEC_TO_DOS_PSEC[s2]]]
+			let mut ans = skew::ts_from_prodos_block(block,kind);
+			match *kind {
+				super::names::A2_DOS33_KIND => {
+					ans[0][1] = skew::DOS_LSEC_TO_DOS_PSEC[ans[0][1]];
+					ans[1][1] = skew::DOS_LSEC_TO_DOS_PSEC[ans[1][1]];
+					(ans,256)
+				},
+				_ => (ans,524)
+			}
 		},
 		Chunk::CPM((_block,_bsh,_off)) => {
 			let mut ans: Vec<[usize;2]> = Vec::new();
@@ -127,31 +132,28 @@ fn get_ts_list(addr: Chunk) -> Vec<[usize;2]> {
 			// the following assumes blocks are aligned to even lsecs; also the list must be ordered.
 			for ts in lsecs {
 				if ts[1]%2==0 {
-					ans.push([ts[0],CPM_LSEC_TO_DOS_PSEC[ts[1]]]);
+					ans.push([ts[0],skew::CPM_LSEC_TO_DOS_PSEC[ts[1]]]);
 				}
 			}
-			ans
+			(ans,256)
 		}
 	}
 }
 
 /// Find the file system allocation unit given by `addr` and return the data or an error.
 /// Blocks are not allowed to cross track boundaries.
+/// This relies on the disk kind being correct to invoke the correct nibbles.
+/// For 3.5 inch disks, the returned data has the tag bytes stripped.
 pub fn read_chunk<T: WozConverter>(woz: &T,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
 	trace!("reading {}",addr);
 	let mut ans: Vec<u8> = Vec::new();
-	let ts_list = get_ts_list(addr);
+	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind());
 	let track = ts_list[0][0];
 	if track >= woz.num_tracks() {
+		debug!("track {} out of bounds ({})",track,woz.num_tracks());
 		return Err(Box::new(super::Error::TrackCountMismatch));
 	}
 	let mut track_obj = woz.get_track_obj(track as u8);
-	// Update nibble format if necessary
-	// TODO: should we pack the nibble formats with the image?
-	match addr {
-		Chunk::D13(_) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
-		_ => {}
-	}
 	for ts in ts_list {
 		let [track,sector] = [ts[0] as u8,ts[1] as u8];
 		trace!("woz read track {} sector {}",track,sector);
@@ -160,35 +162,42 @@ pub fn read_chunk<T: WozConverter>(woz: &T,addr: Chunk) -> Result<Vec<u8>,Box<dy
 			Err(e) => return Err(Box::new(e))
 		}
 	}
-	return Ok(ans);
+	match sec_len {
+		524 => Ok(ans[12..524].to_vec()),
+		_ => Ok(ans)
+	}
 }
 
 /// Write the given buffer to the file system allocation unit given by `addr`.
 /// Blocks are not allowed to cross track boundaries.
+/// This relies on the disk kind being correct to invoke the correct nibbles.
+/// For 3.5 inch disks, tag bytes should not be included.
 pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:Chunk,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
 	trace!("writing {}",addr);
-	let ts_list = get_ts_list(addr);
+	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind());
 	let track = ts_list[0][0];
-	let padded = super::quantize_chunk(dat, ts_list.len()*256);
+	let padded = match sec_len {
+		524 => {
+			let mut tagged: Vec<u8> = vec![0;12];
+			tagged.append(&mut dat.clone());
+			super::quantize_chunk(&tagged, ts_list.len()*sec_len)
+		},
+		_ => super::quantize_chunk(dat, ts_list.len()*sec_len)
+	};
 	let mut track_obj = woz.get_track_obj(track as u8);
 	if track >= woz.num_tracks() {
+		debug!("track {} out of bounds ({})",track,woz.num_tracks());
 		return Err(Box::new(super::Error::TrackCountMismatch));
-	}
-	// Update nibble format if necessary
-	// TODO: should we pack the nibble formats with the image?
-	match addr {
-		Chunk::D13([_t,_s]) => track_obj.set_format_protocol(SectorAddressFormat::create_std13(), SectorDataFormat::create_std13()),
-		_ => {}
 	}
 	let mut offset = 0;
 	for ts in ts_list {
 		let [track,sector] = [ts[0] as u8,ts[1] as u8];
 		trace!("woz write track {} sector {}",track,sector);
-		match track_obj.write_sector(&padded[offset..offset+256].to_vec(),track,sector) {
+		match track_obj.write_sector(&padded[offset..offset+sec_len].to_vec(),track,sector) {
 			Ok(()) => {},
 			Err(e) => return Err(Box::new(e))
 		}
-		offset += 256;
+		offset += sec_len;
 	}
 	woz.update_track(&mut track_obj, track as u8);
 	return Ok(());

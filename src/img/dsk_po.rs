@@ -1,4 +1,4 @@
-//! # Support for ProDOS ordered disk images (PO,DSK)
+//! ## Support for ProDOS ordered disk images (PO,DSK)
 //! 
 //! DSK images are a simple sequential dump of the already-decoded sector data.
 //! If the sector sequence is ordered as in ProDOS, we have a PO variant.
@@ -7,9 +7,18 @@
 use crate::img;
 use crate::fs::Chunk;
 
+use super::BlockLayout;
+
 const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
 const MIN_BLOCKS: usize = 280;
+
+fn select_kind(blocks: u16) -> img::DiskKind {
+    match blocks {
+        280 => img::names::A2_DOS33_KIND,
+        _ => img::DiskKind::LogicalBlocks(BlockLayout {block_count: blocks as usize, block_size: BLOCK_SIZE})
+    }
+}
 
 /// Wrapper for PO data.
 pub struct PO {
@@ -25,10 +34,7 @@ impl PO {
             data.append(&mut [0;BLOCK_SIZE].to_vec());
         }
         Self {
-            kind: match blocks {
-                280 => img::DiskKind::A2_525_16,
-                _ => img::DiskKind::Unknown
-            },
+            kind: select_kind(blocks),
             blocks,
             data
         }
@@ -65,10 +71,7 @@ impl img::DiskImage for PO {
         }
         let blocks = (data.len()/BLOCK_SIZE) as u16;
         Some(Self {
-            kind: match blocks {
-                280 => img::DiskKind::A2_525_16,
-                _ => img::DiskKind::Unknown
-            },
+            kind: select_kind(blocks),
             blocks,
             data: data.clone()
         })
@@ -78,6 +81,9 @@ impl img::DiskImage for PO {
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
+    }
+    fn change_kind(&mut self,kind: img::DiskKind) {
+        self.kind = kind;
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

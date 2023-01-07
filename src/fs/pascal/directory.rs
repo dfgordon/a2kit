@@ -1,4 +1,5 @@
-//! # Pascal directory structures
+//! ### Pascal directory structures
+//! 
 //! These are fixed length structures, with the DiskStruct trait.
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.

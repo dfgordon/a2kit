@@ -1,4 +1,4 @@
-//! # Pascal boot blocks
+//! ### Pascal boot blocks
 //! 
 //! Blocks are grabbed from UCSD Pascal 1.2 disk 1 (APPLE1).
 

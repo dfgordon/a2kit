@@ -1,4 +1,4 @@
-//! # Support for 13 sector disk images (D13,DSK)
+//! ## Support for 13 sector disk images (D13,DSK)
 //! 
 //! DSK images are a simple sequential dump of the already-decoded sector data.
 //! If there are 13 sectors in physical order, we have a D13 variant.
@@ -6,6 +6,7 @@
 
 use crate::img;
 use crate::fs::Chunk;
+use log::debug;
 
 const SECTOR_SIZE: usize = 256;
 const TRACK_SIZE: usize = 13*SECTOR_SIZE;
@@ -71,7 +72,10 @@ impl img::DiskImage for D13 {
         img::DiskImageType::D13
     }
     fn kind(&self) -> img::DiskKind {
-        img::DiskKind::A2_525_13
+        img::names::A2_DOS32_KIND
+    }
+    fn change_kind(&mut self,kind: img::DiskKind) {
+        debug!("ignoring change of D13 to {}",kind);
     }
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();

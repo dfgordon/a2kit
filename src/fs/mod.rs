@@ -14,8 +14,8 @@
 //! CPM chunks are 3-tuples with (block,BSH,OFF).
 //! 
 //! Sector skews are not handled here.  Transformation of a `Chunk` to a physical disk address is
-//! handled within the `img` module.  Hence the `img` module does contain a small amount of data
-//! that is specific to the various file systems.
+//! handled within the `img` module.  Transformations that go between a file system and a disk,
+//! such as sector skews, are kept in the `bios` module.
 
 pub mod dos3x;
 pub mod prodos;
@@ -25,7 +25,7 @@ pub mod cpm;
 use std::fmt;
 use std::str::FromStr;
 use std::collections::HashMap;
-use log::warn;
+use log::{warn,error};
 use crate::img;
 use crate::commands::ItemType;
 
@@ -305,7 +305,7 @@ impl FileImage {
                             }
                         }
                         if chunks.len()==prev_len {
-                            eprintln!("could not read hex string from chunk");
+                            error!("could not read hex string from chunk");
                             return Err(Box::new(Error::FileImageFormat));
                         }
                     }
@@ -323,7 +323,7 @@ impl FileImage {
                         chunks
                     });
                 }
-                eprintln!("json records missing metadata");
+                error!("json records missing metadata");
                 Err(Box::new(Error::FileImageFormat))
             },
             Err(_e) => Err(Box::new(Error::FileImageFormat))
@@ -487,7 +487,7 @@ impl Records {
                         let mut records: HashMap<usize,String> = HashMap::new();
                         let map_obj = &parsed["records"];
                         if map_obj.entries().len()==0 {
-                            eprintln!("no object entries in json records");
+                            error!("no object entries in json records");
                             return Err(Box::new(Error::FileImageFormat));
                         }
                         for (key,lines) in map_obj.entries() {
@@ -497,13 +497,13 @@ impl Records {
                                     if let Some(line) = maybe_field.as_str() {
                                         fields = fields + line + "\n";
                                     } else {
-                                        eprintln!("record is not a string");
+                                        error!("record is not a string");
                                         return Err(Box::new(Error::FileImageFormat));
                                     }
                                 }
                                 records.insert(num,fields);
                             } else {
-                                eprintln!("key is not a number");
+                                error!("key is not a number");
                                 return Err(Box::new(Error::FileImageFormat));
                             }
                         }
@@ -512,11 +512,11 @@ impl Records {
                             map: records
                         });    
                     } else {
-                        eprintln!("json metadata type mismatch");
+                        error!("json metadata type mismatch");
                         return Err(Box::new(Error::FileImageFormat));
                     }
                 }
-                eprintln!("json records missing metadata");
+                error!("json records missing metadata");
                 Err(Box::new(Error::FileImageFormat))
             },
             Err(_e) => Err(Box::new(Error::FileImageFormat))

@@ -2,9 +2,8 @@
 use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::{Chunk,dos3x,TextEncoder,DiskFS};
-use a2kit::img::{dsk_d13,woz1};
+use a2kit::img::{dsk_d13,woz1,names};
 use a2kit::commands::ItemType;
-use a2kit::img::DiskKind;
 use a2kit::lang::integer;
 use a2kit_macro::DiskStruct;
 
@@ -83,7 +82,7 @@ fn read_small() {
 fn write_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file
-    let img = woz1::Woz1::create(35, DiskKind::A2_525_13);
+    let img = woz1::Woz1::create(35, names::A2_DOS32_KIND);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
     disk.init32(254,true);
 

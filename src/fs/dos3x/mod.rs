@@ -1,4 +1,4 @@
-//! # DOS 3.x file system module
+//! ## DOS 3.x file system module
 //! This manipulates disk images containing one standard bootable
 //! or non-bootable DOS 3.x volume.  At the level of this module,
 //! wide latitude is allowed for track counts, while sector counts
@@ -120,18 +120,24 @@ impl Disk
         return false;
     }
     /// Test an image to see if it already contains DOS 3.x.
-    pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
+    pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         let tlen = img.track_count();
         if tlen!=35 {
             debug!("track count is unexpected");
             return false;
         }
+        let old_kind = img.kind();
+        img.change_kind(img::names::A2_DOS32_KIND);
+        debug!("change to 13 sectors");
         if Self::test_img_13(img) {
             return true;
         }
+        debug!("change to 16 sectors");
+        img.change_kind(img::names::A2_DOS33_KIND);
         if Self::test_img_16(img) {
             return true;
         }
+        img.change_kind(old_kind);
         return false;
     }
     fn addr(&self,ts: [u8;2]) -> Chunk {
@@ -584,11 +590,11 @@ impl super::DiskFS for Disk {
                 return Ok(());
             }
         }
-        eprintln!("the disk image directory seems to be damaged");
+        error!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
     fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
-        eprintln!("DOS 3.x does not support operation");
+        error!("DOS 3.x does not support operation");
         return Err(Box::new(Error::SyntaxError));
     }
     fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -693,7 +699,7 @@ impl super::DiskFS for Disk {
     }
     fn read_records(&self,name: &str,record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         if record_length==0 {
-            eprintln!("DOS 3.x requires specifying a non-zero record length");
+            error!("DOS 3.x requires specifying a non-zero record length");
             return Err(Box::new(Error::Range));
         }
         let encoder = Encoder::new(vec![0x8d]);
@@ -745,7 +751,7 @@ impl super::DiskFS for Disk {
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if fimg.chunk_len!=256 {
-            eprintln!("chunk length {} is incompatible with DOS 3.x",fimg.chunk_len);
+            error!("chunk length {} is incompatible with DOS 3.x",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
         return self.write_file(name,fimg);

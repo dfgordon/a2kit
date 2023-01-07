@@ -1,4 +1,4 @@
-//! # Support for IMD disk images
+//! ## Support for IMD disk images
 //!
 //! Although this is not an Apple II format, it is included because a lot of
 //! CP/M disk images are available in this format.  By supporting the IMD format
@@ -14,9 +14,8 @@ use log::{warn,info,trace,debug,error};
 use a2kit_macro::DiskStruct;
 use crate::fs::cpm::types::RECORD_SIZE;
 use crate::img;
+use crate::bios::skew;
 use crate::fs::Chunk;
-
-const CPM_1_LSEC_TO_PSEC: [u8;26] = [1,7,13,19,25,5,11,17,23,3,9,15,21,2,8,14,20,26,6,12,18,24,4,10,16,22];
 
 pub enum Mode {
     Fm500Kbps = 0,
@@ -262,10 +261,11 @@ impl DiskStruct for Track {
 impl Imd {
     pub fn create(kind: img::DiskKind) -> Self {
         let now = chrono::Local::now().naive_local();
-        let header = "IMD 1.19: ".to_string() + &now.format("%d-%b-%Y %H:%M:%S").to_string();
+        let header = "IMD 1.19: ".to_string() + &now.format("%d-%m-%Y %H:%M:%S").to_string();
         let creator_str = "a2kit v".to_string() + env!("CARGO_PKG_VERSION");
+        debug!("header {}",header);
         let tracks = match kind {
-            img::DiskKind::CPM1_8_26 => {
+            img::names::IBM_CPM1_KIND => {
                 let mut ans: Vec<Track> = Vec::new();
                 let mut normal_track_buf: Vec<u8> = vec![0;129*26];
                 for lsec in 0..26 {
@@ -307,7 +307,7 @@ impl Imd {
         let mut idx = 0;
         let trk = &mut self.tracks[track];
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
-        let psec = CPM_1_LSEC_TO_PSEC[lsec];
+        let psec = skew::CPM_1_LSEC_TO_PSEC[lsec];
         // advance to the requested sector
         for curr in &trk.sector_map {
             if psec==*curr {
@@ -334,7 +334,7 @@ impl Imd {
         let mut idx = 0;
         let trk = &self.tracks[track];
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
-        let psec = CPM_1_LSEC_TO_PSEC[lsec];
+        let psec = skew::CPM_1_LSEC_TO_PSEC[lsec];
         // advance to the requested sector
         for curr in &trk.sector_map {
             if psec==*curr {
@@ -372,7 +372,7 @@ impl img::DiskImage for Imd {
                 let sector_shift = self.tracks[0].sector_shift;
                 for trk in &self.tracks {
                     if trk.sectors!=sectors || trk.sector_shift!=sector_shift {
-                        warn!("cannot handle variable sector metrics");
+                        warn!("cannot handle variable sector layout");
                         return Err(Box::new(super::Error::ImageTypeMismatch));
                     }
                 }
@@ -400,7 +400,7 @@ impl img::DiskImage for Imd {
                 let sector_shift = self.tracks[0].sector_shift;
                 for trk in &self.tracks {
                     if trk.sectors!=sectors || trk.sector_shift!=sector_shift {
-                        warn!("cannot handle variable sector metrics");
+                        warn!("cannot handle variable sector layout");
                         return Err(Box::new(super::Error::ImageTypeMismatch));
                     }
                 }
@@ -461,7 +461,7 @@ impl img::DiskImage for Imd {
                 ans.tracks.push(compressed.expand());
             }
             ans.kind = match ans.byte_capacity() {
-                256256 => img::DiskKind::CPM1_8_26,
+                256256 => img::names::IBM_CPM1_KIND,
                 _ => img::DiskKind::Unknown
             };
             return Some(ans);
@@ -473,6 +473,9 @@ impl img::DiskImage for Imd {
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
+    }
+    fn change_kind(&mut self,kind: img::DiskKind) {
+        self.kind = kind;
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();

@@ -2,6 +2,7 @@ use clap;
 use std::io::Write;
 use std::str::FromStr;
 use std::error::Error;
+use log::error;
 use super::{ItemType,CommandError};
 use crate::fs::DiskFS;
 
@@ -36,7 +37,7 @@ fn output_get(
 
 pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     if !atty::is(atty::Stream::Stdin) {
-        eprintln!("input is redirected, but `get` must start the pipeline");
+        error!("input is redirected, but `get` must start the pipeline");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let src_path = String::from(cmd.value_of("file").expect(RCH));
@@ -128,7 +129,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
 
         // arguments inconsistent
         _ => {
-            eprintln!("for `get` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
+            error!("for `get` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }

@@ -1,8 +1,12 @@
-//! # Support for WOZ v1 disk images
+//! ## Support for WOZ v1 disk images
+//! 
 //! This uses the nibble machinery in module `disk525` to handle the bit streams.
 //! The `DiskStruct` trait is used to flatten and unflatten the wrapper structures.
+//! WOZ v1 cannot handle actual 3.5 inch disk tracks.  Therefore the top level `create`
+//! function is set to panic if a 3.5 inch disk is requested.  You can use WOZ v2 for
+//! 3.5 inch disks.
 
-use log::info;
+use log::{debug,info,error};
 use std::str::FromStr;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -94,10 +98,9 @@ impl Info {
             size: u32::to_le_bytes(60),
             vers: 1,
             disk_type: match kind {
-                img::DiskKind::A2_525_13 => 1,
-                img::DiskKind::A2_525_16 => 1,
-                img::DiskKind::A2_35 => 2,
-                _ => panic!("WOZ rejected disk kind")
+                img::names::A2_DOS32_KIND => 1,
+                img::names::A2_DOS33_KIND => 1,
+                _ => panic!("WOZ v1 can only accept physical 5.25 inch Apple formats")
             },
             write_protected: 0,
             synchronized: 0,
@@ -112,10 +115,7 @@ impl TMap {
     fn create(kind: img::DiskKind) -> Self {
         let mut map: [u8;160] = [0xff;160];
         match kind {
-            img::DiskKind::A2_35 => {
-                panic!("3.5 inch disk not supported");
-            },
-            _ => {
+            img::names::A2_DOS32_KIND | img::names::A2_DOS33_KIND => {
                 for i in 0 as u8..139 {
                     map[i as usize] = match i {
                         x if x%4==0 => x/4,
@@ -125,6 +125,7 @@ impl TMap {
                     };
                 }
             }
+            _ => panic!("WOZ v1 can only accept physical 5.25 inch Apple formats")
         }
         Self {
             id: u32::to_le_bytes(TMAP_ID),
@@ -138,15 +139,12 @@ impl Trk {
     fn create(vol: u8,track: u8,kind: img::DiskKind) -> Self {
         let padding_byte = 0x00;
         let mut bits: [u8;TRACK_BYTE_CAPACITY] = [padding_byte;TRACK_BYTE_CAPACITY];
-        let mut track_obj = match kind {
-            img::DiskKind::A2_525_13 => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
-            img::DiskKind::A2_525_16 => disk525::create_std16_track(vol,track,TRACK_BYTE_CAPACITY),
-            img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            img::DiskKind::A2Max => panic!("HD not allowed"),
-            img::DiskKind::CPM1_8_26 => panic!("8 inch disks not allowed"),
-            img::DiskKind::Unknown => panic!("Unknown disk kind not allowed")
+        let track_obj = match kind {
+            img::names::A2_DOS32_KIND => disk525::create_std13_track(vol,track,TRACK_BYTE_CAPACITY),
+            img::names::A2_DOS33_KIND => disk525::create_std16_track(vol,track,TRACK_BYTE_CAPACITY),
+            _ => panic!("WOZ v1 can only accept physical 5.25 inch Apple formats")
         };
-        track_obj.read(&mut bits,track_obj.bit_count());
+        bits.copy_from_slice(&track_obj.to_buf());
         Self {
             bits,
             bytes_used: u16::to_le_bytes(track_obj.len() as u16),
@@ -162,12 +160,9 @@ impl Trk {
 impl Trks {
     fn create(vol: u8,kind: img::DiskKind) -> Self {
         let tracks: usize = match kind {
-            img::DiskKind::A2_525_13 => 35,
-            img::DiskKind::A2_525_16 => 35,
-            img::DiskKind::A2_35 => panic!("3.5 inch disks not allowed"),
-            img::DiskKind::A2Max => panic!("HD not allowed"),
-            img::DiskKind::CPM1_8_26 => panic!("8 inch disks not allowed"),
-            img::DiskKind::Unknown => panic!("Unknown disk kind not allowed")
+            img::names::A2_DOS32_KIND => 35,
+            img::names::A2_DOS33_KIND => 35,
+            _ => panic!("WOZ v1 can only accept physical 5.25 inch Apple formats")
         };
         let mut ans = Trks::new();
         ans.id = u32::to_le_bytes(TRKS_ID);
@@ -235,9 +230,11 @@ impl Woz1 {
             meta: None
         }
     }
+    /// Create the image of a specific kind of disk (panics if unsupported disk kind).
+    /// The volume is used to format the address fields on the tracks.
     pub fn create(vol: u8,kind: img::DiskKind) -> Self {
-        if kind!=img::DiskKind::A2_525_16 && kind!=img::DiskKind::A2_525_13 {
-            panic!("only 5.25 disks allowed");
+        if kind!=img::names::A2_DOS32_KIND && kind!=img::names::A2_DOS33_KIND {
+            panic!("WOZ v1 can only accept 5.25 inch Apple formats")
         }
         Self {
             kind,
@@ -248,57 +245,64 @@ impl Woz1 {
             meta: None
         }
     }
-    /// Go through drive head positions to find the index to the track
+    /// Get index to the `Trk` structure, searching main track and nearby quarter-tracks.
+    /// If no data this will panic.
     fn get_trk_idx(&self,track: u8) -> usize {
-        let mut unique_count: usize = 0;
-        let mut ptr = 0xff;
-        // loop through the drive head positions
-        for test in self.tmap.map {
-            if test!=ptr && test!=0xff {
-                ptr = test;
-                unique_count += 1;
-            }
-            if unique_count>track as usize {
-                break;
+        let key_idx = track as usize*4;
+        if self.tmap.map[key_idx]!=0xff {
+            return self.tmap.map[key_idx] as usize;
+        }
+        if key_idx!=0 {
+            if self.tmap.map[key_idx-1]!=0xff {
+                return self.tmap.map[key_idx-1] as usize;
             }
         }
-        if ptr==0xff || unique_count <= track as usize {
-            panic!("WOZ track not found");
+        if key_idx!=self.tmap.map.len() {
+            if self.tmap.map[key_idx+1]!=0xff {
+                return self.tmap.map[key_idx+1] as usize;
+            }
         }
-        return ptr as usize;
+        error!("This image has a missing track; cannot be handled in general");
+        panic!("WOZ track not found");
     }
-    /// Go through drive head positions to find track and get a copy
+    /// Find track and get a copy
     fn get_trk_struct(&self,track: u8) -> Trk {
         return self.trks.tracks[self.get_trk_idx(track)];
     }
-    /// Get a track with the default formatting protocol.
-    /// Caller can use `set_format_protocol` on the result to adjust.
-    /// TODO: cache the tracks
-    fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
+    /// Get the trait object for the track bits.  The nibble format will be
+    /// determined by the image's underlying `DiskKind`.
+    fn get_track_obj(&self,track: u8) -> Box<dyn super::TrackBits> {
         let trk = self.get_trk_struct(track);
         let buf = trk.bits.to_vec();
         let bit_count = u16::from_le_bytes(trk.bit_count) as usize;
-        return disk525::TrackBits::create(buf,bit_count);
-    }
-    /// TODO: instead of this, write back all cached tracks whenever the flattened bytes
-    /// are requested.
-    fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
-        let idx = self.get_trk_idx(track);
-        track_obj.reset();
-        track_obj.read(&mut self.trks.tracks[idx].bits,track_obj.bit_count());
-
+        let ans: Box<dyn super::TrackBits> = match self.kind {
+            super::names::A2_DOS32_KIND => Box::new(disk525::TrackBits::create(
+                buf,bit_count,
+                disk525::SectorAddressFormat::create_std13(),
+                disk525::SectorDataFormat::create_std13())),
+            super::names::A2_DOS33_KIND => Box::new(disk525::TrackBits::create(
+                buf,bit_count,
+                disk525::SectorAddressFormat::create_std16(),
+                disk525::SectorDataFormat::create_std16())),
+            _ => panic!("incompatible disk")
+        };
+        return ans;
     }
 }
 
 impl img::woz::WozConverter for Woz1 {
+    fn kind(&self) -> img::DiskKind {
+        self.kind
+    }
     fn num_tracks(&self) -> usize {
-        return self.trks.num_tracks();
+        self.trks.num_tracks()
     }
-    fn get_track_obj(&self,track: u8) -> disk525::TrackBits {
-        return self.get_track_obj(track);
+    fn get_track_obj(&self,track: u8) -> Box<dyn super::TrackBits> {
+        self.get_track_obj(track)
     }
-    fn update_track(&mut self,track_obj: &mut disk525::TrackBits,track: u8) {
-        self.update_track(track_obj, track);
+    fn update_track(&mut self,track_obj: &mut Box<dyn super::TrackBits>,track: u8) {
+        let idx = self.get_trk_idx(track);
+        self.trks.tracks[idx].bits.copy_from_slice(&track_obj.to_buf());
     }
 }
 
@@ -306,12 +310,14 @@ impl img::DiskImage for Woz1 {
     fn track_count(&self) -> usize {
         match self.info.disk_type {
             1 => 35,
+            2 => 160,
             _ => panic!("disk type not supported")
         }
     }
     fn byte_capacity(&self) -> usize {
         match self.info.disk_type {
             1 => self.track_count()*16*256,
+            2 => 1600*512,
             _ => panic!("disk type not supported")
         }
     }
@@ -320,6 +326,9 @@ impl img::DiskImage for Woz1 {
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
+    }
+    fn change_kind(&mut self,kind: img::DiskKind) {
+        self.kind = kind;
     }
     fn read_chunk(&self,addr: crate::fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         super::woz::read_chunk(self, addr)
@@ -352,10 +361,10 @@ impl img::DiskImage for Woz1 {
         if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 {
             // TODO: can we figure if this is a 13 sector disk at this point?
             ans.kind = match ans.info.disk_type {
-                1 => img::DiskKind::A2_525_16,
-                2 => img::DiskKind::A2_35,
-                _ => panic!("WOZ encountered unexpected disk type in INFO chunk")
+                1 => img::names::A2_DOS33_KIND,
+                _ => panic!("WOZ v1 encountered unexpected disk type in INFO chunk")
             };
+            debug!("setting disk kind to {}",ans.kind);
             return Some(ans);
         }
         return None;
@@ -380,7 +389,7 @@ impl img::DiskImage for Woz1 {
         match usize::from_str(track) {
             Ok(track_num) if track_num<self.trks.num_tracks() => {
                 let track_obj = self.get_track_obj(track_num as u8);
-                Ok((0,track_obj.to_buffer()))
+                Ok((0,track_obj.to_buf()))
             },
             Err(e) => Err(Box::new(e)),
             _ => Err(Box::new(crate::commands::CommandError::OutOfRange))
@@ -389,18 +398,8 @@ impl img::DiskImage for Woz1 {
     fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(track) {
             Ok(track_num) if track_num<self.trks.num_tracks() => {
-                let mut ans: Vec<u8> = Vec::new();
-                let mut byte: [u8;1] = [0;1];
                 let mut track_obj = self.get_track_obj(track_num as u8);
-                track_obj.reset();
-                for _i in 0..track_obj.len() {
-                    track_obj.read_latch(&mut byte,1);
-                    ans.push(byte[0]);
-                    if track_obj.get_bit_ptr()+8 > track_obj.bit_count() {
-                        break;
-                    }
-                }
-                Ok((0,ans))
+                Ok((0,track_obj.to_bytes()))
             },
             Err(e) => Err(Box::new(e)),
             _ => Err(Box::new(crate::commands::CommandError::OutOfRange))

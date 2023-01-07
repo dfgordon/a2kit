@@ -88,8 +88,8 @@ pub struct DiskParameterBlock {
 
 impl DiskParameterBlock {
     pub fn create(kind: &crate::img::DiskKind) -> Self {
-        match kind {
-            crate::img::DiskKind::A2_525_16 => {
+        match *kind {
+            crate::img::names::A2_DOS33_KIND => {
                 Self {
                     spt: 32,
                     bsh: 3,
@@ -105,7 +105,7 @@ impl DiskParameterBlock {
                     phm: 0
                 }
             },
-            crate::img::DiskKind::CPM1_8_26 => {
+            crate::img::names::IBM_CPM1_KIND => {
                 Self {
                     spt: 26,
                     bsh: 3,

@@ -2,6 +2,7 @@ use clap;
 use std::io::Read;
 use std::str::FromStr;
 use std::error::Error;
+use log::error;
 use super::{ItemType,CommandError};
 use crate::fs::{Records,FileImage};
 
@@ -9,11 +10,11 @@ const RCH: &str = "unreachable was reached";
 
 pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     if atty::is(atty::Stream::Stdin) {
-        eprintln!("cannot use `put` with console input, please pipe something in");
+        error!("cannot use `put` with console input, please pipe something in");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     if !atty::is(atty::Stream::Stdout) {
-        eprintln!("output is redirected, but `put` must end the pipeline");
+        error!("output is redirected, but `put` must end the pipeline");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let dest_path = String::from(cmd.value_of("file").expect(RCH));
@@ -30,7 +31,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
             let load_address: u16 = match (cmd.value_of("addr"),&typ) {
                 (Some(a),_) => u16::from_str(a).expect("bad address"),
                 (_ ,Ok(ItemType::Binary)) => {
-                    eprintln!("binary file requires an address");
+                    error!("binary file requires an address");
                     return Err(Box::new(CommandError::InvalidCommand));
                 },
                 _ => 768 as u16
@@ -48,7 +49,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                                 Err(e) => Err(e)
                             },
                             _ => {
-                                eprintln!("could not encode data as UTF8");
+                                error!("could not encode data as UTF8");
                                 return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
@@ -60,7 +61,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                                 Err(e) => Err(e)
                             },
                             _ => {
-                                eprintln!("could not encode data as UTF8");
+                                error!("could not encode data as UTF8");
                                 return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
@@ -70,7 +71,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                                 Err(e) => Err(e)
                             },
                             _ => {
-                                eprintln!("could not encode data as UTF8");
+                                error!("could not encode data as UTF8");
                                 return Err(Box::new(CommandError::UnknownFormat));
                             }
                         },
@@ -95,7 +96,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
 
         // arguments inconsistent
         _ => {
-            eprintln!("for `put` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
+            error!("for `put` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }

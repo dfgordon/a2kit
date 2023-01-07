@@ -2,9 +2,15 @@
 
 Command line interface and library for manipulating Apple ][ language files and disk images.
 
-Here is an example using the CLI to create a disk image that is then loaded into [microM8](https://paleotronic.com/software/microm8/) and booted.  This example assumes the working directory contains certain [file images](https://github.com/dfgordon/a2kit/wiki/LowLevel#file-images-and-the-any-type) and source code.  In practice one might choose to script such operations.
-
-<img src="a2kit-demo.gif" alt="session capture"/>
+* Designed to be scriptable
+* Languages - Applesoft, Integer BASIC, Merlin Assembly
+    - full syntax comprehension
+    - tokenization, detokenization
+* File Systems - DOS 3.x, ProDOS, CP/M (soon), Pascal
+    - full read and write access
+    - high or low level manipulations
+    - interface for handling sparse or random access files
+* Disk Images - DSK (and variants), WOZ (1 and 2), IMD (soon)
 
 ## Documentation
 

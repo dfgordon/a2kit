@@ -1,4 +1,5 @@
-//! # ProDOS file system module
+//! ## ProDOS file system module
+//! 
 //! This manipulates disk images containing one ProDOS volume.
 //! 
 //! * Single volume images only
@@ -1017,7 +1018,7 @@ impl super::DiskFS for Disk {
     }
     fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if fimg.chunk_len!=512 {
-            eprintln!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
+            error!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
         match self.prepare_to_write(path) {

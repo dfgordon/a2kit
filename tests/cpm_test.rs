@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::str::FromStr;
 use a2kit::fs::{cpm,TextEncoder,DiskFS};
-use a2kit::img::{dsk_do,DiskKind};
+use a2kit::img::{dsk_do,names};
 use a2kit_macro::DiskStruct;
 
 // Some lines we entered in the emulator using ED.COM.
@@ -50,7 +50,7 @@ fn write_small() {
     // Formatting: FORMAT.COM, writing: ED.COM, emulator: Virtual II
     // This tests small CP/M text files
     let img = dsk_do::DO::create(35, 16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),cpm::types::DiskParameterBlock::create(&DiskKind::A2_525_16),[2,2,3]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),cpm::types::DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
     disk.format("test",None).expect("failed to format disk");
 
     // save the text
@@ -64,7 +64,7 @@ fn write_small() {
 #[test]
 fn out_of_space() {
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),cpm::types::DiskParameterBlock::create(&DiskKind::A2_525_16),[2,2,3]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),cpm::types::DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),None).expect("could not format");
     disk.bsave("f1",&big,0x800,None).expect("error");

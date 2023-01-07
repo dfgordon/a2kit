@@ -1,5 +1,5 @@
 
-//! # ProDOS directory structures
+//! ### ProDOS directory structures
 //! 
 //! These are all implemented as fixed length structs with private fields.
 //! External interactions are largely trhough the `Directory` trait object,

@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::DiskStruct;
 use super::super::TextEncoder;
-use log::debug;
+use log::{debug,error};
 
 pub const BLOCK_SIZE: usize = 512;
 pub const TEXT_PAGE: usize = 1024;
@@ -196,7 +196,7 @@ impl TextEncoder for Encoder {
             match paginate(&mut ans,page,count_on_page) {
                 Ok(new_page) => page = new_page,
                 Err(e) => {
-                    eprintln!("{}",e);
+                    error!("{}",e);
                     return None
                 }
             }
@@ -214,7 +214,7 @@ impl TextEncoder for Encoder {
         match paginate(&mut ans,page,count_on_page) {
             Ok(_new_page) => {},//page = new_page},
             Err(e) => {
-                eprintln!("{}",e);
+                error!("{}",e);
                 return None
             }
         }

@@ -9,6 +9,7 @@ use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
+use log::error;
 use a2kit::commands;
 use a2kit::commands::{ItemType,CommandError};
 use a2kit::lang;
@@ -44,7 +45,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     let img_types = ["d13","do","po","woz1","woz2","imd"];
     let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
-    let disk_kinds = ["8in","5.25in","3.5in","hdmax"];
+    let disk_kinds = ["8in","5.25in","3.5in","3.5in-ss","3.5in-ds","hdmax"];
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
@@ -189,7 +190,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     if let Some(cmd) = matches.subcommand_matches("minify") {
         if atty::is(atty::Stream::Stdin) {
-            eprintln!("line entry is not supported for `minify`, please pipe something in");
+            error!("line entry is not supported for `minify`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
@@ -211,7 +212,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     if let Some(cmd) = matches.subcommand_matches("tokenize") {
         if atty::is(atty::Stream::Stdin) {
-            eprintln!("line entry is not supported for `tokenize`, please pipe something in");
+            error!("line entry is not supported for `tokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
@@ -220,7 +221,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         {
             Ok(ItemType::ApplesoftText) => {
                 if addr_opt==None {
-                    eprintln!("address needed to tokenize Applesoft");
+                    error!("address needed to tokenize Applesoft");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 if let Ok(addr) = u16::from_str_radix(addr_opt.expect(RCH),10) {
@@ -239,7 +240,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             },
             Ok(ItemType::IntegerText) => {
                 if let Some(_addr) = addr_opt {
-                    eprintln!("unnecessary address argument");
+                    error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut program = String::new();
@@ -255,7 +256,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             },
             Ok(ItemType::MerlinText) => {
                 if let Some(_addr) = addr_opt {
-                    eprintln!("unnecessary address argument");
+                    error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut program = String::new();
@@ -277,7 +278,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     if let Some(cmd) = matches.subcommand_matches("detokenize") {
         if atty::is(atty::Stream::Stdin) {
-            eprintln!("line entry is not supported for `detokenize`, please pipe something in");
+            error!("line entry is not supported for `detokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
@@ -408,7 +409,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         return commands::get::get(cmd);
     }
     
-    eprintln!("No subcommand was found, try `a2kit --help`");
+    error!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
 
 }

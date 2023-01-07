@@ -1,10 +1,16 @@
-//! # Low level treatment of 5.25 inch floppy disks
+//! ## Low level treatment of 5.25 inch floppy disks
 //! 
 //! This handles the detailed track layout of a real floppy disk.
+//! 
+//! //! It should be noted the logic state sequencer (LSS) that is used in a real Apple computer
+//! is approximated by a "soft latch" which collects bytes one bit at a time, obeying the rule
+//! that leading low-bits must be dropped.
+//! 
 //! Acknowledgment: some of this module is adapted from CiderPress.
 
-use thiserror;
+use super::NibbleError;
 use log::{debug,trace,warn};
+use crate::bios::skew;
 
 const INVALID_NIB_BYTE: u8 = 0xff;
 const CHUNK53: usize = 0x33;
@@ -27,23 +33,6 @@ pub const DISK_BYTES_62: [u8;64] = [
     0xed, 0xee, 0xef, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6,
     0xf7, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 ];
-
-/// Errors pertaining to nibble encoding
-#[derive(thiserror::Error,Debug)]
-pub enum NibbleError {
-    #[error("could not interpret track data")]
-    BadTrack,
-    #[error("invalid byte while decoding")]
-    InvalidByte,
-    #[error("bad checksum found in a sector")]
-    BadChecksum,
-    #[error("could not find bit pattern")]
-    BitPatternNotFound,
-    #[error("sector not found")]
-    SectorNotFound,
-    #[error("nibble type appeared in wrong context")]
-    NibbleType
-}
 
 #[derive(PartialEq,Clone,Copy)]
 enum NibbleType {
@@ -102,7 +91,7 @@ pub struct SectorDataFormat {
 }
 
 impl SectorDataFormat {
-    pub fn create_std() -> Self {
+    pub fn create_std16() -> Self {
         Self {
             prolog: [0xd5,0xaa,0xad],
             epilog: [0xde,0xaa,0xeb],
@@ -140,15 +129,15 @@ pub struct TrackBits {
     buf: Vec<u8>
 }
 impl TrackBits {
-    /// Create an empty track with default formatting protocol (but no actual format).
+    /// Create an empty track with formatting protocol (but no actual format).
     /// Use `disk525::create_track`, or variants, to actually format the track.
-    pub fn create(buf: Vec<u8>,bit_count: usize) -> Self {
+    pub fn create(buf: Vec<u8>,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
         if bit_count > buf.len()*8 {
             panic!("buffer cannot hold requested bits");
         }
         Self {
-            adr_fmt: SectorAddressFormat::create_std16(),
-            dat_fmt: SectorDataFormat::create_std(),
+            adr_fmt,
+            dat_fmt,
             bit_count,
             bit_ptr: 0,
             buf
@@ -160,22 +149,6 @@ impl TrackBits {
     pub fn set_format_protocol(&mut self,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) {
         self.adr_fmt = adr_fmt;
         self.dat_fmt = dat_fmt;
-    }
-    /// Length of the track buffer in bytes
-    pub fn len(&self) -> usize {
-        return self.buf.len();
-    }
-    /// Bits actually on the track
-    pub fn bit_count(&self) -> usize {
-        return self.bit_count;
-    }
-    /// Rotate the disk to the reference bit
-    pub fn reset(&mut self) {
-        self.bit_ptr = 0;
-    }
-    /// Get the current displacement from the reference bit
-    pub fn get_bit_ptr(&self) -> usize {
-        return self.bit_ptr;
     }
     /// Rotate the disk ahead by one bit
     pub fn shift_fwd(&mut self,bit_shift: usize) {
@@ -558,22 +531,51 @@ impl TrackBits {
             self.write(&[0xff,0x00],num_bits);
         }
     }
-    /// Write physical sector (as identified by address field)
-    pub fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError> {
-        match self.find_sector([track,sector]) {
-            Ok(_vol) => Ok(self.encode_sector(dat)),
-            Err(e) => Err(e)
-        }
+}
+
+impl super::TrackBits for TrackBits {
+    fn len(&self) -> usize {
+        self.buf.len()
     }
-    /// Read physical sector (as identified by address field)
-    pub fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError> {
+    fn bit_count(&self) -> usize {
+        self.bit_count
+    }
+    fn reset(&mut self) {
+        self.bit_ptr = 0;
+    }
+    fn get_bit_ptr(&self) -> usize {
+        self.bit_ptr
+    }
+    fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError> {
         match self.find_sector([track,sector]) {
             Ok(_vol) => self.decode_sector(),
             Err(e) => Err(e)
         }
     }
+    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError> {
+        match self.find_sector([track,sector]) {
+            Ok(_vol) => Ok(self.encode_sector(dat)),
+            Err(e) => Err(e)
+        }
+    }
+    fn to_buf(&self) -> Vec<u8> {
+        self.buf.clone()
+    }
+    fn to_bytes(&mut self) -> Vec<u8> {
+        // TODO: dump exactly one revolution starting on an address prolog
+        let mut ans: Vec<u8> = Vec::new();
+        let mut byte: [u8;1] = [0;1];
+        self.reset();
+        for _i in 0..self.len() {
+            self.read_latch(&mut byte,1);
+            ans.push(byte[0]);
+            if self.bit_ptr+8 > self.bit_count {
+                break;
+            }
+        }
+        return ans;
+    }
 }
-
 
 fn invert_53() -> [u8;256] {
     let mut ans: [u8;256] = [INVALID_NIB_BYTE;256];
@@ -621,25 +623,10 @@ fn decode_62(byte: u8,inv: [u8;256]) -> u8 {
     return inv[byte as usize];
 }
 
-/// Get physical sector from DOS 3.2 logical sector.
-/// N.b. with DOS 3.2 the address fields contain the logical sector.
-/// Hence the transformation happens only during formatting.
-pub fn physical13_sector(logical_sector: u8) -> u8 {
-    let phys_sec: [u8;13] = [0,4,8,12,3,7,11,2,6,10,1,5,9];
-    return phys_sec[logical_sector as usize];
-}
-/// Get DOS 3.2 logical sector from physical sector.
-/// N.b. with DOS 3.2 the address fields contain the logical sector.
-/// Hence the transformation happens only during formatting.
-pub fn logical13_sector(physical_sector: u8) -> u8 {
-    let log_sec: [u8;13] = [0,10,7,4,1,11,8,5,2,12,9,6,3];
-    return log_sec[physical_sector as usize];
-}
-
 /// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
 /// For 13 sector disks, data segments are filled with high bits.
 /// For 16 sector disks, the data segment is created, and the data itself is zeroed.
-pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) -> TrackBits {
+pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) -> Box<dyn super::TrackBits> {
     let bit_count_13 = 40*9 + 13*((3+8+3)*8 + 10*9 + (3+411+3)*8 + 20*9);
     let bit_count_16 = 40*10 + 16*((3+8+3)*8 + 10*10 + (3+343+3)*8 + 20*10);
     let (sectors,bit_count,sync_bits) = match dat_fmt.nib {
@@ -648,8 +635,7 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         _ => panic!("only 5-3 or 6-2 nibbles allowed")
     };
     let buf: Vec<u8> = vec![0;buf_len];
-    let mut ans = TrackBits::create(buf,bit_count);
-    ans.set_format_protocol(adr_fmt, dat_fmt);
+    let mut ans = TrackBits::create(buf,bit_count,adr_fmt,dat_fmt);
     ans.write_sync_gap(40,sync_bits);
     for sector in 0..sectors {
         // address field
@@ -658,9 +644,9 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         ans.write(&encode_44(track),16);
         let sec_addr = match sectors {
             // DOS 3.2 skews the sectors directly on the disk track
-            13 => logical13_sector(sector),
+            13 => skew::DOS32_PHYSICAL[sector] as u8,
             // DOS 3.3 writes addresses in physical order, skew is in software
-            _ => sector
+            _ => sector as u8
         };
         ans.write(&encode_44(sec_addr),16);
         let chksum = adr_fmt.chk_seed ^ vol ^ track ^ sec_addr;
@@ -679,18 +665,19 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         //sync gap
         ans.write_sync_gap(20,sync_bits);
     }
-    ans.reset();
-    return ans;
+    let mut obj: Box<dyn super::TrackBits> = Box::new(ans);
+    obj.reset();
+    return obj;
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.3 and ProDOS
-pub fn create_std16_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
+pub fn create_std16_track(vol: u8,track: u8,buf_len: usize) -> Box<dyn super::TrackBits> {
     debug!("create 16 sectors on track {}",track);
-    return create_track(vol,track,buf_len,SectorAddressFormat::create_std16(),SectorDataFormat::create_std());
+    return create_track(vol,track,buf_len,SectorAddressFormat::create_std16(),SectorDataFormat::create_std16());
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.0, 3.1, and 3.2
-pub fn create_std13_track(vol: u8,track: u8,buf_len: usize) -> TrackBits {
+pub fn create_std13_track(vol: u8,track: u8,buf_len: usize) -> Box<dyn super::TrackBits> {
     debug!("create 13 sectors on track {}",track);
     return create_track(vol,track,buf_len,SectorAddressFormat::create_std13(),SectorDataFormat::create_std13());
 }

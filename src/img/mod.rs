@@ -7,7 +7,17 @@
 //! must respond to a file system's request for that file system's preferred allocation block.
 //! Certain kinds of disk images must also provide encoding and decoding of track bits.
 //! 
+//! ## Disk Kind Patterns
+//! 
+//! There is an enumeration called `DiskKind` that can be used to make branching decisions
+//! based on parameters of a given disk.  This is intended to be used with rust's `match` statement.
+//! As an example, if you want to do something only with 3.5 inch disks, you would use a pattern like
+//! `DiskKind::D35(_,_,_)`.  If you wanted to further limit this to disks with 6&2 nibbles, you could
+//! use a pattern like `DiskKind::D35(_,NibbleCode::N62,_)`.
+//! 
 //! ## Sector Skews
+//! 
+//! The actual skew tables are maintained separately in `bios::skew`.
 //! 
 //! Disk addresses are often transformed one or more times as they propagate from a file
 //! system request to a physical disk.  The file system may use an abstract unit, like a block,
@@ -18,8 +28,9 @@
 //! an enumeration called `Chunk` which identifies a disk address in a given file system's
 //! own language.  Each disk image implementation has to provide `read_chunk` and `write_chunk`.
 //! These functions have to be able to take a `Chunk` and transform it into whatever disk
-//! addressing the image uses.
+//! addressing the image uses.  The tables in `bios::skew` are accessible to any image.
 
+pub mod disk35;
 pub mod disk525;
 pub mod dsk_d13;
 pub mod dsk_do;
@@ -28,8 +39,10 @@ pub mod woz;
 pub mod woz1;
 pub mod woz2;
 pub mod imd;
+pub mod names;
 
 use std::str::FromStr;
+use std::fmt;
 use log::info;
 use crate::fs;
 
@@ -50,20 +63,62 @@ pub enum Error {
     SectorAccess
 }
 
-#[derive(PartialEq,Clone,Copy)]
+/// Errors pertaining to nibble encoding
+#[derive(thiserror::Error,Debug)]
+pub enum NibbleError {
+    #[error("could not interpret track data")]
+    BadTrack,
+    #[error("invalid byte while decoding")]
+    InvalidByte,
+    #[error("bad checksum found in a sector")]
+    BadChecksum,
+    #[error("could not find bit pattern")]
+    BitPatternNotFound,
+    #[error("sector not found")]
+    SectorNotFound,
+    #[error("nibble type appeared in wrong context")]
+    NibbleType
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
+pub enum FluxCode {
+    None,
+    FM,
+    GCR,
+    MFM
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
+pub enum NibbleCode {
+    None,
+    N44,
+    N53,
+    N62
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
+pub struct BlockLayout {
+    block_size: usize,
+    block_count: usize
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
+pub struct SectorLayout {
+    cylinders: usize,
+    sides: usize,
+    zones: usize,
+    sectors: usize,
+    sector_size: usize
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
 pub enum DiskKind {
-    /// no name for it; but may be detailed within image format in some cases
     Unknown,
-    /// Apple II 5.25 inch disk with 13 sectors per track and 5-3 nibble encoding
-    A2_525_13,
-    /// Apple II 5.25 inch disk with 16 sectors per track and 6-2 nibble encoding
-    A2_525_16,
-    /// Abstract Apple II 3.5 inch disk
-    A2_35,
-    /// Abstract Apple II maximum ProDOS volume (32M)
-    A2Max,
-    /// Standard 8 inch CP/M disk with 26 sectors per track and FM encoding
-    CPM1_8_26
+    LogicalBlocks(BlockLayout),
+    LogicalSectors(SectorLayout),
+    D35(SectorLayout,NibbleCode,FluxCode),
+    D525(SectorLayout,NibbleCode,FluxCode),
+    D8(SectorLayout,NibbleCode,FluxCode)
 }
 
 #[derive(PartialEq,Clone,Copy)]
@@ -76,14 +131,37 @@ pub enum DiskImageType {
     IMD
 }
 
+/// Allows the disk kind to be displayed to the console using `println!`.  This also
+/// derives `to_string`, so the enum can be converted to `String`.
+impl fmt::Display for DiskKind {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            DiskKind::LogicalBlocks(lay) => write!(f,"Logical disk, {} blocks",lay.block_count),
+            DiskKind::LogicalSectors(lay) => write!(f,"Logical disk, {} x {} tracks",lay.cylinders,lay.sides),
+            names::A2_400_KIND => write!(f,"Apple 3.5 inch 400K"),
+            names::A2_800_KIND => write!(f,"Apple 3.5 inch 800K"),
+            names::A2_DOS32_KIND => write!(f,"Apple 5.25 inch 13 sector"),
+            names::A2_DOS33_KIND => write!(f,"Apple 5.25 inch 16 sector"),
+            names::IBM_CPM1_KIND => write!(f,"IBM 8 inch SSSD"),
+            DiskKind::D35(lay,_,_) => write!(f,"3.5 inch {} x {} tracks",lay.cylinders,lay.sides),
+            DiskKind::D525(lay,_,_) => write!(f,"5.25 inch {} x {} tracks",lay.cylinders,lay.sides),
+            DiskKind::D8(lay,_,_) => write!(f,"8 inch {} x {} tracks",lay.cylinders,lay.sides),
+            DiskKind::Unknown => write!(f,"unknown")
+        }
+    }
+}
+
+/// Given a command line argument return a likely disk kind the user may want
 impl FromStr for DiskKind {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
-            "8in" => Ok(Self::CPM1_8_26),
-            "5.25in" => Ok(Self::A2_525_16),
-            "3.5in" => Ok(Self::A2_35),
-            "hdmax" => Ok(Self::A2Max),
+            "8in" => Ok(names::IBM_CPM1_KIND),
+            "5.25in" => Ok(names::A2_DOS33_KIND),
+            "3.5in" => Ok(names::A2_800_KIND),
+            "hdmax" => Ok(names::A2_HD_MAX),
+            "3.5in-ss" => Ok(names::A2_400_KIND),
+            "3.5in-ds" => Ok(names::A2_800_KIND),
             _ => Err(Error::UnknownDiskKind)
         }
     }
@@ -104,6 +182,25 @@ impl FromStr for DiskImageType {
     }
 }
 
+pub trait TrackBits {
+    /// Length of the track buffer in bytes
+    fn len(&self) -> usize;
+    /// Bits actually on the track
+    fn bit_count(&self) -> usize;
+    /// Rotate the disk to the reference bit
+    fn reset(&mut self);
+    /// Get the current displacement from the reference bit
+    fn get_bit_ptr(&self) -> usize;
+    /// Write physical sector (as identified by address field)
+    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError>;
+    /// Read physical sector (as identified by address field)
+    fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
+    /// Copy of the unfiltered track buffer
+    fn to_buf(&self) -> Vec<u8>;
+    /// Get the track buffer after filtering (e.g. by soft latch); n.b. head position will move.
+    fn to_bytes(&mut self) -> Vec<u8>;
+}
+
 /// The main trait for working with any kind of disk image.
 /// The corresponding trait object serves as storage for `DiskFS`.
 pub trait DiskImage {
@@ -111,6 +208,7 @@ pub trait DiskImage {
     fn byte_capacity(&self) -> usize;
     fn what_am_i(&self) -> DiskImageType;
     fn kind(&self) -> DiskKind;
+    fn change_kind(&mut self,kind: DiskKind);
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
     fn to_bytes(&self) -> Vec<u8>;
     /// Read a chunk (block or sector) from the image
@@ -135,7 +233,8 @@ pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usiz
     return Err(Box::new(Error::ImageSizeMismatch));
 }
 
-/// If a data source is smaller than `quantum` bytes, pad it with zeros
+/// If a data source is smaller than `quantum` bytes, pad it with zeros.
+/// If it is larger, do not include the extra bytes.
 pub fn quantize_chunk(src: &Vec<u8>,quantum: usize) -> Vec<u8> {
 	let mut padded: Vec<u8> = Vec::new();
 	for i in 0..quantum {
@@ -148,21 +247,3 @@ pub fn quantize_chunk(src: &Vec<u8>,quantum: usize) -> Vec<u8> {
     return padded;
 }
 
-/// Get block number and byte offset into block corresponding to
-/// track and logical sector.  Returned in tuple (block,offset)
-pub fn prodos_block_from_ts(track: usize,sector: usize) -> (usize,usize) {
-    let block_offset: [usize;16] = [0,7,6,6,5,5,4,4,3,3,2,2,1,1,0,7];
-    let byte_offset: [usize;16] = [0,0,256,0,256,0,256,0,256,0,256,0,256,0,256,256];
-    return (8*track + block_offset[sector], byte_offset[sector]);
-}
-
-/// Get the two track and logical sector pairs corresponding to a block.
-/// The returned array is arranged in order.
-pub fn ts_from_prodos_block(block: usize) -> [[usize;2];2] {
-    let sector1: [usize;8] = [0,13,11,9,7,5,3,1];
-    let sector2: [usize;8] = [14,12,10,8,6,4,2,15];
-    return [
-        [(block/8), sector1[block % 8]],
-        [(block/8), sector2[block % 8]]
-    ];
-}

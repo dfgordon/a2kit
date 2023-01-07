@@ -1,4 +1,4 @@
-//! # Pascal file system module
+//! ## Pascal file system module
 //! 
 //! This module is *not* for the Pascal language, but rather the Pascal file system.
 //! Tested only with UCSD Pascal version 1.2.
@@ -323,12 +323,7 @@ impl Disk
         if !is_name_valid(vol_name, true) {
             return Err(Error::BadTitle);
         }
-        let num_blocks = match self.img.kind() {
-            img::DiskKind::A2_525_16 => 280,
-            img::DiskKind::A2_35 => 1600,
-            img::DiskKind::A2Max => 65535,
-            _ => return Err(Error::NoDev)
-        };
+        let num_blocks = self.img.byte_capacity()/512;
         // Zero boot and directory blocks
         for iblock in 0..6 {
             self.write_block(&[0;BLOCK_SIZE].to_vec(),iblock,0);
@@ -354,13 +349,9 @@ impl Disk
 
         // boot loader blocks
         match self.img.kind() {
-            img::DiskKind::A2_525_16 => {
+            img::names::A2_DOS33_KIND => {
                 self.write_block(&boot::PASCAL_525_BLOCK0.to_vec(), 0, 0);
                 self.write_block(&boot::PASCAL_525_BLOCK1.to_vec(), 1, 0);
-            },
-            img::DiskKind::A2_35 => {
-                error!("unsupported disk type");
-                return Err(Error::NoDev)
             },
             _ => {
                 error!("unsupported disk type");
@@ -526,7 +517,7 @@ impl super::DiskFS for Disk {
         return Ok(());
     }
     fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn delete(&mut self,name: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -547,11 +538,11 @@ impl super::DiskFS for Disk {
         }
     }
     fn lock(&mut self,_name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn unlock(&mut self,_name: &str) -> Result<(),Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -576,11 +567,11 @@ impl super::DiskFS for Disk {
         return self.write_file(name,&bin_file);
     }
     fn load(&self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn save(&mut self,_name: &str, _dat: &Vec<u8>, _typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -590,15 +581,15 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_text(&mut self,_name: &str, _dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn read_records(&self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
-        eprintln!("pascal implementation does not support operation");
+        error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -631,7 +622,7 @@ impl super::DiskFS for Disk {
     }
     fn write_any(&mut self,name: &str,dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if dat.chunk_len as usize!=BLOCK_SIZE {
-            eprintln!("chunk length {} is incompatible with Pascal",dat.chunk_len);
+            error!("chunk length {} is incompatible with Pascal",dat.chunk_len);
             return Err(Box::new(Error::DevErr));
         }
         return self.write_file(name,dat);
