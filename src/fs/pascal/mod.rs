@@ -148,6 +148,22 @@ pub struct Disk
 
 impl Disk
 {
+    fn new_fimg(chunk_len: usize) -> super::FileImage {
+        super::FileImage {
+            fimg_version: super::FileImage::fimg_version(),
+            file_system: String::from("a2 pascal"),
+            fs_type: vec![0;2],
+            aux: vec![],
+            eof: vec![0;4],
+            created: vec![],
+            modified: vec![0;2],
+            access: vec![],
+            version: vec![],
+            min_version: vec![],
+            chunk_len,
+            chunks: HashMap::new()
+        }
+    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
@@ -384,8 +400,7 @@ impl Disk
     fn read_file(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         if let (Some(idx),dir) = self.get_file_entry(name) {
             let entry = &dir.entries[idx];
-            let mut ans = super::FileImage::new(BLOCK_SIZE);
-            ans.file_system = String::from("a2 pascal");
+            let mut ans = Disk::new_fimg(BLOCK_SIZE);
             let mut buf = vec![0;BLOCK_SIZE];
             let mut count: usize = 0;
             let beg = u16::from_le_bytes(entry.begin_block);
@@ -396,9 +411,9 @@ impl Disk
                 ans.chunks.insert(count,buf.clone());
                 count += 1;
             }
-            ans.fs_type = ftype as u32;
-            ans.eof = BLOCK_SIZE as u32*ans.chunks.len() as u32 - u16::from_le_bytes(entry.bytes_remaining) as u32;
-            ans.modified = u16::from_le_bytes(entry.mod_date) as u32;
+            ans.fs_type = u16::to_le_bytes(ftype).to_vec();
+            ans.eof = u32::to_le_bytes(BLOCK_SIZE as u32*ans.chunks.len() as u32 - u16::from_le_bytes(entry.bytes_remaining) as u32).to_vec();
+            ans.modified = entry.mod_date.to_vec();
             return Ok(ans);
         }
         return Err(Box::new(Error::NoFile));
@@ -419,7 +434,9 @@ impl Disk
             // this is a new file
             // we do not write anything unless there is room
             let data_blocks = fimg.chunks.len();
-            if let Some(fs_type) = FileType::from_u32(fimg.fs_type) {
+            let fs_type_usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.fs_type);
+            let eof_usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+            if let Some(fs_type) = FileType::from_usize(fs_type_usize) {
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16) {
                     for i in 0..dir.entries.len() {
                         if dir.entries[i].begin_block==[0,0] {
@@ -429,7 +446,7 @@ impl Disk
                             dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
                             dir.entries[i].name_len = name.len() as u8;
                             dir.entries[i].name = string_to_file_name(name);
-                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - fimg.eof as usize) as u16);
+                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - eof_usize) as u16);
                             dir.entries[i].mod_date = pack_date(None); // None means use system clock
                             dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)+1);
                             dir.header.last_access_date = pack_date(None);
@@ -483,6 +500,9 @@ impl Disk
 }
 
 impl super::DiskFS for Disk {
+    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
+        Disk::new_fimg(chunk_len)
+    }
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let dir = self.get_directory();
@@ -562,9 +582,10 @@ impl super::DiskFS for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        let mut bin_file = super::FileImage::desequence(BLOCK_SIZE,&padded);
-        bin_file.fs_type = FileType::from_str("bin").expect("unreachable") as u32;
-        return self.write_file(name,&bin_file);
+        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
+        fimg.desequence(&padded);
+        fimg.fs_type = vec![FileType::Data as u8,0];
+        return self.write_file(name,&fimg);
     }
     fn load(&self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         error!("pascal implementation does not support operation");
@@ -620,12 +641,12 @@ impl super::DiskFS for Disk {
     fn read_any(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         return self.read_file(name);
     }
-    fn write_any(&mut self,name: &str,dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
-        if dat.chunk_len as usize!=BLOCK_SIZE {
-            error!("chunk length {} is incompatible with Pascal",dat.chunk_len);
+    fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.chunk_len!=BLOCK_SIZE {
+            error!("chunk length {} is incompatible with Pascal",fimg.chunk_len);
             return Err(Box::new(Error::DevErr));
         }
-        return self.write_file(name,dat);
+        return self.write_file(name,fimg);
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::from_bytes(&dat);

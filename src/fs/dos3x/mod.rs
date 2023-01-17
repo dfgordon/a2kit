@@ -14,7 +14,6 @@ mod directory;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
-use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
 use log::{debug,error};
 
@@ -52,6 +51,22 @@ pub struct Disk
 
 impl Disk
 {
+    fn new_fimg(chunk_len: usize) -> super::FileImage {
+        super::FileImage {
+            fimg_version: super::FileImage::fimg_version(),
+            file_system: String::from("a2 dos"),
+            fs_type: vec![0],
+            aux: vec![],
+            eof: vec![],
+            created: vec![],
+            modified: vec![],
+            access: vec![],
+            version: vec![],
+            min_version: vec![],
+            chunk_len,
+            chunks: HashMap::new()
+        }
+    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
@@ -413,9 +428,7 @@ impl Disk
         if next_tslist==[0,0] {
             return Err(Box::new(Error::FileNotFound));
         }
-        let mut ans = super::FileImage::new(256);
-        ans.file_system = String::from("a2 dos");
-        ans.version = self.vtoc.version as u32;
+        let mut ans = Disk::new_fimg(256);
         let mut buf = vec![0;256];
         let mut count: usize = 0;
         // loop up to a maximum, if it is reached panic
@@ -432,7 +445,7 @@ impl Disk
                 count += 1;
             }
             if tslist.next_track==0 {
-                ans.fs_type = ftype as u32;
+                ans.fs_type = vec![ftype];
                 return Ok(ans);
             }
             next_tslist = [tslist.next_track,tslist.next_sector];
@@ -473,9 +486,9 @@ impl Disk
             let mut dir = DirectorySector::from_bytes(&dir_buf);
             dir.entries[e as usize].tsl_track = tslist_ts[0];
             dir.entries[e as usize].tsl_sector = tslist_ts[1];
-            match FileType::from_u32(fimg.fs_type) {
-                Some(t) => dir.entries[e as usize].file_type = t as u8,
-                None => return Err(Box::new(Error::Range))
+            match fimg.fs_type.len() {
+                0 => return Err(Box::new(Error::Range)),
+                _ => dir.entries[e as usize].file_type = fimg.fs_type[0],
             } 
             dir.entries[e as usize].name = string_to_file_name(name);
             dir.entries[e as usize].sectors = [tslist_sectors as u8 + data_sectors as u8 ,0];
@@ -558,6 +571,9 @@ impl Disk
 }
 
 impl super::DiskFS for Disk {
+    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
+        Disk::new_fimg(chunk_len)
+    }
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
@@ -665,8 +681,9 @@ impl super::DiskFS for Disk {
             Some(v) => [file.to_bytes(),v.clone()].concat(),
             None => file.to_bytes()
         };
-        let mut fimg = super::FileImage::desequence(256, &padded);
-        fimg.fs_type = FileType::Binary as u32;
+        let mut fimg = Disk::new_fimg(256);
+        fimg.desequence(&padded);
+        fimg.fs_type = vec![FileType::Binary as u8];
         return self.write_file(name, &fimg);
     }
     fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -682,8 +699,9 @@ impl super::DiskFS for Disk {
             ItemType::IntegerTokens => FileType::Integer,
             _ => return Err(Box::new(Error::FileTypeMismatch))
         };
-        let mut fimg = super::FileImage::desequence(256, &padded);
-        fimg.fs_type = fs_type as u32;
+        let mut fimg = Disk::new_fimg(256);
+        fimg.desequence(&padded);
+        fimg.fs_type = vec![fs_type as u8];
         return self.write_file(name, &fimg);
     }
     fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -693,8 +711,9 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_text(&mut self,name: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        let mut fimg = super::FileImage::desequence(256, dat);
-        fimg.fs_type = FileType::Text as u32;
+        let mut fimg = Disk::new_fimg(256);
+        fimg.desequence(dat);
+        fimg.fs_type = vec![FileType::Text as u8];
         return self.write_file(name, &fimg);
     }
     fn read_records(&self,name: &str,record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
@@ -715,10 +734,11 @@ impl super::DiskFS for Disk {
     }
     fn write_records(&mut self,name: &str, records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(vec![0x8d]);
-        if let Ok(fimg) = records.to_fimg(256,FileType::Text as u32,false,encoder) {
-            return self.write_file(name, &fimg);
-        } else {
-            Err(Box::new(Error::SyntaxError))
+        let mut fimg = self.new_fimg(256);
+        fimg.fs_type = vec![FileType::Text as u8];
+        match records.update_fimg(&mut fimg, false, encoder) {
+            Ok(_) => self.write_file(name,&fimg),
+            Err(e) => Err(e)
         }
     }
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -751,7 +771,7 @@ impl super::DiskFS for Disk {
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if fimg.chunk_len!=256 {
-            error!("chunk length {} is incompatible with DOS 3.x",fimg.chunk_len);
+            error!("chunk length is incompatible with DOS 3.x");
             return Err(Box::new(Error::Range));
         }
         return self.write_file(name,fimg);

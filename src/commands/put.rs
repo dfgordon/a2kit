@@ -22,6 +22,10 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     let maybe_img = cmd.value_of("dimg");
     let mut file_data = Vec::new();
     std::io::stdin().read_to_end(&mut file_data).expect("failed to read input stream");
+    if file_data.len()==0 {
+        error!("put did not receive any data from previous node");
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
 
     match (maybe_typ,maybe_img) {
         

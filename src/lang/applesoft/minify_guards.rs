@@ -336,14 +336,16 @@ pub const VAR_GUARDS_JSON: &str = r#"
 }
 "#;
 
-/// These are 2 character tokens that must never be used as variable names.
-/// This is needed for minification.
-pub const TOK_2CHAR : [&str;7] = [
-    "at",
-    "fn",
-    "gr",
-    "if",
-    "on",
-    "or",
-    "to"
-];
+// These are 2 character tokens that must never be used as variable names.
+// In the current implementation there is no need to use this, since the parser
+// detects the error, and forming these during minification is already guarded
+// against by the VAR_GUARDS map.
+// pub const TOK_2CHAR : [&str;7] = [
+//     "at",
+//     "fn",
+//     "gr",
+//     "if",
+//     "on",
+//     "or",
+//     "to"
+// ];

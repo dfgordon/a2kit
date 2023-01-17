@@ -156,7 +156,7 @@ impl Minifier
 				self.line = self.minified_line.clone();
 				self.minified_line = String::new();
 				let tree = parser.parse(&self.line,None).expect("Error parsing file");
-				self.walk(tree);
+				self.walk(&tree);
 				self.minified_line.push('\n');
 				if self.minified_line==self.line {
 					break;

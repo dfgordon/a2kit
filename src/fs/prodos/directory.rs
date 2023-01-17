@@ -9,6 +9,7 @@
 
 use chrono::{Datelike,Timelike};
 use std::fmt;
+use log::error;
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use regex::Regex;
@@ -275,14 +276,14 @@ impl Entry {
         self.blocks_used = u16::to_le_bytes(new_val as u16);
     }
     pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
-        fimg.eof = self.eof() as u32;
+        fimg.eof = super::super::FileImage::fix_le_vec(self.eof(),3);
         fimg.access = vec![self.access];
-        fimg.fs_type = self.file_type as u32;
-        fimg.aux = u16::from_le_bytes(self.aux_type) as u32;
-        fimg.created = u32::from_le_bytes(self.create_time);
-        fimg.modified = u32::from_le_bytes(self.last_mod);
-        fimg.version = self.vers as u32;
-        fimg.min_version = self.min_vers as u32;
+        fimg.fs_type = vec![self.file_type];
+        fimg.aux = self.aux_type.to_vec();
+        fimg.created = self.create_time.to_vec();
+        fimg.modified = self.last_mod.to_vec();
+        fimg.version = vec![self.vers];
+        fimg.min_version = vec![self.min_vers];
     }
     pub fn create_subdir(name: &str,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
@@ -303,22 +304,23 @@ impl Entry {
         return ans;
     }
     pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,Error> {
-        if fimg.fs_type>255 || fimg.version>255 || fimg.min_version>255 || fimg.aux>65535 {
+        if fimg.fs_type.len()<1 || fimg.version.len()<1 || fimg.min_version.len()<1 || fimg.aux.len()<2 {
+            error!("one or more ProDOS file image fields were too short");
             return Err(Error::Range);
         }
         let mut ans = Self::new();
         let (nibs,fname) = string_to_file_name(&StorageType::Seedling, name);
         ans.stor_len_nibs = nibs;
         ans.name = fname;
-        ans.file_type = fimg.fs_type as u8;
+        ans.file_type = fimg.fs_type[0];
         ans.key_ptr = u16::to_le_bytes(key_ptr);
         ans.blocks_used = [0,0];
         ans.eof = [0,0,0];
         ans.create_time = pack_time(create_time);
-        ans.vers = fimg.version as u8;
-        ans.min_vers = fimg.min_version as u8;
+        ans.vers = fimg.version[0];
+        ans.min_vers = fimg.min_version[0];
         ans.access = fimg.access[0];
-        ans.aux_type = u16::to_le_bytes(fimg.aux as u16);
+        ans.aux_type = [fimg.aux[0],fimg.aux[1]];
         ans.last_mod = pack_time(create_time);
         ans.header_ptr = u16::to_le_bytes(header_ptr);
         return Ok(ans);

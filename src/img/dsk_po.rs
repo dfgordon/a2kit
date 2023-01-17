@@ -7,6 +7,7 @@
 use crate::img;
 use crate::fs::Chunk;
 
+use log::error;
 use super::BlockLayout;
 
 const BLOCK_SIZE: usize = 512;
@@ -64,6 +65,14 @@ impl img::DiskImage for PO {
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
         }
     }
+    fn read_sector(&self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        error!("logical disk cannot access sectors");
+        Err(Box::new(img::Error::ImageTypeMismatch))
+    }
+    fn write_sector(&mut self,_cyl: usize,_head: usize,_sec: usize,_dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        error!("logical disk cannot access sectors");
+        Err(Box::new(img::Error::ImageTypeMismatch))
+    }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
         // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
         if data.len()%BLOCK_SIZE > 0 || data.len()/BLOCK_SIZE > MAX_BLOCKS || data.len()/BLOCK_SIZE < MIN_BLOCKS {
@@ -88,10 +97,15 @@ impl img::DiskImage for PO {
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_buf(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_bytes(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
+    }
+    fn display_track(&self,_bytes: &Vec<u8>) -> String {
+        String::from("PO images have no track bits to display")
     }
 }

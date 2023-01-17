@@ -1,10 +1,7 @@
 //! ## Low level treatment of 5.25 inch floppy disks
 //! 
-//! This handles the detailed track layout of a real floppy disk.
-//! 
-//! //! It should be noted the logic state sequencer (LSS) that is used in a real Apple computer
-//! is approximated by a "soft latch" which collects bytes one bit at a time, obeying the rule
-//! that leading low-bits must be dropped.
+//! This handles bit-level processing of a 5.25 inch GCR disk track.
+//! The logic state sequencer is approximated by a simple model.
 //! 
 //! Acknowledgment: some of this module is adapted from CiderPress.
 
@@ -16,7 +13,7 @@ const INVALID_NIB_BYTE: u8 = 0xff;
 const CHUNK53: usize = 0x33;
 const CHUNK62: usize = 0x56;
 
-const DISK_BYTES_53: [u8;32] = [
+pub const DISK_BYTES_53: [u8;32] = [
     0xab, 0xad, 0xae, 0xaf, 0xb5, 0xb6, 0xb7, 0xba,
     0xbb, 0xbd, 0xbe, 0xbf, 0xd6, 0xd7, 0xda, 0xdb,
     0xdd, 0xde, 0xdf, 0xea, 0xeb, 0xed, 0xee, 0xef,
@@ -168,12 +165,13 @@ impl TrackBits {
         }
         self.bit_ptr = ptr as usize;
     }
-    /// Read bytes through a soft latch, this mocks up the way the hardware reads bytes.
+    /// Read bytes through a soft latch, this is a shortcut that takes the place of
+    /// the logic state sequencer, and simplifies the process of retrieving nibbles.
     /// The number of track bits that passed by is returned (not necessarily 8*bytes)
     pub fn read_latch(&mut self,data: &mut [u8],num_bytes: usize) -> usize {
         let mut bit_count: usize = 0;
         for byte in 0..num_bytes {
-            loop {
+            for _try in 0..self.bit_count {
                 bit_count += 1;
                 if self.next()==1 {
                     break;
@@ -184,6 +182,7 @@ impl TrackBits {
                 val = val*2 + self.next();
             }
             data[byte] = val;
+            bit_count += 7;
         }
         return bit_count;
     }
@@ -561,15 +560,20 @@ impl super::TrackBits for TrackBits {
     fn to_buf(&self) -> Vec<u8> {
         self.buf.clone()
     }
-    fn to_bytes(&mut self) -> Vec<u8> {
-        // TODO: dump exactly one revolution starting on an address prolog
+    fn to_nibbles(&mut self) -> Vec<u8> {
+        // dump exactly one revolution starting on an address prolog
         let mut ans: Vec<u8> = Vec::new();
         let mut byte: [u8;1] = [0;1];
-        self.reset();
-        for _i in 0..self.len() {
-            self.read_latch(&mut byte,1);
+        if self.find_byte_pattern(&self.adr_fmt.prolog.clone(), &self.adr_fmt.prolog_mask.clone(), None) == None {
+            self.reset();
+        } else {
+            self.shift_rev(self.adr_fmt.prolog.len()*8);
+        }
+        let mut bit_count = 0;
+        for _try in 0..self.buf.len()*2 {
+            bit_count += self.read_latch(&mut byte,1);
             ans.push(byte[0]);
-            if self.bit_ptr+8 > self.bit_count {
+            if bit_count >= self.bit_count {
                 break;
             }
         }

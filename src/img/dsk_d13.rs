@@ -6,7 +6,7 @@
 
 use crate::img;
 use crate::fs::Chunk;
-use log::debug;
+use log::{debug,error};
 
 const SECTOR_SIZE: usize = 256;
 const TRACK_SIZE: usize = 13*SECTOR_SIZE;
@@ -58,6 +58,24 @@ impl img::DiskImage for D13 {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
+    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        if cyl>=self.track_count() || head>0 || sec>12 {
+            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,12);
+            return Err(Box::new(img::Error::SectorAccess));
+        }
+        let offset = cyl*TRACK_SIZE + sec*SECTOR_SIZE;
+        Ok(self.data[offset..offset+SECTOR_SIZE].to_vec())
+    }
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        if cyl>=self.track_count() || head>0 || sec>12 {
+            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,12);
+            return Err(Box::new(img::Error::SectorAccess));
+        }
+        let offset = cyl*TRACK_SIZE + sec*SECTOR_SIZE;
+        let padded = super::quantize_chunk(dat, SECTOR_SIZE);
+        self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
+        Ok(())
+    }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
         // reject anything that cannot be a DOS 3.2 volume
         if data.len()%TRACK_SIZE > 0 || data.len()/TRACK_SIZE < MIN_TRACKS {
@@ -80,10 +98,15 @@ impl img::DiskImage for D13 {
     fn to_bytes(&self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_buf(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_bytes(&self,_track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
+    fn display_track(&self,_bytes: &Vec<u8>) -> String {
+        String::from("D13 images have no track bits to display")
+    }    
 }

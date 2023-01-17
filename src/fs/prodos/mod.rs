@@ -35,6 +35,22 @@ fn pack_index_ptr(buf: &mut Vec<u8>,ptr: u16,idx: usize) {
 }
 
 impl Disk {
+    fn new_fimg(chunk_len: usize) -> super::FileImage {
+        super::FileImage {
+            fimg_version: super::FileImage::fimg_version(),
+            file_system: String::from("prodos"),
+            fs_type: vec![0],
+            aux: vec![0;2],
+            eof: vec![0;3],
+            created: vec![0;4],
+            modified: vec![0;4],
+            access: vec![0],
+            version: vec![0],
+            min_version: vec![0],
+            chunk_len,
+            chunks: HashMap::new()
+        }
+    }
     /// Use the given image as storage for a new DiskFS.
     /// The DiskFS takes ownership of the image.
     /// The image may or may not be formatted.
@@ -482,8 +498,7 @@ impl Disk {
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
     fn read_file(&self,entry: &Entry) -> super::FileImage {
-        let mut fimg = super::FileImage::new(512);
-        fimg.file_system = String::from("a2 prodos");
+        let mut fimg = Disk::new_fimg(512);
         entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
         let master_ptr = entry.get_ptr();
@@ -710,7 +725,8 @@ impl Disk {
             }
 
             // update the entry, do last to capture all the changes
-            entry.set_eof(usize::max(entry.eof(),fimg.eof as usize));
+            let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+            entry.set_eof(usize::max(entry.eof(),eof));
             entry.set_all_access(fimg.access[0]);
             self.write_entry(&loc,&entry);
         }
@@ -754,6 +770,9 @@ impl Disk {
 }
 
 impl super::DiskFS for Disk {
+    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
+        Disk::new_fimg(chunk_len)
+    }
     fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_dir_key_block(path) {
             Ok(b) => {
@@ -900,7 +919,8 @@ impl super::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                Ok((entry.aux(),ans.sequence_limited(ans.eof as usize)))
+                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
+                Ok((entry.aux(),ans.sequence_limited(eof)))
             },
             Err(e) => Err(Box::new(e))
         }
@@ -910,10 +930,11 @@ impl super::DiskFS for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, &padded);
-        fimg.fs_type = FileType::Binary as u32;
+        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
+        fimg.desequence(&padded);
+        fimg.fs_type = vec![FileType::Binary as u8];
         fimg.access = vec![STD_ACCESS];
-        fimg.aux = start_addr as u32;
+        fimg.aux = u16::to_le_bytes(start_addr).to_vec();
         return self.write_any(path,&fimg);
     }
     fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
@@ -921,23 +942,25 @@ impl super::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                return Ok((0,ans.sequence_limited(ans.eof as usize)))
+                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
+                return Ok((0,ans.sequence_limited(eof)))
             },
             Err(e) => Err(Box::new(e))
         }
     }
     fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
-        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
+        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
+        fimg.desequence(dat);
         fimg.access = vec![STD_ACCESS];
         match typ {
             ItemType::ApplesoftTokens => {
                 let addr = applesoft::deduce_address(dat);
-                fimg.fs_type = FileType::ApplesoftCode as u32;
-                fimg.aux = addr as u32;
-                debug!("Applesoft metadata {}, {}",fimg.fs_type,fimg.aux);
+                fimg.fs_type = vec![FileType::ApplesoftCode as u8];
+                fimg.aux = u16::to_le_bytes(addr).to_vec();
+                debug!("Applesoft metadata {:?}, {:?}",fimg.fs_type,fimg.aux);
             },
             ItemType::IntegerTokens => {
-                fimg.fs_type = FileType::IntegerCode as u32;
+                fimg.fs_type = vec![FileType::IntegerCode as u8];
             }
             _ => return Err(Box::new(Error::FileTypeMismatch))
         }
@@ -948,14 +971,16 @@ impl super::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
                 let ans = self.read_file(&entry);
-                return Ok((0,ans.sequence_limited(ans.eof as usize)))
+                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
+                return Ok((0,ans.sequence_limited(eof)))
             },
             Err(e) => Err(Box::new(e))
         }
     }
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
-        let mut fimg = super::FileImage::desequence(BLOCK_SIZE, dat);
-        fimg.fs_type = FileType::Text as u32;
+        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
+        fimg.desequence(dat);
+        fimg.fs_type = vec![FileType::Text as u8];
         fimg.access = vec![STD_ACCESS];
         return self.write_any(path,&fimg);
     }
@@ -975,11 +1000,13 @@ impl super::DiskFS for Disk {
     }
     fn write_records(&mut self,path: &str, records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(vec![0x0d]);
-        if let Ok(mut fimg) = records.to_fimg(BLOCK_SIZE,FileType::Text as u32,true,encoder) {
-            fimg.access = vec![STD_ACCESS];
-            return self.write_any(path,&fimg);
-        } else {
-            Err(Box::new(Error::Syntax))
+        let mut fimg = self.new_fimg(BLOCK_SIZE);
+        fimg.fs_type = vec![FileType::Text as u8];
+        fimg.aux = super::FileImage::fix_le_vec(records.record_len,2);
+        fimg.access = vec![STD_ACCESS];
+        match records.update_fimg(&mut fimg, true, encoder) {
+            Ok(_) => self.write_any(path,&fimg),
+            Err(e) => Err(e)
         }
     }
     fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {

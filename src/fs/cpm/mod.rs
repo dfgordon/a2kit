@@ -33,6 +33,7 @@ use log::{trace,info,debug,warn,error};
 use types::*;
 use directory::*;
 use super::Chunk;
+use crate::bios::dpb::DiskParameterBlock;
 use crate::img;
 use crate::commands::ItemType;
 
@@ -160,7 +161,7 @@ fn update_fimg_with_name(fimg: &mut super::FileImage,s: &str) {
             temp_fs_type[i] = 0x20;
         }
     }
-    fimg.fs_type = u32::from_le_bytes([temp_fs_type[0],temp_fs_type[1],temp_fs_type[2],0]);
+    fimg.fs_type = vec![temp_fs_type[0],temp_fs_type[1],temp_fs_type[2]];
 }
 
 /// Take string such as `2:USER2.TXT` and return (2,"USER2.TXT")
@@ -279,6 +280,22 @@ pub struct Disk
 
 impl Disk
 {
+    fn new_fimg(chunk_len: usize) -> super::FileImage {
+        super::FileImage {
+            fimg_version: super::FileImage::fimg_version(),
+            file_system: String::from("cpm"),
+            fs_type: vec![0;3],
+            aux: vec![],
+            eof: vec![0;4],
+            created: vec![],
+            modified: vec![],
+            access: vec![0;11],
+            version: vec![],
+            min_version: vec![],
+            chunk_len,
+            chunks: HashMap::new()
+        }
+    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image and DPB.
     pub fn from_img(img: Box<dyn img::DiskImage>,dpb: DiskParameterBlock,cpm_vers: [u8;3]) -> Self {
@@ -449,8 +466,7 @@ impl Disk
         let dir = self.get_directory();
         let files = build_files(&dir, &self.dpb, self.cpm_vers)?;
         if let Some(pointers) = self.get_file_metadata(&files,name,user) {
-            let mut ans = super::FileImage::new(self.dpb.block_size());
-            ans.file_system = String::from("a2 CP/M");
+            let mut ans = Disk::new_fimg(self.dpb.block_size());
             let mut buf = vec![0;self.dpb.block_size()];
             let mut count = 0;
             for meta in pointers {
@@ -459,9 +475,9 @@ impl Disk
                     // Furthermore, there is no type beyond the filename extension.
                     // We Therefore store the 8+3 bytes as access, and the 3 bytes as type, all bits being kept.
                     // The following metadata is redundantly extracted from every extent entry
-                    ans.fs_type = u32::from_le_bytes([fx.typ[0],fx.typ[1],fx.typ[2],0]);
+                    ans.fs_type = vec![fx.typ[0],fx.typ[1],fx.typ[2]];
                     ans.access = [fx.name.to_vec(),fx.typ.to_vec()].concat();
-                    ans.eof = fx.get_eof(&self.dpb) as u32;
+                    ans.eof = u32::to_le_bytes(fx.get_eof(&self.dpb) as u32).to_vec();
                     // Get the data
                     for iblock in fx.get_block_list(&self.dpb) {
                         if iblock as usize >= self.dpb.user_blocks() {
@@ -513,7 +529,7 @@ impl Disk
                 if self.num_free_extents(&dir) >= extents {
                     // sort out filename and access
                     let (base,typ) = string_to_file_name(name);
-                    let img_typ = u32::to_le_bytes(fimg.fs_type);
+                    let img_typ = fimg.fs_type.clone();
                     if typ[0]!=img_typ[0] || typ[1]!=img_typ[1] || typ[2]!=img_typ[2] {
                         warn!("CP/M file image type and extension are inconsistent");
                     }
@@ -534,8 +550,9 @@ impl Disk
                         fx.set_data_ptr(Ptr::ExtentData(*lx_count));
                         *lx_count += disk.dpb.exm as usize + 1;
                         if is_last {
-                            let mut remainder = fimg.eof as usize % disk.dpb.extent_capacity();
-                            if remainder==0 && fimg.eof>0 {
+                            let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+                            let mut remainder = eof % disk.dpb.extent_capacity();
+                            if remainder==0 && eof>0 {
                                 remainder = disk.dpb.extent_capacity();
                             }
                             fx.set_eof(remainder,disk.cpm_vers);
@@ -642,6 +659,9 @@ impl Disk
 }
 
 impl super::DiskFS for Disk {
+    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
+        Disk::new_fimg(chunk_len)
+    }
     fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let dir = self.get_directory();
         for i in 0..dir.num_entries() {
@@ -771,7 +791,8 @@ impl super::DiskFS for Disk {
             Some(v) => [dat.clone(),v.clone()].concat(),
             None => dat.clone()
         };
-        let mut fimg = super::FileImage::desequence(self.dpb.block_size(),&padded);
+        let mut fimg = self.new_fimg(self.dpb.block_size());
+        fimg.desequence(&padded);
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name,user,&fimg);
     }
@@ -792,7 +813,8 @@ impl super::DiskFS for Disk {
     }
     fn write_text(&mut self,xname: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
-        let mut fimg = super::FileImage::desequence(self.dpb.block_size(), dat);
+        let mut fimg = self.new_fimg(self.dpb.block_size());
+        fimg.desequence(&dat);
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name, user, &fimg);
     }
@@ -833,13 +855,13 @@ impl super::DiskFS for Disk {
         let (user,name) = split_user_filename(xname)?;
         return self.read_file(&name,user);
     }
-    fn write_any(&mut self,xname: &str,dat: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
-        if dat.chunk_len as usize!=self.dpb.block_size() {
-            error!("chunk length {} is incompatible with CP/M",dat.chunk_len);
+        if fimg.chunk_len!=self.dpb.block_size() {
+            error!("chunk length {} is incompatible with the DPB for this CP/M",fimg.chunk_len);
             return Err(Box::new(Error::Select));
         }
-        return self.write_file(&name,user,dat);
+        return self.write_file(&name,user,fimg);
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
         let file = types::SequentialText::from_bytes(&dat);

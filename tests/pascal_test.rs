@@ -3,7 +3,6 @@ use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::pascal::types::BLOCK_SIZE;
 use a2kit::fs::{Chunk,pascal,TextEncoder,DiskFS};
-use a2kit::img::DiskKind;
 use a2kit_macro::DiskStruct;
 
 // Some sample programs to test

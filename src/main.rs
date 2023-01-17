@@ -16,7 +16,6 @@ use a2kit::lang;
 use a2kit::lang::applesoft;
 use a2kit::lang::integer;
 use a2kit::lang::merlin;
-use a2kit::img::DiskImageType;
 
 const RCH: &str = "unreachable was reached";
 
@@ -45,7 +44,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     let img_types = ["d13","do","po","woz1","woz2","imd"];
     let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
-    let disk_kinds = ["8in","5.25in","3.5in","3.5in-ss","3.5in-ds","hdmax"];
+    let disk_kinds = ["8in","5.25in","3.5in","3.5in-ss","3.5in-ds","hdmax","5.25in-osborne"];
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
@@ -58,11 +57,12 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values(disk_kinds)
             .required(false)
             .default_value("5.25in"))
+        .arg(arg!(-d --dimg <PATH> "disk image path to create"))
         .about("write a blank disk image to stdout"))
-    .subcommand(Command::new("reimage")
-        .arg(arg!(-d --dimg <PATH> "path to old disk image"))
-        .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(img_types))
-        .about("Transform an image into another type of image"))
+    // .subcommand(Command::new("reimage")
+    //     .arg(arg!(-d --dimg <PATH> "path to old disk image"))
+    //     .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(img_types))
+    //     .about("Transform an image into another type of image"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
@@ -96,15 +96,22 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     .subcommand(Command::new("minify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
         .about("reduce program size"))
+    .subcommand(Command::new("renumber")
+        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
+        .arg(arg!(-b --beg <NUM> "lowest number to renumber"))
+        .arg(arg!(-e --end <NUM> "highest number to renumber plus 1"))
+        .arg(arg!(-f --first <NUM> "first number"))
+        .arg(arg!(-s --step <NUM> "step between numbers"))
+        .about("renumber BASIC program lines"))
     .subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","track","raw_track","rec","any"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","sec","track","raw_track","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"))
     .subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "destination path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","rec","any"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","sec","rec","any"]))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"))
@@ -123,22 +130,22 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     
     // TODO: Transform an image into another type of image
 
-    if let Some(cmd) = matches.subcommand_matches("reimage") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let new_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();
-        // we need to get the file system also in order to determine the ordering
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(disk) => {
-                match new_typ {
-                    _ => {
-                        return Err(Box::new(CommandError::UnsupportedFormat))
-                    }
-                };
-                Ok(())
-            },
-            Err(e) => Err(e)
-        };
-    }    
+    // if let Some(cmd) = matches.subcommand_matches("reimage") {
+    //     let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
+    //     let new_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();
+    //     // we need to get the file system also in order to determine the ordering
+    //     return match a2kit::create_fs_from_file(&path_to_img) {
+    //         Ok(disk) => {
+    //             match new_typ {
+    //                 _ => {
+    //                     return Err(Box::new(CommandError::UnsupportedFormat))
+    //                 }
+    //             };
+    //             Ok(())
+    //         },
+    //         Err(e) => Err(e)
+    //     };
+    // }    
 
     // Create a disk image
 
@@ -194,13 +201,49 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        let mut program = String::new();
+        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        if program.len()==0 {
+            error!("minify did not receive any data from previous node");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
         return match typ
         {
             Ok(ItemType::ApplesoftText) => {
-                let mut program = String::new();
-                std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+                lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 let mut minifier = applesoft::minifier::Minifier::new();
                 let object = minifier.minify(&program);
+                println!("{}",&object);
+                Ok(())
+            },
+            _ => Err(Box::new(CommandError::UnsupportedItemType))
+        };
+    }
+    
+    // Renumber
+
+    if let Some(cmd) = matches.subcommand_matches("renumber") {
+        if atty::is(atty::Stream::Stdin) {
+            error!("line entry is not supported for `renumber`, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        let beg = usize::from_str_radix(cmd.value_of("beg").unwrap(),10)?;
+        let end = usize::from_str_radix(cmd.value_of("end").unwrap(),10)?;
+        let first = usize::from_str_radix(cmd.value_of("first").unwrap(),10)?;
+        let step = usize::from_str_radix(cmd.value_of("step").unwrap(),10)?;
+        let mut program = String::new();
+        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        if program.len()==0 {
+            error!("renumber did not receive any data from previous node");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+        return match typ
+        {
+            Ok(ItemType::ApplesoftText) => {
+                lang::verify_str(tree_sitter_applesoft::language(),&program)?;
+                let mut renumberer = applesoft::renumber::Renumberer::new();
+                let object = renumberer.renumber(program,beg,end,first,step)?;
                 println!("{}",&object);
                 Ok(())
             },
@@ -217,6 +260,12 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
         let addr_opt = cmd.value_of("addr");
+        let mut program = String::new();
+        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        if program.len()==0 {
+            error!("tokenize did not receive any data from previous node");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
         return match typ
         {
             Ok(ItemType::ApplesoftText) => {
@@ -225,8 +274,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 if let Ok(addr) = u16::from_str_radix(addr_opt.expect(RCH),10) {
-                    let mut program = String::new();
-                    std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                     let object = tokenizer.tokenize(&program,addr);
                     if atty::is(atty::Stream::Stdout) {
@@ -243,8 +290,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
-                let mut program = String::new();
-                std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
                 let object = tokenizer.tokenize(String::from(&program));
                 if atty::is(atty::Stream::Stdout) {
@@ -259,8 +304,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
-                let mut program = String::new();
-                std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
                 let object = tokenizer.tokenize(String::from(&program));
                 if atty::is(atty::Stream::Stdout) {
@@ -282,11 +325,15 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        let mut tok: Vec<u8> = Vec::new();
+        std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
+        if tok.len()==0 {
+            error!("detokenize did not receive any data from previous node");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
         return match typ
         {
             Ok(ItemType::ApplesoftTokens) => {
-                let mut tok: Vec<u8> = Vec::new();
-                std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
                 let tokenizer = applesoft::tokenizer::Tokenizer::new();
                 let program = tokenizer.detokenize(&tok);
                 for line in program.lines() {
@@ -295,8 +342,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Ok(())
             },
             Ok(ItemType::IntegerTokens) => {
-                let mut tok: Vec<u8> = Vec::new();
-                std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
                 let tokenizer = integer::tokenizer::Tokenizer::new();
                 let program = tokenizer.detokenize(&tok);
                 for line in program.lines() {
@@ -305,8 +350,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Ok(())
             },
             Ok(ItemType::MerlinTokens) => {
-                let mut tok: Vec<u8> = Vec::new();
-                std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
                 let tokenizer = merlin::tokenizer::Tokenizer::new();
                 let program = tokenizer.detokenize(&tok);
                 for line in program.lines() {

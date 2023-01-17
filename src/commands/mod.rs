@@ -5,6 +5,7 @@
 pub mod mkdsk;
 pub mod put;
 pub mod get;
+pub mod get_img;
 
 use std::str::FromStr;
 
@@ -46,6 +47,7 @@ pub enum ItemType {
     IntegerVars,
     Chunk,
     Track,
+    Sector,
     RawTrack,
     System
 }
@@ -70,6 +72,7 @@ impl FromStr for ItemType {
             "chunk" => Ok(Self::Chunk),
             "track" => Ok(Self::Track),
             "raw_track" => Ok(Self::RawTrack),
+            "sec" => Ok(Self::Sector),
             "sys" => Ok(Self::System),
             _ => Err(CommandError::UnknownItemType)
         }

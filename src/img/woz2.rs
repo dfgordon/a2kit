@@ -3,8 +3,7 @@
 //! This uses the nibble machinery in `disk35` and `disk525` to handle the bit streams.
 //! The `DiskStruct` trait is used to flatten and unflatten the wrapper structures.
 
-use log::{debug,info,warn,error};
-use std::str::FromStr;
+use log::{debug,info,error};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -447,6 +446,12 @@ impl img::DiskImage for Woz2 {
     fn write_chunk(&mut self, addr: crate::fs::Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         super::woz::write_chunk(self, addr, dat)
     }
+    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        super::woz::read_sector(self,cyl,head,sec)
+    }
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+        super::woz::write_sector(self, cyl, head, sec, dat)
+    }
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
         if buf.len()<12 {
             return None;
@@ -474,7 +479,7 @@ impl img::DiskImage for Woz2 {
             ptr = next;
         }
         if ans.info.vers>2 {
-            warn!("cannot process INFO chunk version {}",ans.info.vers);
+            error!("cannot process INFO chunk version {}",ans.info.vers);
             return None;
         }
         if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 {
@@ -514,24 +519,17 @@ impl img::DiskImage for Woz2 {
         ans[11] = crc[3];
         return ans;
     }
-    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        match usize::from_str(track) {
-            Ok(track_num) if track_num<self.trks.num_tracks() => {
-                let track_obj = self.get_track_obj(track_num as u8);
-                Ok((0,track_obj.to_buf()))
-            },
-            Err(e) => Err(Box::new(e)),
-            _ => Err(Box::new(crate::commands::CommandError::OutOfRange))
-        }
+    fn get_track_buf(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
+        let track_obj = self.get_track_obj(track_num as u8);
+        Ok(track_obj.to_buf())
     }
-    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
-        match usize::from_str(track) {
-            Ok(track_num) if track_num<self.trks.num_tracks() => {
-                let mut track_obj = self.get_track_obj(track_num as u8);
-                Ok((0,track_obj.to_bytes()))
-            },
-            Err(e) => Err(Box::new(e)),
-            _ => Err(Box::new(crate::commands::CommandError::OutOfRange))
-        }
+    fn get_track_nibbles(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
+        let mut track_obj = self.get_track_obj(track_num as u8);
+        Ok(track_obj.to_nibbles())
+    }
+    fn display_track(&self,bytes: &Vec<u8>) -> String {
+        super::woz::display_track(self, 0, &bytes)
     }
 }

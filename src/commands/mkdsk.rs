@@ -1,9 +1,9 @@
 use clap;
-use std::io::Write;
 use std::str::FromStr;
 use std::error::Error;
 use std::num::ParseIntError;
 use log::{error,info};
+use crate::bios::dpb;
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType,names};
@@ -30,6 +30,7 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,vol: u8) -> Result<Box<dyn Di
         (DiskImageType::PO,names::A2_800_KIND) => Ok(Box::new(img::dsk_po::PO::create(1600))),
         (DiskImageType::PO,names::A2_HD_MAX) => Ok(Box::new(img::dsk_po::PO::create(65535))),
         (DiskImageType::IMD,names::IBM_CPM1_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::IMD,names::OSBORNE_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         _ => {
             error!("pairing of image type and disk kind is not supported");
             Err(Box::new(CommandError::UnsupportedItemType))
@@ -114,7 +115,7 @@ fn mkcpm(vol: &str,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result
         error!("Please omit the boot flag, OS tracks must be obtained elsewhere");
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
-    let mut disk = Box::new(cpm::Disk::from_img(img,cpm::types::DiskParameterBlock::create(&kind),[2,2,3]));
+    let mut disk = Box::new(cpm::Disk::from_img(img,dpb::DiskParameterBlock::create(&kind),[2,2,3]));
     match disk.format(vol,None) {
         Ok(()) => Ok(disk.get_img().to_bytes()),
         Err(e) => return Err(Box::new(e))
@@ -122,6 +123,7 @@ fn mkcpm(vol: &str,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result
 }
 
 pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+    let dest_path= cmd.value_of("dimg").expect(RCH);
     let which_fs = cmd.value_of("os").expect(RCH);
     if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs) {
         return Err(Box::new(CommandError::UnknownItemType));
@@ -153,7 +155,7 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
         };
         if let Ok(buf) = result {
             eprintln!("writing {} bytes",buf.len());
-            std::io::stdout().write_all(&buf).expect("write to stdout failed");
+            std::fs::write(&dest_path,&buf).expect("could not write data to disk");
             return Ok(());
         }
         info!("result {:?}",result);

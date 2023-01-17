@@ -1,8 +1,11 @@
 //! ## Common components for WOZ1 or WOZ2 disk images
 
 use log::{debug,trace};
+use std::fmt::Write;
 use crate::fs::Chunk;
 use crate::bios::skew;
+
+const RCH: &str = "unreachable was reached";
 
 pub const INFO_ID: u32 = 0x4f464e49;
 pub const TMAP_ID: u32 = 0x50414d54;
@@ -193,12 +196,171 @@ pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:Chunk,dat: &Vec<u8>) -> Res
 	for ts in ts_list {
 		let [track,sector] = [ts[0] as u8,ts[1] as u8];
 		trace!("woz write track {} sector {}",track,sector);
-		match track_obj.write_sector(&padded[offset..offset+sec_len].to_vec(),track,sector) {
-			Ok(()) => {},
-			Err(e) => return Err(Box::new(e))
-		}
+		track_obj.write_sector(&padded[offset..offset+sec_len].to_vec(),track,sector)?;
 		offset += sec_len;
 	}
 	woz.update_track(&mut track_obj, track as u8);
 	return Ok(());
+}
+
+pub fn cyl_head_to_track<T: WozConverter>(woz: &T,cyl: usize,head: usize) -> Result<usize,Box<dyn std::error::Error>> {
+	let (track,heads) = match woz.kind() {
+		super::names::A2_400_KIND => (cyl,1),
+		super::names::A2_800_KIND => (2*cyl+head,2),
+		_ => (cyl,1)
+	};
+	if head >= heads {
+		debug!("requested head {}, max {}",head,heads-1);
+		return Err(Box::new(super::Error::SectorAccess));
+	}
+	if track >= woz.num_tracks() {
+		debug!("requested track {}, max {}",track,woz.num_tracks()-1);
+		return Err(Box::new(super::Error::TrackCountMismatch));
+	}
+	Ok(track)
+}
+
+/// Read the physical track and sector.
+/// This relies on the disk kind being correct to invoke the correct nibbles.
+/// For 3.5 inch disks, the returned data has the tag bytes stripped.
+pub fn read_sector<T: WozConverter>(woz: &T,cyl: usize,head: usize,sector: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+	let track = cyl_head_to_track(woz,cyl,head)?;
+	let mut track_obj = woz.get_track_obj(track as u8);
+	trace!("woz read track {} sector {}",track,sector);
+	let ans = track_obj.read_sector(track as u8,sector as u8)?;
+	if ans.len()==524 {
+		return Ok(ans[12..524].to_vec());
+	}
+	Ok(ans)
+}
+
+/// Write the given buffer to the file system allocation unit given by `addr`.
+/// Blocks are not allowed to cross track boundaries.
+/// This relies on the disk kind being correct to invoke the correct nibbles.
+/// For 3.5 inch disks, tag bytes should not be included.
+pub fn write_sector<T: WozConverter>(woz: &mut T,cyl: usize,head: usize,sector: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+	let track = cyl_head_to_track(woz, cyl, head)?;
+	let padded = match woz.kind() {
+		super::names::A2_400_KIND | super::names::A2_800_KIND => {
+			let mut tagged: Vec<u8> = vec![0;12];
+			tagged.append(&mut dat.clone());
+			super::quantize_chunk(&tagged, 524)
+		},
+		_ => super::quantize_chunk(dat, 256)
+	};
+	let mut track_obj = woz.get_track_obj(track as u8);
+	trace!("woz write track {} sector {}",track,sector);
+	track_obj.write_sector(&padded,track as u8,sector as u8)?;
+	woz.update_track(&mut track_obj, track as u8);
+	return Ok(());
+}
+
+/// Display aligned track nibbles to stdout in columns of hex, track mnemonics
+pub fn display_track<T: WozConverter>(woz: &T,start_addr: u16,trk: &Vec<u8>) -> String {
+	let mut ans = String::new();
+    let mut slice_start = 0;
+    let mut addr_count = 0;
+    let mut err_count = 0;
+	let [apro,aepi,dpro,depi]: [[u8;3];4] = match woz.kind() {
+		super::names::A2_DOS32_KIND => [[0xd5,0xaa,0xb5],[0xde,0xaa,0xeb],[0xd5,0xaa,0xad],[0xde,0xaa,0x00]],
+		super::names::A2_400_KIND => [[0xd5,0xaa,0x96],[0xde,0xaa,0x00],[0xd5,0xaa,0xad],[0xde,0xaa,0x00]],
+		super::names::A2_800_KIND => [[0xd5,0xaa,0x96],[0xde,0xaa,0x00],[0xd5,0xaa,0xad],[0xde,0xaa,0x00]],
+		_ => [[0xd5,0xaa,0x96],[0xde,0xaa,0xeb],[0xd5,0xaa,0xad],[0xde,0xaa,0xeb]]
+	};
+	let nib_table = match woz.kind() {
+		super::names::A2_DOS32_KIND => super::disk525::DISK_BYTES_53.to_vec(),
+		super::names::A2_400_KIND => super::disk525::DISK_BYTES_62.to_vec(),
+		super::names::A2_800_KIND => super::disk525::DISK_BYTES_62.to_vec(),
+		_ => super::disk525::DISK_BYTES_62.to_vec()
+	};
+	let addr_nib_count = match woz.kind() {
+		super::names::A2_DOS33_KIND => 8,
+		super::names::A2_400_KIND => 5,
+		super::names::A2_800_KIND => 5,
+		_ => 8
+	};
+	let inv = super::disk35::invert_62();
+    loop {
+        let row_label = start_addr as usize + slice_start;
+        let mut slice_end = slice_start + 16;
+        if slice_end > trk.len() {
+            slice_end = trk.len();
+        }
+        let mut mnemonics = String::new();
+        for i in slice_start..slice_end {
+            let bak = match i {
+                x if x>0 => trk[x-1],
+                _ => 0
+            };
+            let fwd = match i {
+                x if x+1<trk.len() => trk[x+1],
+                _ => 0
+            };
+            if !nib_table.contains(&trk[i]) && trk[i]!=0xaa && trk[i]!=0xd5 {
+                mnemonics += "?";
+                err_count += 1;
+            } else if addr_count>0 {
+				match (addr_count%2,woz.kind()) {
+					(_,super::names::A2_400_KIND | super::names::A2_800_KIND) => {
+						let val = super::disk35::decode_62(trk[i], inv);
+						match val {
+							Ok(x) if x<16 => write!(&mut mnemonics,"{:X}",x).expect(RCH),
+							Ok(_) => write!(&mut mnemonics,"^").expect(RCH),
+							Err(_) => write!(&mut mnemonics,"?").expect(RCH)
+						}
+					},
+					(1,_) => write!(&mut mnemonics,"{:X}",super::disk525::decode_44([trk[i],fwd]) >> 4).expect(RCH),
+					_ => write!(&mut mnemonics,"{:X}",super::disk525::decode_44([bak,trk[i]]) & 0x0f).expect(RCH)
+				};
+                addr_count += 1;
+            } else {
+                mnemonics += match (bak,trk[i],fwd) {
+                    (0xff,0xff,_) => ">",
+                    (_,0xff,0xff) => ">",
+					// address prolog
+                    (_,a0,a1) if [a0,a1]==apro[0..2] => "(",
+                    (a0,a1,a2) if [a0,a1,a2]==apro => "A",
+                    (a1,a2,_) if [a1,a2]==apro[1..3] => {addr_count=1;":"},
+					// data prolog
+                    (_,a0,a1) if [a0,a1]==dpro[0..2] => "(",
+                    (a0,a1,a2) if [a0,a1,a2]==dpro => "D",
+                    (a1,a2,_) if [a1,a2]==dpro[1..3] => ":",
+					// address epilog
+                    (_,a0,a1) if [a0,a1]==aepi[0..2] => ":",
+                    (a0,a1,a2) if [a0,a1,a2]==aepi || [a0,a1]==aepi[0..2] && aepi[2]==0 => ")",
+                    (a1,a2,_) if [a1,a2]==aepi[1..3] => ")",
+					// data epilog
+                    (_,a0,a1) if [a0,a1]==depi[0..2] => ":",
+                    (a0,a1,a2) if [a0,a1,a2]==depi || [a0,a1]==depi[0..2] && depi[2]==0 => ")",
+                    (a1,a2,_) if [a1,a2]==depi[1..3] => ")",
+                    (_,0xd5,_) => "R",
+                    (_,0xaa,_) => "R",
+                    _ => "."
+                };
+            }
+            if addr_count>addr_nib_count {
+                addr_count = 0;
+            }
+        }
+        for _i in mnemonics.len()..16 {
+            mnemonics += " ";
+        }
+        write!(ans,"{:04X} : ",row_label).expect(RCH);
+        for byte in trk[slice_start..slice_end].to_vec() {
+            write!(ans,"{:02X} ",byte).expect(RCH);
+        }
+        for _blank in slice_end..slice_start+16 {
+            write!(ans,"   ").expect(RCH);
+        }
+        writeln!(ans,"|{}|",mnemonics).expect(RCH);
+        slice_start += 16;
+        if slice_end==trk.len() {
+            break;
+        }
+    }
+    if err_count > 0 {
+        writeln!(ans).expect(RCH);
+        writeln!(ans,"Encountered {} invalid bytes",err_count).expect(RCH);
+    }
+	ans
 }

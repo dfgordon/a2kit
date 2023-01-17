@@ -47,6 +47,14 @@ pub const CPM_1_SECS: SectorLayout = SectorLayout {
     sectors: 26
 };
 
+pub const IBM_200_SECS: SectorLayout = SectorLayout {
+    cylinders: 40,
+    sides: 1,
+    zones: 1,
+    sector_size: 1024,
+    sectors: 5
+};
+
 // This kind might contain DOS 3.0, 3.1, or 3.2.
 pub const A2_DOS32_KIND: DiskKind = DiskKind::D525(A2_DOS32_SECS,NibbleCode::N53,FluxCode::GCR);
 
@@ -60,7 +68,10 @@ pub const A2_400_KIND: DiskKind = DiskKind::D35(A2_400_SECS, NibbleCode::N62,Flu
 pub const A2_800_KIND: DiskKind = DiskKind::D35(A2_800_SECS, NibbleCode::N62,FluxCode::GCR);
 
 /// This kind might contain CP/M
-pub const IBM_CPM1_KIND: DiskKind = DiskKind::D8(CPM_1_SECS,NibbleCode::N44,FluxCode::FM);
+pub const IBM_CPM1_KIND: DiskKind = DiskKind::D8(CPM_1_SECS,NibbleCode::None,FluxCode::FM);
 
 /// This kind might contain ProDOS
 pub const A2_HD_MAX: DiskKind = DiskKind::LogicalBlocks(BlockLayout {block_count: 65535, block_size: 512});
+
+/// This kind might contain CP/M
+pub const OSBORNE_KIND: DiskKind = DiskKind::D525(IBM_200_SECS,NibbleCode::None,FluxCode::MFM);

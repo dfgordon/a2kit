@@ -9,7 +9,7 @@ Command line interface and library for manipulating Apple ][ language files and 
 * File Systems - DOS 3.x, ProDOS, CP/M (soon), Pascal
     - full read and write access
     - high or low level manipulations
-    - interface for handling sparse or random access files
+    - interface for handling sparse (random access) files
 * Disk Images - DSK (and variants), WOZ (1 and 2), IMD (soon)
 
 ## Documentation

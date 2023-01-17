@@ -1,11 +1,8 @@
 //! ## Apple 3.5 inch disk module
 //! 
-//! This handles the detailed track layout of a real 3.5 inch floppy disk.
-//! The module works with 80 cylinder, 1/2 head, GCR coded disks (400K/800K capacity).
-//! 
-//! It should be noted the logic state sequencer (LSS) that is used in a real Apple computer
-//! is approximated by a "soft latch" which collects bytes one bit at a time, obeying the rule
-//! that leading low-bits must be dropped.
+//! This handles bit-level processing of a 3.5 inch GCR disk track.
+//! The logic state sequencer is approximated by a simple model.
+//! The module can handle either 400K or 800K disks.
 //! 
 //! Acknowledgment: some of this module is adapted from CiderPress.
 
@@ -27,16 +24,16 @@ pub const ZONE_BOUNDS_1: [usize;6] = [0,192,368,528,672,800];
 /// number of blocks occuring prior to start of zone (2 sides, zone indexes array); last element marks the end of disk.
 pub const ZONE_BOUNDS_2: [usize;6] = [0,384,736,1056,1344,1600];
 const SECTOR_SIZE: usize = 524; // 12 tag byte header + 512 data bytes
-const DATA_CKS_OFFSET: usize = 699; // nibbles of data, checksum follows 
-const NIBBLIZED_OUTPUT_LENGTH: usize = 703; // data + checksum
+const DATA_NIBS: usize = 699; // nibbles of data, checksum follows 
+const CHK_NIBS: usize = 4; // how many checksum nibbles after data
 
 // Following constants give the layout of the bits on a track
-const ADDRESS_NIBS: usize = 3 + 5 + 2; // prolog,cyl,sec,side,format,chk,epilog
-const DATA_NIBS: usize = 3 + 1 + NIBBLIZED_OUTPUT_LENGTH + 2; // prolog,sec,data+chk,epilog
+const ADDRESS_FULL_SEGMENT: usize = 3 + 5 + 2; // prolog,cyl,sec,side,format,chk,epilog
+const DATA_FULL_SEGMENT: usize = 3 + 1 + DATA_NIBS + CHK_NIBS + 2; // prolog,sec,data+chk,epilog
 const SYNC_TRACK_HEADER: usize = 36;
 const SYNC_GAP: usize = 6;
 const SYNC_CLOSE: usize = 36;
-const SECTOR_BITS: usize = ADDRESS_NIBS*8 + SYNC_GAP*10 + DATA_NIBS*8 + SYNC_CLOSE*10;
+const SECTOR_BITS: usize = ADDRESS_FULL_SEGMENT*8 + SYNC_GAP*10 + DATA_FULL_SEGMENT*8 + SYNC_CLOSE*10;
 /// bits needed for a track in the given zone:
 pub const TRACK_BITS: [usize;5] = [
     SYNC_TRACK_HEADER*10 + ZONED_SECS_PER_TRACK[0]*SECTOR_BITS,
@@ -159,12 +156,13 @@ impl TrackBits {
         }
         self.bit_ptr = ptr as usize;
     }
-    /// Read bytes through a soft latch, this mocks up the way the hardware reads bytes.
+    /// Read bytes through a soft latch, this is a shortcut that takes the place of
+    /// the logic state sequencer, and simplifies the process of retrieving nibbles.
     /// The number of track bits that passed by is returned (not necessarily 8*bytes)
     pub fn read_latch(&mut self,data: &mut [u8],num_bytes: usize) -> usize {
         let mut bit_count: usize = 0;
         for byte in 0..num_bytes {
-            loop {
+            for _try in 0..self.bit_count {
                 bit_count += 1;
                 if self.next()==1 {
                     break;
@@ -175,6 +173,7 @@ impl TrackBits {
                 val = val*2 + self.next();
             }
             data[byte] = val;
+            bit_count += 7;
         }
         return bit_count;
     }
@@ -315,7 +314,7 @@ impl TrackBits {
     fn encode_sector_62(&mut self,dat: &Vec<u8>) {
         assert!(dat.len()>=SECTOR_SIZE);
         // first work with bytes; direct adaptation from CiderPress `EncodeNibbleSector35`
-        let mut bak_buf: [u8;NIBBLIZED_OUTPUT_LENGTH] = [0;NIBBLIZED_OUTPUT_LENGTH];
+        let mut bak_buf: [u8;DATA_NIBS+CHK_NIBS] = [0;DATA_NIBS+CHK_NIBS];
         let mut part0: [u8;CHUNK62] = [0;CHUNK62];
         let mut part1: [u8;CHUNK62] = [0;CHUNK62];
         let mut part2: [u8;CHUNK62] = [0;CHUNK62];
@@ -367,20 +366,20 @@ impl TrackBits {
             bak_buf[i*4+0] = encode_62(twos);
             bak_buf[i*4+1] = encode_62(part0[i] & 0x3f);
             bak_buf[i*4+2] = encode_62(part1[i] & 0x3f);
-            if i*4 + 3 < NIBBLIZED_OUTPUT_LENGTH {
+            if i*4 + 3 < DATA_NIBS+CHK_NIBS {
                 bak_buf[i*4+3] = encode_62(part2[i] & 0x3f);
             }
         }
 
         // checksum
         twos = (((chk0 & 0xc0) >> 6) | ((chk1 & 0xc0) >> 4) | ((chk2 & 0xc0) >> 2)) as u8;
-        bak_buf[DATA_CKS_OFFSET+0] = encode_62(twos);
-        bak_buf[DATA_CKS_OFFSET+1] = encode_62(chk2 as u8 & 0x3f);
-        bak_buf[DATA_CKS_OFFSET+2] = encode_62(chk1 as u8 & 0x3f);
-        bak_buf[DATA_CKS_OFFSET+3] = encode_62(chk0 as u8 & 0x3f);
+        bak_buf[DATA_NIBS+0] = encode_62(twos);
+        bak_buf[DATA_NIBS+1] = encode_62(chk2 as u8 & 0x3f);
+        bak_buf[DATA_NIBS+2] = encode_62(chk1 as u8 & 0x3f);
+        bak_buf[DATA_NIBS+3] = encode_62(chk0 as u8 & 0x3f);
 
         // now copy the bits into the track from the backing buffer
-        self.write(&bak_buf,NIBBLIZED_OUTPUT_LENGTH*8);
+        self.write(&bak_buf,(DATA_NIBS+CHK_NIBS)*8);
     }
     /// This writes sync bytes, prolog, data, and epilog.
     /// Assumes bit pointer is at the end of the address epilog.
@@ -401,8 +400,8 @@ impl TrackBits {
     fn decode_sector_62(&mut self) -> Result<Vec<u8>,NibbleError> {
         let mut ans: Vec<u8> = Vec::new();
         // First get the bits into an ordinary byte-aligned buffer
-        let mut bak_buf: [u8;NIBBLIZED_OUTPUT_LENGTH] = [0;NIBBLIZED_OUTPUT_LENGTH];
-        self.read_latch(&mut bak_buf,NIBBLIZED_OUTPUT_LENGTH);
+        let mut bak_buf: [u8;DATA_NIBS+CHK_NIBS] = [0;DATA_NIBS+CHK_NIBS];
+        self.read_latch(&mut bak_buf,DATA_NIBS+CHK_NIBS);
         // Now decode; direct adaptation from CiderPress `DecodeNibbleSector35`
         let [mut val,mut nib0,mut nib1,mut nib2,mut twos]: [u8;5];
         let mut part0: [u8;CHUNK62] = [0;CHUNK62];
@@ -464,7 +463,7 @@ impl TrackBits {
             i+= 1;
         }
         // we have the sector, now verify checksum
-        assert!(idx==DATA_CKS_OFFSET);
+        assert!(idx==DATA_NIBS);
         twos = decode_62(bak_buf[idx+0], inv)?;
         nib2 = decode_62(bak_buf[idx+1], inv)?;
         nib1 = decode_62(bak_buf[idx+2], inv)?;
@@ -540,14 +539,20 @@ impl super::TrackBits for TrackBits {
     fn to_buf(&self) -> Vec<u8> {
         self.buf.clone()
     }
-    fn to_bytes(&mut self) -> Vec<u8> {
+    fn to_nibbles(&mut self) -> Vec<u8> {
+        // dump exactly one revolution starting on an address prolog
         let mut ans: Vec<u8> = Vec::new();
         let mut byte: [u8;1] = [0;1];
-        self.reset();
-        for _i in 0..self.len() {
-            self.read_latch(&mut byte,1);
+        if self.find_byte_pattern(&self.adr_fmt.prolog.clone(), &self.adr_fmt.prolog_mask.clone(), None) == None {
+            self.reset();
+        } else {
+            self.shift_rev(self.adr_fmt.prolog.len()*8);
+        }
+        let mut bit_count = 0;
+        for _try in 0..self.buf.len()*2 {
+            bit_count += self.read_latch(&mut byte,1);
             ans.push(byte[0]);
-            if self.bit_ptr+8 > self.bit_count {
+            if bit_count >= self.bit_count {
                 break;
             }
         }
@@ -555,7 +560,8 @@ impl super::TrackBits for TrackBits {
     }
 }
 
-fn invert_62() -> [u8;256] {
+/// create the inverse to the encoding table
+pub fn invert_62() -> [u8;256] {
     let mut ans: [u8;256] = [INVALID_NIB_BYTE;256];
     for i in 0..64 {
         ans[DISK_BYTES_62[i] as usize] = i as u8;
@@ -569,7 +575,7 @@ fn encode_62(nib6: u8) -> u8 {
 }
 
 /// decode a byte, returning a 6-bit nibble in a u8
-fn decode_62(byte: u8,inv: [u8;256]) -> Result<u8,NibbleError> {
+pub fn decode_62(byte: u8,inv: [u8;256]) -> Result<u8,NibbleError> {
     match inv[byte as usize] {
         INVALID_NIB_BYTE => Err(NibbleError::InvalidByte),
         x => Ok(x)
@@ -578,9 +584,11 @@ fn decode_62(byte: u8,inv: [u8;256]) -> Result<u8,NibbleError> {
 
 /// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
 pub fn create_track(track: u8,sides: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) -> Box<dyn super::TrackBits> {
+    // assume interleave is the same in every zone
+    let interleave = skew::get_phys_interleave(&skew::D35_PHYSICAL[0]) as u8;
     let (cyl,mut side,format) = match sides {
-        1 => (track, 0, 0x04),
-        2 => (track/2, 0x20*(track%2) ,0x24),
+        1 => (track, 0, 0x00 + interleave),
+        2 => (track/2, 0x20*(track%2) ,0x20 + interleave),
         _ => panic!("unexpected number of sides")
     };
     side += match cyl>=64 { true => 1, false => 0 };

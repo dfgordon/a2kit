@@ -84,7 +84,7 @@ impl Tokenizer
 		self.columns = 1;
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
-		self.walk(tree);
+		self.walk(&tree);
 		if self.tokenized_line.len()>126 {
 			panic!("Merlin line too long");
 		}

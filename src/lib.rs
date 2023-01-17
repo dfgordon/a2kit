@@ -84,14 +84,19 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         info!("identified Pascal file system");
         return Some(Box::new(fs::pascal::Disk::from_img(img)));
     }
-    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::names::A2_DOS33_KIND);
+    let dpb = bios::dpb::A2_525;
     if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
         info!("identified CP/M file system on A2 disk");
         return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
     }
-    let dpb = fs::cpm::types::DiskParameterBlock::create(&img::names::IBM_CPM1_KIND);
+    let dpb = bios::dpb::CPM1;
     if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
         info!("identified CP/M file system on IBM SSSD disk");
+        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
+    }
+    let dpb = bios::dpb::OSBORNE1;
+    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
+        info!("identified CP/M file system on Osborne SSDD disk");
         return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
     }
    return None;
@@ -232,80 +237,6 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         if slice_end==chunk.len() {
             break;
         }
-    }
-}
-
-/// Display track bytes to stdout in columns of hex, track mnemonics
-pub fn display_track(start_addr: u16,trk: &Vec<u8>) {
-    let mut slice_start = 0;
-    let mut addr_count = 0;
-    let mut err_count = 0;
-    loop {
-        let row_label = start_addr as usize + slice_start;
-        let mut slice_end = slice_start + 16;
-        if slice_end > trk.len() {
-            slice_end = trk.len();
-        }
-        let mut mnemonics = String::new();
-        for i in slice_start..slice_end {
-            let bak = match i {
-                x if x>0 => trk[x-1],
-                _ => 0
-            };
-            let fwd = match i {
-                x if x+1<trk.len() => trk[x+1],
-                _ => 0
-            };
-            if !img::disk525::DISK_BYTES_62.contains(&trk[i]) && trk[i]!=0xaa && trk[i]!=0xd5 {
-                mnemonics += "?";
-                err_count += 1;
-            } else if addr_count>0 {
-                if addr_count%2==1 {
-                    write!(&mut mnemonics,"{:X}",img::disk525::decode_44([trk[i],fwd]) >> 4).unwrap();
-                } else {
-                    write!(&mut mnemonics,"{:X}",img::disk525::decode_44([bak,trk[i]]) & 0x0f).unwrap();
-                }
-                addr_count += 1;
-            } else {
-                mnemonics += match (bak,trk[i],fwd) {
-                    (0xff,0xff,_) => ">",
-                    (_,0xff,0xff) => ">",
-                    (_,0xd5,0xaa) => "(",
-                    (0xd5,0xaa,0x96|0xb5) => "A",
-                    (0xaa,0x96|0xb5,_) => {addr_count=1;":"},
-                    (0xd5,0xaa,0xad) => "D",
-                    (0xaa,0xad,_) => ":",
-                    (_,0xde,0xaa) => ":",
-                    (0xde,0xaa,0xeb) => ":",
-                    (0xaa,0xeb,_) => ")",
-                    (_,0xd5,_) => "R",
-                    (_,0xaa,_) => "R",
-                    _ => "."
-                };
-            }
-            if addr_count==9 {
-                addr_count = 0;
-            }
-        }
-        for _i in mnemonics.len()..16 {
-            mnemonics += " ";
-        }
-        print!("{:04X} : ",row_label);
-        for byte in trk[slice_start..slice_end].to_vec() {
-            print!("{:02X} ",byte);
-        }
-        for _blank in slice_end..slice_start+16 {
-            print!("   ");
-        }
-        println!("|{}|",mnemonics);
-        slice_start += 16;
-        if slice_end==trk.len() {
-            break;
-        }
-    }
-    if err_count > 0 {
-        println!();
-        println!("Encountered {} invalid bytes",err_count);
     }
 }
 

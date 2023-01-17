@@ -143,6 +143,7 @@ impl fmt::Display for DiskKind {
             names::A2_DOS32_KIND => write!(f,"Apple 5.25 inch 13 sector"),
             names::A2_DOS33_KIND => write!(f,"Apple 5.25 inch 16 sector"),
             names::IBM_CPM1_KIND => write!(f,"IBM 8 inch SSSD"),
+            names::OSBORNE_KIND => write!(f,"IBM 5.25 inch SSDD"),
             DiskKind::D35(lay,_,_) => write!(f,"3.5 inch {} x {} tracks",lay.cylinders,lay.sides),
             DiskKind::D525(lay,_,_) => write!(f,"5.25 inch {} x {} tracks",lay.cylinders,lay.sides),
             DiskKind::D8(lay,_,_) => write!(f,"8 inch {} x {} tracks",lay.cylinders,lay.sides),
@@ -157,6 +158,7 @@ impl FromStr for DiskKind {
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
             "8in" => Ok(names::IBM_CPM1_KIND),
+            "5.25in-osborne" => Ok(names::OSBORNE_KIND),
             "5.25in" => Ok(names::A2_DOS33_KIND),
             "3.5in" => Ok(names::A2_800_KIND),
             "hdmax" => Ok(names::A2_HD_MAX),
@@ -197,8 +199,8 @@ pub trait TrackBits {
     fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
     /// Copy of the unfiltered track buffer
     fn to_buf(&self) -> Vec<u8>;
-    /// Get the track buffer after filtering (e.g. by soft latch); n.b. head position will move.
-    fn to_bytes(&mut self) -> Vec<u8>;
+    /// Get aligned track nibbles; n.b. head position will move.
+    fn to_nibbles(&mut self) -> Vec<u8>;
 }
 
 /// The main trait for working with any kind of disk image.
@@ -215,10 +217,16 @@ pub trait DiskImage {
     fn read_chunk(&self,addr: fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
     /// Write a chunk (block or sector) to the image
     fn write_chunk(&mut self, addr: fs::Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>>;
-    /// Get the track buffer exactly in the form the image stores it
-    fn get_track_buf(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
-    /// Get the track bytes; bits are processed through a soft latch, if applicable
-    fn get_track_bytes(&self,track: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    /// Read a physical sector from the image
+    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    /// Write a physical sector to the image
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>>;
+    /// Get the track buffer exactly in the form the image stores it; for user inspection
+    fn get_track_buf(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    /// Get the track bytes as aligned nibbles; for user inspection
+    fn get_track_nibbles(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`
+    fn display_track(&self,bytes: &Vec<u8>) -> String;
 }
 
 /// Test a buffer for a size match to DOS-oriented track and sector counts.

@@ -12,16 +12,14 @@ const RCH: &str = "unreachable was reached";
 fn output_get(
     maybe_object: Result<(u16,Vec<u8>),Box<dyn Error>>,
     maybe_typ: Result<ItemType,CommandError>,
-    maybe_disk: Option<Box<dyn DiskFS>>,
+    maybe_disk: Option<Box<dyn DiskFS>>
 ) -> Result<(),Box<dyn Error>> {
     match maybe_object {
-        Ok(tuple) => {
-            let object = tuple.1;
+        Ok((start_addr,object)) => {
             if atty::is(atty::Stream::Stdout) {
                 match (maybe_typ,maybe_disk) {
                     (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
-                    (Ok(ItemType::Track),None) => crate::display_track(tuple.0,&object),
-                    _ => crate::display_chunk(tuple.0,&object)
+                    _ => crate::display_chunk(start_addr,&object)
                 };
             } else {
                 match (maybe_typ,maybe_disk) {
@@ -49,21 +47,9 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
         // we are getting from a disk image
         (Some(typ_str),Some(img_path)) => {
             let typ = ItemType::from_str(typ_str);
-            // If getting a track, no need to resolve file system, handle differently
+            // If getting a track or sector, no need to resolve file system, handle differently
             match typ {
-                Ok(ItemType::Track) | Ok(ItemType::RawTrack) => {
-                    match crate::create_img_from_file(img_path) {
-                        Ok(img) => {
-                            let maybe_object = match typ {
-                                Ok(ItemType::Track) => img.get_track_bytes(&src_path),
-                                Ok(ItemType::RawTrack) => img.get_track_buf(&src_path),
-                                _ => panic!("{}",RCH)
-                            };
-                            return output_get(maybe_object,typ,None);
-                        },
-                        Err(e) => return Err(e)
-                    }
-                },
+                Ok(ItemType::Track) | Ok(ItemType::RawTrack) | Ok(ItemType::Sector) => return super::get_img::get(cmd),
                 _ => {}
             }
             match crate::create_fs_from_file(img_path) {

@@ -107,7 +107,7 @@ impl Tokenizer
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
-		self.walk(tree);
+		self.walk(&tree);
 		if self.tokenized_line.len()>126 {
 			panic!("integer BASIC line too long");
 		}

@@ -9,6 +9,7 @@
 //! The term "extent" has shades of meaning, see the parent module notes. 
 
 use super::types::*;
+use crate::bios::dpb::DiskParameterBlock;
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -283,7 +284,7 @@ impl Directory {
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
                 x if x<USER_END => Some(Extent::from_bytes(&self.entries[*idx].to_vec())),
-                x => None
+                _ => None
             },
             _ => panic!("wrong pointer type")
         }
@@ -300,7 +301,7 @@ impl Directory {
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
                 x if x>=USER_END && x<USER_END*2 => Some(Password::from_bytes(&self.entries[*idx].to_vec())),
-                x => None
+                _ => None
             },
             _ => panic!("wrong pointer type")
         }
@@ -308,8 +309,8 @@ impl Directory {
     pub fn get_label(&self,ptr: &Ptr) -> Option<Label> {
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
-                0x20=> Some(Label::from_bytes(&self.entries[*idx].to_vec())),
-                x => None
+                0x20 => Some(Label::from_bytes(&self.entries[*idx].to_vec())),
+                _ => None
             },
             _ => panic!("wrong pointer type")
         }
@@ -318,7 +319,7 @@ impl Directory {
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
                 0x21 => Some(Timestamp::from_bytes(&self.entries[*idx].to_vec())),
-                x => None
+                _ => None
             },
             _ => panic!("wrong pointer type")
         }

@@ -16,6 +16,7 @@ use std::io;
 use std::io::Read;
 use std::io::Write;
 use atty;
+use log::error;
 
 pub enum WalkerChoice {
     GotoChild,
@@ -27,17 +28,21 @@ pub enum WalkerChoice {
 #[derive(Error,Debug)]
 pub enum LanguageError {
     #[error("Syntax error")]
-    Syntax
+    Syntax,
+    #[error("Invalid Line Number")]
+    LineNumber,
 }
 
+/// Get text of the node, source should be a single line.
+/// Panics if the source text does not include the node's range.
 pub fn node_text(node: tree_sitter::Node,source: &str) -> String {
-    let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
-    return String::from(&source[rng]);
+    let rng = node.range();
+    return String::from(&source[rng.start_point.column..rng.end_point.column]);
 }
 
 pub trait Visit {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> WalkerChoice;
-    fn walk(&mut self,tree: tree_sitter::Tree)
+    fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> WalkerChoice;
+    fn walk(&mut self,tree: &tree_sitter::Tree)
     {
         let mut curs = tree.walk();
         let mut choice = WalkerChoice::GotoChild;
@@ -72,7 +77,7 @@ impl SyntaxCheckVisitor {
 }
 
 impl Visit for SyntaxCheckVisitor {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> WalkerChoice
+    fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> WalkerChoice
     {
         if curs.node().is_error()
         {
@@ -97,9 +102,28 @@ impl Visit for SyntaxCheckVisitor {
     }
 }
 
-/// detect syntax errors in any language.  This is meant to be pipelined,
-/// i.e., it will return either the source code or an error.  If an error
-/// is returned the caller may choose to panic to stop the pipeline.
+/// Simple verify, returns an error if any issues
+pub fn verify_str(lang: tree_sitter::Language,code: &str) -> Result<(),LanguageError> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(lang).expect("Error loading grammar");
+    let mut visitor = SyntaxCheckVisitor::new(String::new());
+    let mut iter = code.lines();
+    while let Some(line) = iter.next()
+    {
+        let tree = parser.parse(String::from(line) + "\n",None).expect("Error parsing file");
+        visitor.code = String::from(line);
+        if line.len()>0 {
+            // if stdout is the console, format some, and include the s-expression per line
+            visitor.walk(&tree);
+        }
+    }
+    if visitor.err_count > 0 {
+        return Err(LanguageError::Syntax);
+    }
+    Ok(())
+}
+
+/// detect syntax errors in any language.  Returns tuple with long and short result messages, or an error.
 /// N.b. there is extra behavior in the event either stdin or stdout are the console.
 pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,String),LanguageError>
 {
@@ -147,7 +171,7 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,
             } else {
                 res += &(line.to_string() + "\n");
             }
-            visitor.walk(tree);
+            visitor.walk(&tree);
         }
     }
     if visitor.err_count==0 {
