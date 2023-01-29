@@ -14,7 +14,7 @@ pub const RECORD_SIZE: usize = 128;
 /// Size of the directory entry in bytes, always 32
 pub const DIR_ENTRY_SIZE: usize = 32;
 /// Maximum number of logical extents in a file, array is indexed by major version number
-pub const MAX_LOGICAL_EXTENTS: [usize;4] = [32,2048,2048,2048];
+pub const MAX_LOGICAL_EXTENTS: [usize;4] = [32,512,2048,2048];
 /// There is a subdivision of an extent, sometimes called a logical extent,
 /// which has a fixed size. See the EXM field in the disk parameter block.
 pub const LOGICAL_EXTENT_SIZE: usize = 16384;

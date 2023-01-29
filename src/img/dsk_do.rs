@@ -52,7 +52,7 @@ impl img::DiskImage for DO {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         trace!("reading {}",addr);
         match addr {
             Chunk::D13(_) => Err(Box::new(img::Error::ImageTypeMismatch)),
@@ -77,8 +77,8 @@ impl img::DiskImage for DO {
                 for ts in ts_list {
                     trace!("track {} lsec {}",ts[0],ts[1]);
                     let track = ts[0];
-                    let dsec = skew::CPM_LSEC_TO_DOS_LSEC[ts[1]];
-                    let offset = track*self.sectors as usize*SECTOR_SIZE + dsec*SECTOR_SIZE + skew::CPM_LSEC_TO_DOS_OFFSET[ts[1]];
+                    let dsec = skew::CPM_LSEC_TO_DOS_LSEC[ts[1]-1];
+                    let offset = track*self.sectors as usize*SECTOR_SIZE + dsec*SECTOR_SIZE + skew::CPM_LSEC_TO_DOS_OFFSET[ts[1]-1];
                     ans.append(&mut self.data[offset..offset+CPM_RECORD].to_vec());
                 }
                 Ok(ans)
@@ -113,8 +113,8 @@ impl img::DiskImage for DO {
                 for ts in ts_list {
                     trace!("track {} lsec {}",ts[0],ts[1]);
                     let track = ts[0];
-                    let dsec = skew::CPM_LSEC_TO_DOS_LSEC[ts[1]];
-                    let offset = track*self.sectors as usize*SECTOR_SIZE + dsec*SECTOR_SIZE + skew::CPM_LSEC_TO_DOS_OFFSET[ts[1]];
+                    let dsec = skew::CPM_LSEC_TO_DOS_LSEC[ts[1]-1];
+                    let offset = track*self.sectors as usize*SECTOR_SIZE + dsec*SECTOR_SIZE + skew::CPM_LSEC_TO_DOS_OFFSET[ts[1]-1];
                     self.data[offset..offset+CPM_RECORD].copy_from_slice(&padded[src_offset..src_offset+CPM_RECORD]);
                     src_offset += CPM_RECORD;
                 }
@@ -122,7 +122,7 @@ impl img::DiskImage for DO {
             }
         }
     }
-    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         if cyl>=self.track_count() || head>0 || sec>=self.sectors as usize {
             error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,self.sectors-1);
             return Err(Box::new(img::Error::SectorAccess));
@@ -163,20 +163,23 @@ impl img::DiskImage for DO {
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::DO
     }
+    fn file_extensions(&self) -> Vec<String> {
+        vec!["do".to_string(),"dsk".to_string()]
+    }
     fn kind(&self) -> img::DiskKind {
         self.kind
     }
     fn change_kind(&mut self,kind: img::DiskKind) {
         self.kind = kind;
     }
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("DO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("DO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }

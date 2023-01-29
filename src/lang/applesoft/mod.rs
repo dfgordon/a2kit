@@ -7,6 +7,7 @@ mod token_maps;
 mod minify_guards;
 mod tokenize_test;
 mod minify_test;
+mod renumber_test;
 pub mod tokenizer;
 pub mod minifier;
 pub mod renumber;

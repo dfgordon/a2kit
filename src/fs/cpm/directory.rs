@@ -25,7 +25,7 @@ use log::{debug,warn,trace};
 /// The extent capacity is in the form 16384 * (EXM+1), where EXM = 2^n-1, with n from 0 to 4.
 /// The 16K subsets within are called "logical extents."
 /// The extents are indexed by counting logical extents.
-#[derive(DiskStruct,Copy,Clone)]
+#[derive(DiskStruct,Copy,Clone,PartialEq)]
 pub struct Extent {
     /// value 0-15 identifies this as a file extent.  value 0xe5 means unused or deleted.
     pub user: u8,
@@ -38,7 +38,7 @@ pub struct Extent {
     pub typ: [u8;3],
     /// bits 0-4 are the low 5-bits of the extent index.
     /// The index counts *logical* extents.  Hence the step between
-    /// indices is EXM+1.
+    /// indices is EXM+1, except possibly for the last step.
     idx_low: u8,
     /// Bytes used in the last record in the extent, 0 means record is full (128 bytes).
     /// This is always 0 until CP/M v3 (eof was only known to within a record boundary)
@@ -139,12 +139,14 @@ impl Extent {
         return ans;
     }
     /// Get the ordered index for this extent of data.
-    /// Inner value is the count of logical extents prior to this extent.
+    /// Inner value is the count of logical extents up to and including this extent, minus 1.
+    /// If this is the last extent, only *used* logical extents are counted.
     pub fn get_data_ptr(&self) -> Ptr {
         Ptr::ExtentData((self.idx_low as u16 + ((self.idx_high as u16) << 5)) as usize)
     }
     /// Set the ordered index for this extent of data.
-    /// Inner value is the count of logical extents prior to this extent.
+    /// Inner value is the count of logical extents up to and including this extent, minus 1.
+    /// If this is the last extent, only *used* logical extents are counted.
     pub fn set_data_ptr(&mut self,ptr: Ptr) {
         match ptr {
             Ptr::ExtentData(i) => {
@@ -157,36 +159,23 @@ impl Extent {
     /// Returns the eof in bytes, *assuming* this is the last extent.
     /// Result may be modulo RECORD_SIZE depending on `self.num_bytes`,
     /// which in turn depends on the CP/M version.
-    pub fn get_eof(&self,dpb: &DiskParameterBlock) -> usize {
+    pub fn get_eof(&self) -> usize {
         let idx = self.get_data_ptr().unwrap();
         let bytes = match self.last_bytes {
             0 => RECORD_SIZE as u8,
             x => x
         };
-        // start with full capacity of all previous extents
+        // start with full capacity of all logical extents but the last one (idx is count minus 1)
         let mut ans = idx * LOGICAL_EXTENT_SIZE;
-        // figure how many blocks are in use, including sparse file holes,
-        // but not trailing holes (we are assuming this is the last extent).
-        let mut used = 0;
-        for ptr in self.get_block_list(dpb).iter().rev() {
-            if *ptr!=0 || used>0 {
-                used += 1;
-            }
-        }
-        if used==0 {
-            return 0;
-        }
-        let lx_count = 1 + (used-1) * dpb.block_size() / LOGICAL_EXTENT_SIZE;
-        ans += (lx_count - 1) * LOGICAL_EXTENT_SIZE;
         // account for the last logical extent which may be partially filled
         ans += match self.last_records {
-            rc if rc==0 => 0,
             rc if rc<0x80 => (rc-1) as usize * RECORD_SIZE + bytes as usize,
             _ => 0x7f * RECORD_SIZE + bytes as usize
         };
         return ans;
     }
-    /// Set the eof, `x_bytes` is bytes used by *this extent only*.  Must be run for every extent.
+    /// Set the last_bytes and last_records (effectively, this sets the eof)
+    /// `x_bytes` is bytes used by *this extent only*.  Must be run for every extent.
     pub fn set_eof(&mut self,x_bytes: usize,vers: [u8;3]) {
         // First get total records and byte remainder, ignoring logical extent boundaries
         let mut total_records = x_bytes/RECORD_SIZE;
@@ -205,9 +194,23 @@ impl Extent {
             self.last_bytes = 0;
         }
     }
-    /// Get block pointers as u16 values, given the `ptr_size` in bytes.
-    /// The `ptr_size` can be obtained from `DiskParameterBlock`.
-    /// Returned block is relative, i.e., the OS tracks (or other offset) are not included.
+    /// Set the block pointer `iblock` at the `slot` in the logical extent `lx`.
+    /// The `lx` count is reset to 0 for each new extent
+    /// The`slot` count is reset to 0 for each new logical extent.
+    pub fn set_block_ptr(&mut self,slot: usize,lx: usize,iblock: u16,dpb: &DiskParameterBlock) {
+        let lx_per_x = dpb.exm as usize + 1;
+        match dpb.ptr_size() {
+            1 => self.block_list[lx*16/lx_per_x + slot] = iblock as u8,
+            2 => {
+                self.block_list[2*(lx*8/lx_per_x + slot)] = u16::to_le_bytes(iblock)[0];
+                self.block_list[2*(lx*8/lx_per_x + slot)+1] = u16::to_le_bytes(iblock)[1];
+            },
+            _ => panic!("invalid block pointer size")
+        }
+    }
+    /// Get block pointers, given the DPB (which implies the pointer size).
+    /// The pointers are converted to u16 unconditionally.
+    /// CP/M block pointers are always relative to the track offset (also in DPB).
     pub fn get_block_list(&self,dpb: &DiskParameterBlock) -> Vec<u16> {
         match dpb.ptr_size() {
             1 => self.block_list.iter().map(|x| *x as u16).collect::<Vec<u16>>(),

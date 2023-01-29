@@ -36,7 +36,7 @@ fn read_small() {
     // Formatting: FORMAT.COM, writing: ED.COM, emulator: Virtual II
     // This tests small CP/M text files
     let img = std::fs::read(&Path::new("tests").join("cpm-smallfiles.dsk")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
 
     // check text file
     let (_z,raw) = emulator_disk.read_text("POLARIS.TXT").expect("error");
@@ -59,7 +59,8 @@ fn write_small() {
     let txt_data = cpm::types::SequentialText::from_str(ED_TEST).expect("text encode error");
     disk.write_text("POLARIS.TXT",&txt_data.to_bytes()).expect("write error");
 
-    disk.compare(&Path::new("tests").join("cpm-smallfiles.dsk"),&disk.standardize(0));
+    let ignore = disk.standardize(0);
+    disk.compare(&Path::new("tests").join("cpm-smallfiles.dsk"),&ignore);
 }
 
 #[test]

@@ -53,7 +53,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                 _ => {}
             }
             match crate::create_fs_from_file(img_path) {
-                Ok(disk) => {
+                Ok(mut disk) => {
                     // special handling for sparse data
                     if let Ok(ItemType::FileImage) = typ {
                         return match disk.read_any(&src_path) {

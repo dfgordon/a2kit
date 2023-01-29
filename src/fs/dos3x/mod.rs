@@ -69,7 +69,7 @@ impl Disk
     }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
-    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
+    pub fn from_img(mut img: Box<dyn img::DiskImage>) -> Self {
         if let Ok(dat) = img.read_chunk(Chunk::D13([17,0])) {
             return Self {
                 vtoc: VTOC::from_bytes(&dat),
@@ -84,7 +84,7 @@ impl Disk
         }
         panic!("unexpected failure to read chunk");
     }
-    fn test_img_13(img: &Box<dyn img::DiskImage>) -> bool {
+    fn test_img_13(img: &mut Box<dyn img::DiskImage>) -> bool {
         if let Ok(dat) = img.read_chunk(Chunk::D13([17,0])) {
             let vtoc = VTOC::from_bytes(&dat);
             let (tlen,slen) = (35,13);
@@ -109,7 +109,7 @@ impl Disk
         debug!("VTOC sector was not readable as D13");
         return false;
     }
-    fn test_img_16(img: &Box<dyn img::DiskImage>) -> bool {
+    fn test_img_16(img: &mut Box<dyn img::DiskImage>) -> bool {
         if let Ok(dat) = img.read_chunk(Chunk::DO([17,0])) {
             let vtoc = VTOC::from_bytes(&dat);
             let (tlen,slen) = (35,16);
@@ -216,7 +216,7 @@ impl Disk
     }
     /// Read a sector of data into buffer `data`, starting at `offset` within the buffer.
     /// If `data` is shorter than the sector, the partial sector is copied.
-    fn read_sector(&self,data: &mut Vec<u8>,ts: [u8;2], offset: usize) {
+    fn read_sector(&mut self,data: &mut Vec<u8>,ts: [u8;2], offset: usize) {
         let bytes = u16::from_le_bytes(self.vtoc.bytes) as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read sector"),
@@ -381,7 +381,7 @@ impl Disk
         return [0,0];
     }
     /// Return a tuple with ([track,sector],entry index)
-    fn get_next_directory_slot(&self) -> ([u8;2],u8) {
+    fn get_next_directory_slot(&mut self) -> ([u8;2],u8) {
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
         for _try in 0..types::MAX_DIRECTORY_REPS {
@@ -401,7 +401,7 @@ impl Disk
         panic!("the disk image directory seems to be damaged");
     }
     /// Scan the directory sectors to find the tslist of the named file and the file type
-    fn get_tslist_sector(&self,name: &str) -> ([u8;2],u8) {
+    fn get_tslist_sector(&mut self,name: &str) -> ([u8;2],u8) {
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
@@ -423,7 +423,7 @@ impl Disk
     }
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_file(&mut self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         let (mut next_tslist,ftype) = self.get_tslist_sector(name);
         if next_tslist==[0,0] {
             return Err(Box::new(Error::FileNotFound));
@@ -574,7 +574,7 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&mut self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
         let mut ts = [self.vtoc.track1,self.vtoc.sector1];
         let mut buf = vec![0;256];
@@ -666,7 +666,7 @@ impl super::DiskFS for Disk {
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> Result<(),Box<dyn std::error::Error>> {
         return self.modify(name, None,None, Some(new_type));
     }
-    fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
             Ok(fimg) => {
                 let ans = types::BinaryData::from_bytes(&fimg.sequence());
@@ -686,7 +686,7 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![FileType::Binary as u8];
         return self.write_file(name, &fimg);
     }
-    fn load(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&mut self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
             Ok(fimg) => Ok((0,types::TokenizedProgram::from_bytes(&fimg.sequence()).program)),
             Err(e) => Err(e)
@@ -704,7 +704,7 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![fs_type as u8];
         return self.write_file(name, &fimg);
     }
-    fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
             Ok(fimg) => Ok((0,fimg.sequence())),
             Err(e) => Err(e)
@@ -716,7 +716,7 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![FileType::Text as u8];
         return self.write_file(name, &fimg);
     }
-    fn read_records(&self,name: &str,record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
+    fn read_records(&mut self,name: &str,record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         if record_length==0 {
             error!("DOS 3.x requires specifying a non-zero record length");
             return Err(Box::new(Error::Range));
@@ -741,7 +741,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(e)
         }
     }
-    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(sector) => {
                 if sector > self.vtoc.tracks as usize*self.vtoc.sectors as usize {
@@ -766,10 +766,14 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&mut self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         return self.read_file(name);
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.file_system!="a2 dos" {
+            error!("cannot write {} file image to a2 dos",fimg.file_system);
+            return Err(Box::new(Error::IOError));
+        }
         if fimg.chunk_len!=256 {
             error!("chunk length is incompatible with DOS 3.x");
             return Err(Box::new(Error::Range));
@@ -787,11 +791,11 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+    fn standardize(&mut self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         // ignore first byte of VTOC
         return HashMap::from([(self.addr([VTOC_TRACK,0]),vec![0])]);
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         for track in 0..self.vtoc.tracks as usize {
             for sector in 0..self.vtoc.sectors as usize {

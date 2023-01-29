@@ -57,7 +57,7 @@ fn read_small() {
     // Formatting: CiderPress, writing: MicroM8:
     // This tests small Pascal source files
     let img = std::fs::read(&Path::new("tests").join("pascal-smallfiles.do")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
 
     // check source 1
     let (_z,raw) = emulator_disk.read_text("hello.text").expect("error");

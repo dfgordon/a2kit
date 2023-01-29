@@ -38,7 +38,7 @@ impl img::DiskImage for D13 {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         match addr {
             Chunk::D13([t,s]) => {
                 let offset = t*TRACK_SIZE + s*SECTOR_SIZE;
@@ -58,7 +58,7 @@ impl img::DiskImage for D13 {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         if cyl>=self.track_count() || head>0 || sec>12 {
             error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,12);
             return Err(Box::new(img::Error::SectorAccess));
@@ -89,20 +89,23 @@ impl img::DiskImage for D13 {
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::D13
     }
+    fn file_extensions(&self) -> Vec<String> {
+        vec!["d13".to_string()]
+    }
     fn kind(&self) -> img::DiskKind {
         img::names::A2_DOS32_KIND
     }
     fn change_kind(&mut self,kind: img::DiskKind) {
         debug!("ignoring change of D13 to {}",kind);
     }
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }

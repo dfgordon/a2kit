@@ -62,7 +62,8 @@ pub enum Chunk {
 impl Chunk {
     /// At this level we can only take sectors per track, and return a track-sector list,
     /// where a simple monotonically increasing relationship is assumed between chunks and sectors.
-    /// Any further skewing must be handled by the caller.  CP/M offset is accounted for.
+    /// Any further skewing must be handled by the caller.  CP/M track offset is accounted for,
+    /// and CP/M sector numbering starts at 1.
     pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
         match self {
             Self::D13([t,s]) => vec![[*t,*s]],
@@ -72,7 +73,7 @@ impl Chunk {
                 let mut ans: Vec<[usize;2]> = Vec::new();
                 let lsecs_per_block = 1 << bsh;
                 for sec_count in block*lsecs_per_block..(block+1)*lsecs_per_block {
-                    ans.push([*off as usize + sec_count/secs_per_track , sec_count%secs_per_track]);
+                    ans.push([*off as usize + sec_count/secs_per_track , 1 + sec_count%secs_per_track]);
                 }
                 ans
             }
@@ -565,7 +566,7 @@ pub trait DiskFS {
     /// Create an empty file image appropriate for this file system
     fn new_fimg(&self,chunk_len: usize) -> FileImage;
     /// List all the files on disk to standard output, mirrors `CATALOG`
-    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn catalog_to_stdout(&mut self, path: &str) -> Result<(),Box<dyn std::error::Error>>;
     /// Create a new directory
     fn create(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>>;
     /// Delete a file or directory
@@ -579,32 +580,32 @@ pub trait DiskFS {
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
     fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> Result<(),Box<dyn std::error::Error>>;
     /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
-    fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
     /// Write a binary file to the disk, mirrors `BSAVE`
     fn bsave(&mut self,path: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>>;
     /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
     /// Detokenization is handled in a different module.  Returns (aux,data), aux = 0
-    fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
     /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
     /// Tokenization is handled in a different module.
     fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>>;
     /// Read sequential text file from the disk, mirrors `READ`, text remains in raw A2 format.
     /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
-    fn read_text(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
     /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
     /// Use `encode_text` to generate data from a UTF8 string.
     fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>>;
     /// Read records from a random access text file.  This finds all possible records, some may be spurious.
     /// The `record_length` can be set to 0 on file systems where this is stored with the file.
-    fn read_records(&self,path: &str,record_length: usize) -> Result<Records,Box<dyn std::error::Error>>;
+    fn read_records(&mut self,path: &str,record_length: usize) -> Result<Records,Box<dyn std::error::Error>>;
     /// Write records to a random access text file
     fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,Box<dyn std::error::Error>>;
     /// Read a file into a generalized representation
-    fn read_any(&self,path: &str) -> Result<FileImage,Box<dyn std::error::Error>>;
+    fn read_any(&mut self,path: &str) -> Result<FileImage,Box<dyn std::error::Error>>;
     /// Write a file from a generalized representation
     fn write_any(&mut self,path: &str,fimg: &FileImage) -> Result<usize,Box<dyn std::error::Error>>;
     /// Get a chunk (block or sector) appropriate for this file system
-    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
     /// Put a chunk (block or sector) appropriate for this file system.
     /// N.b. this simply zaps the chunk and can break the file system.
     fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>>;
@@ -616,9 +617,9 @@ pub trait DiskFS {
     /// Returns a map from chunks to offsets within the chunk that are to be zeroed or ignored.
     /// Typically it is important to call this before deletions happen.
     /// May be recursive, ref_con can be used to initialize each recursion.
-    fn standardize(&self,ref_con: u16) -> HashMap<Chunk,Vec<usize>>;
+    fn standardize(&mut self,ref_con: u16) -> HashMap<Chunk,Vec<usize>>;
     /// Compare this disk with a reference disk for testing purposes.  Panics if comparison fails.
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>);
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>);
     /// Mutably borrow the underlying disk image
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage>;
 }

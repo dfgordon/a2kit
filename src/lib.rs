@@ -42,12 +42,13 @@
 //! 
 //! ## Disk Kinds
 //! 
-//! A disk image can typically represent some number of disk kinds (defined by mechanical and magnetic
-//! coding characteristics).  The kinds `a2kit` supports include
+//! A disk image can typically represent some number of disk kinds (defined by mechanical and
+//! encoding characteristics).  The kinds `a2kit` supports include
 //! * Logical ProDOS volumes
 //! * 3.5 inch Apple formats (400K/800K)
 //! * 5.25 inch Apple formats (114K/140K)
-//! * 8 inch CP/M format (IBM SSSD 250K)
+//! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
+//! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K)
 
 pub mod fs;
 pub mod lang;
@@ -76,28 +77,31 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         info!("identified DOS 3.x file system");
         return Some(Box::new(fs::dos3x::Disk::from_img(img)));
     }
-    if fs::prodos::Disk::test_img(&img) {
+    if fs::prodos::Disk::test_img(&mut img) {
         info!("identified ProDOS file system");
         return Some(Box::new(fs::prodos::Disk::from_img(img)));
     }
-    if fs::pascal::Disk::test_img(&img) {
+    if fs::pascal::Disk::test_img(&mut img) {
         info!("identified Pascal file system");
         return Some(Box::new(fs::pascal::Disk::from_img(img)));
     }
-    let dpb = bios::dpb::A2_525;
-    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
-        info!("identified CP/M file system on A2 disk");
-        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
-    }
-    let dpb = bios::dpb::CPM1;
-    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
-        info!("identified CP/M file system on IBM SSSD disk");
-        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
-    }
-    let dpb = bios::dpb::OSBORNE1;
-    if fs::cpm::Disk::test_img(&img,&dpb,[2,2,3]) {
-        info!("identified CP/M file system on Osborne SSDD disk");
-        return Some(Box::new(fs::cpm::Disk::from_img(img,dpb,[2,2,3])));
+    // For CP/M we have to try all these DPB heuristically
+    let dpb_list = vec![
+        bios::dpb::A2_525,
+        bios::dpb::CPM1,
+        bios::dpb::SSSD_525,
+        bios::dpb::SSDD_525_OFF1,
+        bios::dpb::SSDD_525_OFF3,
+        bios::dpb::DSDD_525_OFF1,
+        bios::dpb::TRS80_M2,
+        bios::dpb::NABU,
+
+    ];
+    for dpb in &dpb_list {
+        if fs::cpm::Disk::test_img(&mut img,dpb,[2,2,3]) {
+            info!("identified CP/M file system on {}",dpb);
+            return Some(Box::new(fs::cpm::Disk::from_img(img,dpb.clone(),[2,2,3])));
+        }
     }
    return None;
 }

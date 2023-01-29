@@ -112,7 +112,7 @@ impl SectorDataFormat {
     }
 }
 
-/// This is the main interface for interacting with a realistic 5.25 inch disk.
+/// This is the main interface for interacting with 5.25 inch disk tracks.
 /// This represents a track at the level of bits.
 /// Writing to the track is at the bit stream level, any bit pattern will be accepted.
 /// Reading can be done by direct bit stream consumption, or through a soft latch.
@@ -271,6 +271,7 @@ impl TrackBits {
     /// We do not go looking for the data prolog at this stage, because it may not exist.
     /// E.g., DOS 3.2 `INIT` will not write any data fields outside of the boot tracks.
     fn find_sector(&mut self,ts: [u8;2]) -> Result<u8,NibbleError> {
+        trace!("seeking sector {}",ts[1]);
         // Copy search patterns
         let adr_pro = self.adr_fmt.prolog.clone();
         let adr_pro_mask = self.adr_fmt.prolog_mask.clone();
@@ -295,9 +296,10 @@ impl TrackBits {
                 }
                 // we have a good header
                 if ts[1] != sector {
-                    trace!("skip sector {}, wait for {},{}",sector,ts[0],ts[1]);
+                    trace!("skip sector {}",sector);
                     continue;
                 }
+                trace!("found sector {}",sector);
                 return Ok(vol);
             } else {
                 debug!("no address prolog found on track");
@@ -388,6 +390,7 @@ impl TrackBits {
     /// Assumes bit pointer is at the end of the address epilog.
     /// This function is allowed to panic.
     fn encode_sector(&mut self,dat: &Vec<u8>) {
+        trace!("encoding sector");
         let dat_fmt = self.dat_fmt;
         match dat_fmt.nib {
             NibbleType::Enc44 => panic!("only 5-3 or 6-2 nibbles allowed in data"),
@@ -508,6 +511,7 @@ impl TrackBits {
     /// Decode the sector using the scheme for this track.
     /// Assumes bit pointer is at the end of the address epilog.
     fn decode_sector(&mut self) -> Result<Vec<u8>,NibbleError> {
+        trace!("decoding sector");
         // Find data prolog without looking ahead too far, for if it does not exist, we
         // are to interpret the sector as empty.
         let prolog = self.dat_fmt.prolog.clone();

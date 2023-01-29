@@ -62,7 +62,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
     let img_path = String::from(cmd.value_of("dimg").expect(RCH));
 
     match crate::create_img_from_file(&img_path) {
-        Ok(img) => {
+        Ok(mut img) => {
             let bytes = match typ {
                 ItemType::Sector => {
                     let [cyl,head,sec] = parse_sector(&src_path)?;

@@ -24,6 +24,10 @@ pub fn get_phys_interleave(table: &[usize]) -> usize {
 
 /// Skew table for native 8 inch CP/M v1 disks
 pub const CPM_1_LSEC_TO_PSEC: [u8;26] = [1,7,13,19,25,5,11,17,23,3,9,15,21,2,8,14,20,26,6,12,18,24,4,10,16,22];
+/// Skew table for Nabu 8 inch CP/M disks
+pub const CPM_LSEC_TO_NABU_PSEC: [u8;26] = [1,8,15,22,3,10,17,24,5,12,19,26,7,14,21,2,9,16,23,4,11,18,25,6,13,20];
+/// Skew table for Osborne 5.25 inch SSSD disks
+pub const CPM_LSEC_TO_OSB1_PSEC: [u8;10] = [1,3,5,7,9,2,4,6,8,10];
 /// Take CP/M logical sector to DOS logical sector; the offset within the DOS sector is obtained by another table.
 pub const CPM_LSEC_TO_DOS_LSEC: [usize;32] = [0,0,6,6,12,12,3,3,9,9,15,15,14,14,5,5,11,11,2,2,8,8,7,7,13,13,4,4,10,10,1,1];
 /// Take CP/M logical sector to DOS physical sector; the offset within the DOS sector is obtained by another table.
@@ -60,7 +64,7 @@ pub fn prodos_block_from_ts(track: usize,sector: usize) -> (usize,usize) {
 /// Works for either 5.25 inch (two pairs) or 3.5 inch (one pair) disks.
 pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Vec<[usize;2]> {
     match *kind {
-        DiskKind::LogicalSectors(names::A2_DOS33_SECS) | names::A2_DOS33_KIND => {
+        DiskKind::LogicalSectors(names::A2_DOS33) | names::A2_DOS33_KIND => {
             let sector1: [usize;8] = [0,13,11,9,7,5,3,1];
             let sector2: [usize;8] = [14,12,10,8,6,4,2,15];
             let [track,sec1,sec2] = [block/8,sector1[block%8],sector2[block%8]];

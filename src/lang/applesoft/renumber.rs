@@ -44,7 +44,7 @@ impl Primaries {
         }
         Err(lang::LanguageError::Syntax)
     }
-    fn get_primary_nums(&mut self,source: &String, parser: &mut tree_sitter::Parser) -> Vec<usize> {
+    fn get_primary_nums(&mut self,source: &str, parser: &mut tree_sitter::Parser) -> Vec<usize> {
         self.nums = Vec::new();
         for line in source.clone().lines() {
             if line.len()==0 {
@@ -61,6 +61,7 @@ impl Primaries {
 pub struct Renumberer {
     line: String,
     renumbered: String,
+    last_end_point: Option<tree_sitter::Point>,
     map: HashMap<usize,usize>
 }
 
@@ -77,14 +78,15 @@ impl Visit for Renumberer {
                         let mut fmt_num = String::from(" ").repeat(leading);
                         fmt_num += &new_num.to_string();
                         fmt_num += &String::from(" ").repeat(trailing);
-                        self.renumbered += &fmt_num;
+                        self.concat(&fmt_num,&curs.node());
                     } else {
-                        self.renumbered += &txt;
+                        self.concat(&txt,&curs.node());
                     }
                 }
             },
             _ => if curs.node().child_count()==0 {
-                self.renumbered += &lang::node_text(curs.node(),&self.line);
+                let txt = lang::node_text(curs.node(),&self.line);
+                self.concat(&txt,&curs.node());
             }
         };
         lang::WalkerChoice::GotoChild
@@ -96,20 +98,31 @@ impl Renumberer {
         Self {
             line: String::new(),
             renumbered: String::new(),
+            last_end_point: None,
             map: HashMap::new()
         }
+    }
+    fn concat(&mut self,item: &str,node: &tree_sitter::Node) {
+        // keep spaces the parser may have thrown out
+        if let Some(end) = self.last_end_point {
+            if node.start_position().column>end.column {
+                self.renumbered += &" ".repeat(node.start_position().column-end.column);
+            }
+        }
+        self.renumbered += item;
+        self.last_end_point = Some(node.end_position());
     }
     /// Renumber all lines with number >= beg && number < end, as [start,start+step,...].
     /// If update_refs, update line number references globally (otherwise not at all).
     /// This function assumes the existing numbering is valid.
-    pub fn renumber(&mut self,source: String, beg: usize, end: usize, first: usize, step: usize) 
+    pub fn renumber(&mut self,source: &str, beg: usize, end: usize, first: usize, step: usize) 
     -> Result<String,Box<dyn std::error::Error>> {
         self.renumbered = String::new();
         self.map = HashMap::new();
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
         let mut primary_finder = Primaries::new();
-		let primaries = primary_finder.get_primary_nums(&source, &mut parser);
+		let primaries = primary_finder.get_primary_nums(source, &mut parser);
 		// setup the mapping from old to new line numbers
         let mut curr = first;
 		for i in 0..primaries.len() {

@@ -45,7 +45,8 @@ fn format() {
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
     disk.init(254,true,18,35,16);
-    disk.compare(&Path::new("tests").join("dos33-boot.do"),&disk.standardize(0));
+    let ignore = disk.standardize(0);
+    disk.compare(&Path::new("tests").join("dos33-boot.do"),&ignore);
 }
 
 #[test]
@@ -53,7 +54,7 @@ fn read_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos33-smallfiles.dsk")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
 
     // check the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -120,7 +121,7 @@ fn read_big() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, large binary, and two sparse text files
     let img = std::fs::read(&Path::new("tests").join("dos33-bigfiles.do")).expect("failed to read test image file");
-    let emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program
@@ -228,7 +229,7 @@ fn read_big_woz1() {
 
     let buf = Path::new("tests").join("dos33-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
-    let disk = a2kit::create_fs_from_file(woz1_path).expect("could not get image");
+    let mut disk = a2kit::create_fs_from_file(woz1_path).expect("could not get image");
     let mut ignore = disk.standardize(2);
     ignore_boot_tracks(&mut ignore);
     a2kit::fs::add_ignorable_offsets(&mut ignore, Chunk::DO([18,12]), vec![243]);

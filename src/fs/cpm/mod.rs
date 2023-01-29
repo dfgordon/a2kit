@@ -25,7 +25,7 @@ mod directory;
 
 use colored::*;
 use chrono::{Timelike,Duration};
-use std::collections::HashMap;
+use std::collections::{HashSet,HashMap};
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
@@ -86,7 +86,29 @@ fn is_name_valid(s: &str) -> bool {
     true
 }
 
+/// put the filename bytes as an ASCII string, result can be tested for validity
+/// with `is_name_valid`
 fn file_name_to_string(name: [u8;8],typ: [u8;3]) -> String {
+    // in CP/M high bits are explicitly not part of the name
+    let base: Vec<u8> = name.iter().map(|x| x & 0x7f).collect();
+    let ext: Vec<u8> = typ.iter().map(|x| x & 0x7f).collect();
+    [
+        &String::from_utf8(base).expect("unreachable").trim_end(),
+        ".",
+        &String::from_utf8(ext).expect("unreachable").trim_end(),
+    ].concat()
+}
+
+fn fx_to_string(fx: &Extent) -> String {
+    file_name_to_string(fx.name,fx.typ)
+}
+
+fn lx_to_string(lx: &Label) -> String {
+    file_name_to_string(lx.name, lx.typ)
+}
+
+/// put the file name bytes as an ASCII string with hex escapes
+fn file_name_to_string_escaped(name: [u8;8],typ: [u8;3]) -> String {
     // in CP/M high bits are explicitly not part of the name
     let base: Vec<u8> = name.iter().map(|x| x & 0x7f).collect();
     let ext: Vec<u8> = typ.iter().map(|x| x & 0x7f).collect();
@@ -97,12 +119,12 @@ fn file_name_to_string(name: [u8;8],typ: [u8;3]) -> String {
     ].concat()
 }
 
-fn fx_to_string(fx: &Extent) -> String {
-    file_name_to_string(fx.name,fx.typ)
+fn fx_to_string_escaped(fx: &Extent) -> String {
+    file_name_to_string_escaped(fx.name,fx.typ)
 }
 
-fn lx_to_string(lx: &Label) -> String {
-    file_name_to_string(lx.name, lx.typ)
+fn lx_to_string_escaped(lx: &Label) -> String {
+    file_name_to_string_escaped(lx.name, lx.typ)
 }
 
 fn string_to_file_name(s: &str) -> ([u8;8],[u8;3]) {
@@ -185,10 +207,12 @@ fn split_user_filename(xname: &str) -> Result<(u8,String),Box<dyn std::error::Er
 
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
-fn get_directory(img: &Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> Option<Directory> {
+fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> Option<Directory> {
     if dpb.disk_capacity() != img.byte_capacity() {
         debug!("size mismatch: DPB has {}, img has {}",dpb.disk_capacity(),img.byte_capacity());
         return None;
+    } else {
+        debug!("size matched: DPB and img both have {}",dpb.disk_capacity());
     }
     let mut buf: Vec<u8> = Vec::new();
     for iblock in 0..dpb.dir_blocks() {
@@ -211,7 +235,7 @@ fn build_files(dir: &Directory,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> Res
     let mut req_actions = 0;
     let mut num_actions = 0;
     for i in 0..dir.num_entries() {
-        if  dir.get_type(&Ptr::ExtentEntry(i))==ExtentType::Unknown {
+        if dir.get_type(&Ptr::ExtentEntry(i))==ExtentType::Unknown {
             debug!("unknown extent type in entry {}",i);
             return Err(Error::BadFormat);
         }
@@ -220,32 +244,42 @@ fn build_files(dir: &Directory,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> Res
                 debug!("unexpected high bits in file name");
                 return Err(Error::BadFormat);
             }
-            if fx.get_data_ptr().unwrap() >= MAX_LOGICAL_EXTENTS[cpm_vers[0] as usize] {
+            if fx.get_data_ptr().unwrap() >= MAX_LOGICAL_EXTENTS[cpm_vers[0] as usize - 1] {
                 debug!("index of extent too large ({})",fx.get_data_ptr().unwrap());
                 return Err(Error::BadFormat);
             }
             if fx.user<USER_END {
-                trace!("found file {}:{}",fx.user,fx_to_string(&fx));
+                trace!("found file {}:{}",fx.user,fx_to_string_escaped(&fx));
                 req_actions += 1;
             }
         }
     }
-    // make as many passes as there could be extents per file
-    let max_extents = MAX_LOGICAL_EXTENTS[cpm_vers[0] as usize] / (dpb.exm as usize + 1);
-    for x_count in 0..max_extents {
+    // check filenames; allow a few illegal ones
+    let mut bad_names = 0;
+    for dir_idx in 0..dir.num_entries() {
+        if let Some(fx) = dir.get_file(&Ptr::ExtentEntry(dir_idx)) {
+            if !is_name_valid(&fx_to_string(&fx)) {
+                bad_names += 1;
+            }
+            if bad_names>3 {
+                debug!("found {} bad filenames, aborting",bad_names);
+                return Err(Error::BadFormat);
+            }
+        }
+    }
+    // Make as many passes as there could be logical extents per file (simple minded sorting).
+    // We have to assume the worst case, that only 1 logical extent per extent is utilized.
+    // For efficiency, we break out of the loop as soon as all actions are accounted for.
+    // This allows for possibility of extent indices out of order - do we need to do this?
+    for lx_count in 0..MAX_LOGICAL_EXTENTS[cpm_vers[0] as usize - 1] {
         for dir_idx in 0..dir.num_entries() {
             if let Some(fx) = dir.get_file(&Ptr::ExtentEntry(dir_idx)) {
-                let lx_count = x_count*(dpb.exm as usize + 1);
                 if fx.user<USER_END && lx_count==fx.get_data_ptr().unwrap() {
                     let mut pointers: Vec<Ptr> = Vec::new();
-                    let fname = fx.user.to_string() + ":" + &fx_to_string(&fx);
-                    trace!("processing extent {} of file {}",x_count,fname);
+                    let fname = fx.user.to_string() + ":" + &fx_to_string_escaped(&fx);
+                    trace!("processing extent index {} of file {}",lx_count,fname);
                     if let Some(buf) = ans.get(&fname) {
                         pointers.append(&mut buf.clone());
-                    }
-                    if pointers.len()!=x_count {
-                        debug!("{} has {} pointers, but extent count is {}",fname,pointers.len(),x_count);
-                        return Err(Error::BadFormat);
                     }
                     for i in fx.get_block_list(dpb) {
                         if i as usize >= dpb.user_blocks() {
@@ -269,8 +303,7 @@ fn build_files(dir: &Directory,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> Res
 
 /// The primary interface for disk operations.
 /// The "Disk Parameter Block" that is provided upon creation
-/// is in 1-to-1 correspondence with the structure that CP/M
-/// maintains in its BIOS (or generates somehow)
+/// is in correspondence with what would be stored in BIOS.
 pub struct Disk
 {
     cpm_vers: [u8;3],
@@ -309,7 +342,7 @@ impl Disk
         }
     }
     /// Test an image for the CP/M file system.
-    pub fn test_img(img: &Box<dyn img::DiskImage>,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> bool {
+    pub fn test_img(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> bool {
         // test the volume directory header
         if let Some(directory) = get_directory(img,dpb) {
             if let Err(_e) = build_files(&directory,dpb,cpm_vers) {
@@ -321,8 +354,8 @@ impl Disk
         debug!("CP/M directory was not readable");
         return false;
     }
-    fn get_directory(&self) -> Directory {
-        return get_directory(&self.img,&self.dpb).expect("directory broken");
+    fn get_directory(&mut self) -> Directory {
+        return get_directory(&mut self.img,&self.dpb).expect("directory broken");
     }
     fn save_directory(&mut self,dir: &Directory) {
         let buf = dir.to_bytes();
@@ -331,7 +364,7 @@ impl Disk
         }
     }
     fn is_block_free(&self,iblock: usize,directory: &Directory) -> bool {
-        if iblock < self.dpb.dir_blocks() || iblock >= self.dpb.user_blocks() {
+        if self.dpb.is_reserved(iblock) || iblock >= self.dpb.user_blocks() {
             return false;
         }
         for idx in 0..self.dpb.dir_entries() {
@@ -347,7 +380,7 @@ impl Disk
     }
     /// number of blocks available for file data
     fn num_free_blocks(&self,dir: &Directory) -> u16 {
-        let mut used: usize = self.dpb.dir_blocks();
+        let mut used: usize = self.dpb.reserved_blocks();
         for idx in 0..self.dpb.dir_entries() {
             if let Some(fx) = dir.get_file(&Ptr::ExtentEntry(idx)) {
                 for ptr in fx.get_block_list(&self.dpb) {
@@ -382,7 +415,7 @@ impl Disk
     }
     /// Read a block of data into buffer `data` starting at `offset` within the buffer.
     /// Will read as many bytes as will fit in the buffer starting at `offset`.
-    fn read_block(&self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
+    fn read_block(&mut self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
         let bytes = self.dpb.block_size() as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read block"),
@@ -415,10 +448,9 @@ impl Disk
         self.img.write_chunk(Chunk::CPM((iblock,self.dpb.bsh,self.dpb.off)), &data[offset..offset+actual_len].to_vec()).
             expect("write failed");
     }
-    fn get_available_block(&self) -> Option<u16> {
-        let directory = self.get_directory();
+    fn get_available_block(&mut self,dir: &Directory) -> Option<u16> {
         for block in 0..self.dpb.user_blocks() {
-            if self.is_block_free(block,&directory) {
+            if self.is_block_free(block,&dir) {
                 return Some(block as u16);
             }
         }
@@ -461,14 +493,15 @@ impl Disk
         }
         return None;
     }
-    /// Read any file into the sparse file format. Use `FileImage::sequence` to make the result sequential.
-    fn read_file(&self,name: &str,user: u8) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    /// Read any file into a file image. Use `FileImage::sequence` to make the result sequential.
+    fn read_file(&mut self,name: &str,user: u8) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         let dir = self.get_directory();
         let files = build_files(&dir, &self.dpb, self.cpm_vers)?;
         if let Some(pointers) = self.get_file_metadata(&files,name,user) {
             let mut ans = Disk::new_fimg(self.dpb.block_size());
             let mut buf = vec![0;self.dpb.block_size()];
-            let mut count = 0;
+            let mut block_count = 0;
+            let mut prev_lx_count = 0;
             for meta in pointers {
                 if let Some(fx) = dir.get_file(&meta) {
                     // For CP/M the access info is encoded in the 8+3 filename.
@@ -477,7 +510,18 @@ impl Disk
                     // The following metadata is redundantly extracted from every extent entry
                     ans.fs_type = vec![fx.typ[0],fx.typ[1],fx.typ[2]];
                     ans.access = [fx.name.to_vec(),fx.typ.to_vec()].concat();
-                    ans.eof = u32::to_le_bytes(fx.get_eof(&self.dpb) as u32).to_vec();
+                    ans.eof = u32::to_le_bytes(fx.get_eof() as u32).to_vec();
+                    // Add any prior holes by adding to the block count, and check ordering
+                    let curr_lx_count = fx.get_data_ptr().unwrap() + 1;
+                    if curr_lx_count == prev_lx_count {
+                        error!("repeated extent index");
+                        return Err(Box::new(Error::BadFormat));
+                    }
+                    let lx_lower_bound = (curr_lx_count - 1) & (usize::MAX ^ self.dpb.exm as usize);
+                    if lx_lower_bound < prev_lx_count {
+                        panic!("unreachable: extents were not sorted");
+                    }
+                    block_count += (lx_lower_bound - prev_lx_count) * LOGICAL_EXTENT_SIZE / self.dpb.block_size();
                     // Get the data
                     for iblock in fx.get_block_list(&self.dpb) {
                         if iblock as usize >= self.dpb.user_blocks() {
@@ -485,19 +529,55 @@ impl Disk
                             return Err(Box::new(Error::ReadError));
                         }
                         if iblock>0 {
-                            debug!("read user block {}",iblock);
+                            debug!("read block {}",iblock);
                             self.read_block(&mut buf, iblock as usize, 0);
-                            ans.chunks.insert(count,buf.clone());
+                            ans.chunks.insert(block_count,buf.clone());
                         }
-                        count += 1;
+                        block_count += 1;
                     }
+                    prev_lx_count = curr_lx_count;
                 }
             }
             return Ok(ans);
         }
         return Err(Box::new(Error::FileNotFound));
     }
-    /// Write any file using the sparse file format.  Use `FileImage::desequence` to convert sequential data.
+    /// Used to create extents as a file is being written
+    fn open_extent(&self,name: &str,user: u8,fimg: &super::FileImage,dir: &Directory) -> (Ptr,Option<Extent>) {
+        // First sort out filename and access
+        let (base,typ) = string_to_file_name(name);
+        let img_typ = fimg.fs_type.clone();
+        if typ[0]!=img_typ[0] || typ[1]!=img_typ[1] || typ[2]!=img_typ[2] {
+            warn!("CP/M file image type and extension are inconsistent");
+        }
+        let (flgs1,flgs2) = match fimg.access.len() {
+            11 => (fimg.access[0..8].to_vec(),fimg.access[8..11].to_vec()),
+            _ => {
+                warn!("CP/M file image has bad access field (ignoring)");
+                (vec![0;8],vec![0;3])
+            }
+        };
+        let mut fx = Extent::new();
+        fx.set_name(base,typ);
+        fx.set_flags(flgs1.clone().try_into().expect("unreachable"),flgs2.clone().try_into().expect("unreachable"));
+        fx.user = user;
+        let entry_idx = self.get_available_extent(&dir).unwrap();
+        return (Ptr::ExtentEntry(entry_idx),Some(fx));
+    }
+    /// Update extent data and save to directory buffer
+    fn close_extent(&self,entry_ptr: &Ptr,fx: &mut Extent,dir: &mut Directory,lx_count: usize,is_last: bool,fimg: &super::FileImage) {
+        trace!("close extent with index {}",lx_count-1);
+        trace!("block pointers {:?}",fx.block_list);
+        fx.set_data_ptr(Ptr::ExtentData(lx_count-1));
+        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        let mut remainder = eof % self.dpb.extent_capacity();
+        if (is_last && eof>0) || (remainder==0 && eof>0) {
+            remainder = self.dpb.extent_capacity();
+        }
+        fx.set_eof(remainder,self.cpm_vers);
+        dir.set_file(entry_ptr,fx);
+    }
+    /// Write any file from a file image.  Use `FileImage::desequence` to convert sequential data.
     fn write_file(&mut self,name: &str, user: u8,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         if !is_name_valid(name) {
             return Err(Box::new(Error::BadFormat));
@@ -511,93 +591,94 @@ impl Disk
                 return Err(Box::new(Error::WriteError));
             }
         }
-        if pointers==None {
-            // this is a new file
-            // we do not write anything unless there is room
-            // empty files are permitted
-            let data_blocks = fimg.chunks.len();
-            let mut extents = fimg.end() * self.dpb.block_size() / self.dpb.extent_capacity();
-            if (fimg.end() * self.dpb.block_size()) % self.dpb.extent_capacity() > 0 {
-                extents += 1;
-            }
-            // CP/M allows us to create an empty file; it uses an entry, but no data blocks are allocated.
-            if extents==0 {
-                extents = 1;
-            }
-            debug!("file requires {} data blocks and {} extents",data_blocks,extents);
-            if self.num_free_blocks(&dir) as usize >= data_blocks {
-                if self.num_free_extents(&dir) >= extents {
-                    // sort out filename and access
-                    let (base,typ) = string_to_file_name(name);
-                    let img_typ = fimg.fs_type.clone();
-                    if typ[0]!=img_typ[0] || typ[1]!=img_typ[1] || typ[2]!=img_typ[2] {
-                        warn!("CP/M file image type and extension are inconsistent");
-                    }
-                    let (flgs1,flgs2) = match fimg.access.len() {
-                        11 => (fimg.access[0..8].to_vec(),fimg.access[8..11].to_vec()),
-                        _ => {
-                            warn!("CP/M file image has bad access field (ignoring)");
-                            (vec![0;8],vec![0;3])
-                        }
-                    };
-                    // closure to create an extent entry
-                    let create_x = |disk: &Disk,dir: &Directory,lx_count: &mut usize,is_last: bool| -> (Ptr,Extent) {
-                        trace!("create new extent with index {}",*lx_count);
-                        let mut fx = Extent::new();
-                        fx.set_name(base,typ);
-                        fx.set_flags(flgs1.clone().try_into().expect("unreachable"),flgs2.clone().try_into().expect("unreachable"));
-                        fx.user = user;
-                        fx.set_data_ptr(Ptr::ExtentData(*lx_count));
-                        *lx_count += disk.dpb.exm as usize + 1;
-                        if is_last {
-                            let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-                            let mut remainder = eof % disk.dpb.extent_capacity();
-                            if remainder==0 && eof>0 {
-                                remainder = disk.dpb.extent_capacity();
-                            }
-                            fx.set_eof(remainder,disk.cpm_vers);
-                        } else {
-                            fx.set_eof(disk.dpb.extent_capacity(),disk.cpm_vers);
-                        }
-                        let entry_idx = disk.get_available_extent(&dir).unwrap();
-                        return (Ptr::ExtentEntry(entry_idx),fx);
-                    };
-                    // create at least one extent
-                    let mut lx_count = 0; // 16K logical extent count
-                    let (mut ptr,mut fx) = create_x(&self,&dir,&mut lx_count,fimg.end()<2);
-                    dir.set_file(&ptr,&fx);
-                    // save blocks (including holes) creating new extents as needed
-                    for i in 0..fimg.end() {
-                        let n = self.dpb.ptr_size(); // expect 1 or 2
-                        let block_idx = i % (16/n); // next block pointer to be used
-                        if block_idx==0 && i!=0 {
-                            (ptr,fx) = create_x(&self,&dir,&mut lx_count,i==fimg.end()-1);
-                        }
-                        if fimg.chunks.contains_key(&i) {
-                            trace!("write data block {}",block_idx);
-                            let iblock = self.get_available_block().unwrap();
-                            let block_ptr = u16::to_le_bytes(iblock);
-                            for byte in 0..n {
-                                fx.block_list[n*block_idx+byte] = block_ptr[byte];
-                            }
-                            self.write_block(&fimg.chunks[&i],iblock as usize,0);
-                            dir.set_file(&ptr,&fx);
-                        }
-                    }
-                    // save the directory changes
-                    self.save_directory(&dir);
-                    return Ok(0);
-                }
-                error!("Required {} directory extents not available",extents);
-                return Err(Box::new(Error::DirectoryFull));
-            } else {
-                error!("not enough space");
-                return Err(Box::new(Error::DiskFull));
-            }
-        } else {
+        if pointers!=None {
             error!("overwriting is not allowed");
             return Err(Box::new(Error::FileExists));
         }
+        // this is a new file
+        // first see if there is enough room for it, if not we abort
+        let data_blocks = fimg.chunks.len();
+        let block_ptr_slots = fimg.end();
+        let slots_per_extent = self.dpb.extent_capacity() / self.dpb.block_size();
+        let mut max_extents_needed = block_ptr_slots / slots_per_extent;
+        if block_ptr_slots % slots_per_extent > 0 {
+            max_extents_needed += 1;
+        }
+        let mut extents = 0;
+        for i in 0..max_extents_needed {
+            for slot in i*slots_per_extent..(i+1)*slots_per_extent {
+                if fimg.chunks.contains_key(&slot) {
+                    extents += 1;
+                    break;
+                }
+            }
+        }
+        // CP/M allows us to create an empty file; it uses an entry, but no data blocks are allocated.
+        // So always ask for 1 extent.
+        if extents==0 {
+            extents = 1;
+        }
+        debug!("file requires {} data blocks and {} extents",data_blocks,extents);
+        debug!("{} data blocks and {} extents are available",self.num_free_blocks(&dir),self.num_free_extents(&dir));
+        if (self.num_free_blocks(&dir) as usize) < data_blocks {
+            return Err(Box::new(Error::DiskFull));
+        }
+        if self.num_free_extents(&dir) < extents {
+            return Err(Box::new(Error::DirectoryFull));
+        }
+        // All checks passed.
+        // Save blocks (or mark a hole) creating new extents as needed.
+        // Extents that are entirely filled with holes are not created.
+        let mut maybe_fx: Option<Extent> = None;
+        let mut entry_ptr: Ptr = Ptr::ExtentEntry(0);
+        let lx_per_x = self.dpb.exm as usize + 1;
+        let slots_per_lx = slots_per_extent / lx_per_x;
+        let mut lx_count_tot = 0;
+        let mut x_created_count = 0;
+        for x in 0..extents {
+            // loop over 16K logical extents
+            debug!("write physical extent {}",x);
+            let mut lx_used_in_x = 0;
+            for lx in 0..lx_per_x {
+                for loc_slot in 0..slots_per_lx {
+                    let glob_slot = x*slots_per_extent + lx*slots_per_lx + loc_slot;
+                    if fimg.chunks.contains_key(&glob_slot) {
+                        let iblock = self.get_available_block(&dir).unwrap();
+                        trace!("map logical extent {} slot {} to block {}",lx,loc_slot,iblock);
+                        // if there is no extent yet create it
+                        if maybe_fx==None {
+                            (entry_ptr,maybe_fx) = self.open_extent(name,user,fimg,&dir);
+                            lx_used_in_x += 1;
+                        }
+                        if let Some(fx) = maybe_fx.as_mut() {
+                            fx.set_block_ptr(loc_slot, lx, iblock, &self.dpb);
+                            dir.set_file(&entry_ptr, &fx);
+                            self.write_block(&fimg.chunks[&glob_slot], iblock as usize, 0);
+                        }
+                    }
+                }
+            }
+            // if not the last extent, consider all logical extents used
+            if x+1 < extents {
+                lx_used_in_x = lx_per_x;
+            }
+            debug!("extent used {} logical extents",lx_used_in_x);
+            // update totals and save the extent to the directory buffer
+            lx_count_tot += lx_used_in_x;
+            if let Some(fx) = maybe_fx.as_mut() {
+                self.close_extent(&entry_ptr, fx, &mut dir, lx_count_tot, x+1 < extents, &fimg);
+                maybe_fx = None;
+                x_created_count += 1;
+            }
+        }
+        // if the file is still empty create an empty extent
+        if x_created_count==0 {
+            (entry_ptr,maybe_fx) = self.open_extent(name,user,fimg,&dir);
+            self.close_extent(&entry_ptr,&mut maybe_fx.unwrap(),&mut dir,1,true,&fimg);
+        }
+        // save the directory changes
+        self.save_directory(&dir);
+        return Ok(0);
     }
     /// Modify a file, optionally rename, retype, change access flags.
     /// The access array has this code: negative=set high bit low, 0=leave high bit alone, positive=set high bit high.
@@ -662,56 +743,54 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&mut self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let dir = self.get_directory();
         for i in 0..dir.num_entries() {
             if let Some(label) = dir.get_label(&Ptr::ExtentEntry(i)) {
                 println!();
-                println!("{}",lx_to_string(&label));
+                println!("{}",lx_to_string_escaped(&label));
             }
         }
         let mut user_count = 0;
         let mut total_count = 0;
         for user in 0..USER_END {
             let mut count = 0;
+            let mut file_set: HashSet<Vec<u8>> = HashSet::new();
             for i in 0..dir.num_entries() {
                 if let Some(fx) = dir.get_file(&Ptr::ExtentEntry(i)) {
-                    match (fx.user,fx.get_data_ptr()) {
-                        (u,Ptr::ExtentData(0)) if u==user => {
-                            if count==0 {
-                                user_count += 1;
-                                println!();
-                                println!("A>USER {}",user);
-                                println!("A>DIR");
-                            }
-                            let full_name = fx_to_string(&fx);
-                            let mut nm = full_name.split(".");
-                            let base = match nm.next() {
-                                Some(x) => x,
-                                None => ""
-                            };
-                            let ext = match nm.next() {
-                                Some(x) => x,
-                                None => ""
-                            };
-                            match count % 4 {
-                                0 => { println!(); print!("A") },
-                                _ => { print!(" ") },
-                            }
-                            match fx.get_flags() {
-                                // R/O directory file
-                                [_,_,_,_,_,_,_,_,0x80,0x00,_] => print!(": {:8} {:3}",base.red(),ext.red()),
-                                // R/W system file (hidden)
-                                [_,_,_,_,_,_,_,_,0x00,0x80,_] => print!(": {:8} {:3}",base.dimmed(),ext.dimmed()),
-                                // R/O system file (hidden)
-                                [_,_,_,_,_,_,_,_,0x80,0x80,_] => print!(": {:8} {:3}",base.dimmed().red(),ext.dimmed().red()),
-                                // normal
-                                _ => print!(": {:8} {:3}",base,ext),
-                            }
-                            count += 1;
-                            total_count += 1;
-                        },
-                        _ => {}
+                    if fx.user==user && file_set.insert([vec![user],fx.name.to_vec(),fx.typ.to_vec()].concat()) {
+                        if count==0 {
+                            user_count += 1;
+                            println!();
+                            println!("A>USER {}",user);
+                            println!("A>DIR");
+                        }
+                        let full_name = fx_to_string_escaped(&fx);
+                        let mut nm = full_name.split(".");
+                        let base = match nm.next() {
+                            Some(x) => x,
+                            None => ""
+                        };
+                        let ext = match nm.next() {
+                            Some(x) => x,
+                            None => ""
+                        };
+                        match count % 4 {
+                            0 => { println!(); print!("A") },
+                            _ => { print!(" ") },
+                        }
+                        match fx.get_flags() {
+                            // R/O directory file
+                            [_,_,_,_,_,_,_,_,0x80,0x00,_] => print!(": {:8} {:3}",base.red(),ext.red()),
+                            // R/W system file (hidden)
+                            [_,_,_,_,_,_,_,_,0x00,0x80,_] => print!(": {:8} {:3}",base.dimmed(),ext.dimmed()),
+                            // R/O system file (hidden)
+                            [_,_,_,_,_,_,_,_,0x80,0x80,_] => print!(": {:8} {:3}",base.dimmed().red(),ext.dimmed().red()),
+                            // normal
+                            _ => print!(": {:8} {:3}",base,ext),
+                        }
+                        count += 1;
+                        total_count += 1;
                     }
                 }
             }
@@ -778,7 +857,7 @@ impl super::DiskFS for Disk {
             return Err(Box::new(Error::Select));
         }
     }
-    fn bload(&self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
             Ok(sd) => Ok((0,sd.sequence())),
@@ -796,7 +875,7 @@ impl super::DiskFS for Disk {
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name,user,&fimg);
     }
-    fn load(&self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
@@ -804,7 +883,7 @@ impl super::DiskFS for Disk {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn read_text(&self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
             Ok(sd) => Ok((0,sd.sequence())),
@@ -818,7 +897,7 @@ impl super::DiskFS for Disk {
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name, user, &fimg);
     }
-    fn read_records(&self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
+    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
@@ -826,7 +905,7 @@ impl super::DiskFS for Disk {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
                 match self.img.read_chunk(Chunk::CPM((block,self.dpb.bsh,self.dpb.off))) {
@@ -851,12 +930,16 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,xname: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&mut self,xname: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
         return self.read_file(&name,user);
     }
     fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
         let (user,name) = split_user_filename(xname)?;
+        if fimg.file_system!="cpm" {
+            error!("cannot write {} file image to cpm",fimg.file_system);
+            return Err(Box::new(Error::Select));
+        }
         if fimg.chunk_len!=self.dpb.block_size() {
             error!("chunk length {} is incompatible with the DPB for this CP/M",fimg.chunk_len);
             return Err(Box::new(Error::Select));
@@ -874,10 +957,10 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+    fn standardize(&mut self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         return HashMap::new();
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         for block in 0..self.dpb.user_blocks() {
             let addr = Chunk::CPM((block,self.dpb.bsh,self.dpb.off));

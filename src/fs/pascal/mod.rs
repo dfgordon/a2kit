@@ -106,7 +106,7 @@ fn string_to_vol_name(s: &str) -> [u8;7] {
 
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
-fn get_directory(img: &Box<dyn img::DiskImage>) -> Option<Directory> {
+fn get_directory(img: &mut Box<dyn img::DiskImage>) -> Option<Directory> {
     let mut ans = Directory::new();
     if let Ok(mut buf) = img.read_chunk(Chunk::PO(VOL_HEADER_BLOCK)) {
         ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE].to_vec());
@@ -172,7 +172,7 @@ impl Disk
         }
     }
     /// Test an image for the Pascal file system.
-    pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
+    pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         // test the volume directory header
         if let Some(directory) = get_directory(img) {
             let beg0 = u16::from_le_bytes(directory.header.begin_block);
@@ -230,8 +230,8 @@ impl Disk
         debug!("pascal directory was not readable");
         return false;
     }
-    fn get_directory(&self) -> Directory {
-        return get_directory(&self.img).expect("directory broken");
+    fn get_directory(&mut self) -> Directory {
+        return get_directory(&mut self.img).expect("directory broken");
     }
     fn save_directory(&mut self,dir: &Directory) {
         let beg = VOL_HEADER_BLOCK as u16;
@@ -255,7 +255,7 @@ impl Disk
         return true;
     }
     /// Return tuple with (free blocks,largest contiguous span of blocks)
-    fn num_free_blocks(&self) -> (u16,u16) {
+    fn num_free_blocks(&mut self) -> (u16,u16) {
         let directory = self.get_directory();
         let mut free: u16 = 0;
         let mut count: u16 = 0;
@@ -278,7 +278,7 @@ impl Disk
     }
     /// Read a block of data into buffer `data` starting at `offset` within the buffer.
     /// Will read as many bytes as will fit in the buffer starting at `offset`.
-    fn read_block(&self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
+    fn read_block(&mut self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
         let bytes = 512;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read block"),
@@ -312,7 +312,7 @@ impl Disk
             expect("write failed");
     }
     /// Try to find `num` contiguous free blocks.  If found return the first block index.
-    fn get_available_blocks(&self,num: u16) -> Option<u16> {
+    fn get_available_blocks(&mut self,num: u16) -> Option<u16> {
         let directory = self.get_directory();
         let mut start = 0;
         let mut count = 0;
@@ -379,7 +379,7 @@ impl Disk
 
     /// Scan the directory to find the named file and return (Option<entry index>, directory).
     /// N.b. Pascal FS always keeps files in contiguous blocks.
-    fn get_file_entry(&self,name: &str) -> (Option<usize>,Directory) {
+    fn get_file_entry(&mut self,name: &str) -> (Option<usize>,Directory) {
         let directory = self.get_directory();
         let fname = string_to_file_name(name);
         for i in 0..u16::from_le_bytes(directory.header.num_files) {
@@ -397,7 +397,7 @@ impl Disk
     /// Read any file into the sparse file format.  The fact that the Pascal FS does not
     /// have sparse files presents no difficulty, since `FileImage` is quite general.
     /// As usual we can use `FileImage::sequence` to make the result sequential.
-    fn read_file(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_file(&mut self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         if let (Some(idx),dir) = self.get_file_entry(name) {
             let entry = &dir.entries[idx];
             let mut ans = Disk::new_fimg(BLOCK_SIZE);
@@ -503,7 +503,7 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&mut self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let dir = self.get_directory();
         let total = dir.total_blocks();
@@ -571,7 +571,7 @@ impl super::DiskFS for Disk {
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> Result<(),Box<dyn std::error::Error>> {
         return self.modify(name, None, Some(new_type));
     }
-    fn bload(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
             Ok(sd) => Ok((0,sd.sequence())),
             Err(e) => Err(e)
@@ -587,7 +587,7 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![FileType::Data as u8,0];
         return self.write_file(name,&fimg);
     }
-    fn load(&self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
@@ -595,7 +595,7 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn read_text(&self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.read_file(name) {
             Ok(sd) => Ok((0,sd.sequence())),
             Err(e) => Err(e)
@@ -605,7 +605,7 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn read_records(&self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
+    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
@@ -613,7 +613,7 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         return Err(Box::new(Error::DevErr));
     }
-    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
                 match self.img.read_chunk(Chunk::PO(block)) {
@@ -638,10 +638,14 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&mut self,name: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         return self.read_file(name);
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.file_system!="a2 pascal" {
+            error!("cannot write {} file image to a2 pascal",fimg.file_system);
+            return Err(Box::new(Error::DevErr));
+        }
         if fimg.chunk_len!=BLOCK_SIZE {
             error!("chunk length {} is incompatible with Pascal",fimg.chunk_len);
             return Err(Box::new(Error::DevErr));
@@ -659,7 +663,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+    fn standardize(&mut self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         // want to ignore dates, these occur at offest 18 and 20 in the header,
         // and at offset 24 in every entry
         let mut ans: HashMap<Chunk,Vec<usize>> = HashMap::new();
@@ -680,7 +684,7 @@ impl super::DiskFS for Disk {
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory();
         for block in 0..dir.total_blocks() {

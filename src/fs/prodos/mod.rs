@@ -24,7 +24,9 @@ use crate::commands::ItemType;
 /// The primary interface for disk operations.
 pub struct Disk {
     img: Box<dyn img::DiskImage>,
-    total_blocks: usize
+    total_blocks: usize,
+    maybe_bitmap: Option<Vec<u8>>,
+    bitmap_blocks: Vec<usize>
 }
 
 /// put a u16 into an index block in the prescribed fashion
@@ -56,13 +58,16 @@ impl Disk {
     /// The image may or may not be formatted.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
         let total_blocks = img.byte_capacity()/512;
-        return Self {
+        Self {
             img,
-            total_blocks
+            total_blocks,
+            /// bitmap buffer is designed to work transparently
+            maybe_bitmap: None,
+            bitmap_blocks: Vec::new()
         }
     }
     /// Test an image for the ProDOS file system.
-    pub fn test_img(img: &Box<dyn img::DiskImage>) -> bool {
+    pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         // test the volume directory header to see if this is ProDOS
         if let Ok(buf) = img.read_chunk(Chunk::PO(2)) {
             let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
@@ -97,39 +102,64 @@ impl Disk {
         debug!("ProDOS volume directory was not readable");
         return false;
     }
+    /// Open buffer if not already present.  Will usually be called indirectly.
+    fn open_bitmap_buffer(&mut self) {
+        if self.maybe_bitmap==None {
+            self.bitmap_blocks = Vec::new();
+            let bitmap_block_count = 1 + self.total_blocks / 4096;
+            let mut buf = [0;512].to_vec();
+            let mut ans = Vec::new();
+            let bptr = u16::from_le_bytes(self.get_vol_header().bitmap_ptr) as usize;
+            for iblock in bptr..bptr+bitmap_block_count {
+                self.read_block(&mut buf,iblock,0);
+                ans.append(&mut buf);
+                self.bitmap_blocks.push(iblock);
+            }
+            self.maybe_bitmap = Some(ans);
+        }
+    }
+    /// Get the buffer, if it doesn't exist it will be opened.
+    fn get_bitmap_buffer(&mut self) -> &mut Vec<u8> {
+        self.open_bitmap_buffer();
+        if let Some(buf) = self.maybe_bitmap.as_mut() {
+            return buf;
+        }
+        panic!("bitmap buffer failed to open");
+    }
+    /// Buffer needs to be written back when an external caller
+    /// asks, directly or indirectly, for the underlying image.
+    fn writeback_bitmap_buffer(&mut self) {
+        let buf = match self.maybe_bitmap.as_ref() {
+            Some(bitmap) => bitmap.clone(),
+            None => return
+        };
+        if self.bitmap_blocks.len()>0 {
+            let first = self.bitmap_blocks[0];
+            let bitmap_block_count = 1 + self.total_blocks / 4096;
+            for iblock in first..first+bitmap_block_count {
+                self.zap_block(&buf,iblock,(iblock-first)*512);
+            }    
+        }
+    }
     fn allocate_block(&mut self,iblock: usize) {
-        let bitmap_ptr = self.get_vol_header().bitmap_ptr;
-        let boff = iblock / 4096; // how many blocks into the map
-        let byte = (iblock - 4096*boff) / 8;
-        let bit = 7 - (iblock - 4096*boff) % 8;
-        let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let mut buf: Vec<u8> = vec![0;512];
-        self.read_block(&mut buf, bptr, 0);
+        let buf = self.get_bitmap_buffer();
+        let byte = iblock / 8;
+        let bit = 7 - iblock % 8;
         buf[byte] &= (1 << bit as u8) ^ u8::MAX;
-        self.zap_block(&buf,bptr,0);
     }
     fn deallocate_block(&mut self,iblock: usize) {
-        let bitmap_ptr = self.get_vol_header().bitmap_ptr;
-        let boff = iblock / 4096; // how many blocks into the map
-        let byte = (iblock - 4096*boff) / 8;
-        let bit = 7 - (iblock - 4096*boff) % 8;
-        let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let mut buf: Vec<u8> = vec![0;512];
-        self.read_block(&mut buf, bptr, 0);
+        let buf = self.get_bitmap_buffer();
+        let byte = iblock / 8;
+        let bit = 7 - iblock % 8;
         buf[byte] |= 1 << bit as u8;
-        self.zap_block(&buf,bptr,0);
     }
-    fn is_block_free(&self,iblock: usize) -> bool {
-        let bitmap_ptr = self.get_vol_header().bitmap_ptr;
-        let boff = iblock / 4096; // how many blocks into the map
-        let byte = (iblock - 4096*boff) / 8;
-        let bit = 7 - (iblock - 4096*boff) % 8;
-        let bptr = u16::from_le_bytes(bitmap_ptr) as usize + boff;
-        let mut buf: Vec<u8> = vec![0;512];
-        self.read_block(&mut buf, bptr, 0);
+    fn is_block_free(&mut self,iblock: usize) -> bool {
+        let buf = self.get_bitmap_buffer();
+        let byte = iblock / 8;
+        let bit = 7 - iblock % 8;
         return (buf[byte] & (1 << bit as u8)) > 0;
     }
-    fn num_free_blocks(&self) -> u16 {
+    fn num_free_blocks(&mut self) -> u16 {
         let mut free: u16 = 0;
         for i in 0..self.total_blocks {
             if self.is_block_free(i) {
@@ -138,13 +168,22 @@ impl Disk {
         }
         free
     }
-    fn read_block(&self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
+    /// Read a block; if it is a bitmap block get it from the buffer.
+    fn read_block(&mut self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
         let bytes = 512;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read block"),
             x if x<=bytes => x,
             _ => bytes
         };
+        if self.bitmap_blocks.contains(&iblock) {
+            let first = self.bitmap_blocks[0];
+            let buf = self.get_bitmap_buffer();
+            for i in 0..actual_len as usize {
+                data[offset + i] = buf[(iblock-first)*512 + i];
+            }
+            return;
+        }
         if let Ok(buf) = self.img.read_chunk(Chunk::PO(iblock)) {
             for i in 0..actual_len as usize {
                 data[offset + i] = buf[i];
@@ -154,7 +193,11 @@ impl Disk {
         }
     }
     /// Write and allocate the block in one step.
+    /// If it is a bitmap block panic; we should only be zapping bitmap blocks.
     fn write_block(&mut self,data: &Vec<u8>, iblock: usize, offset: usize) {
+        if self.bitmap_blocks.contains(&iblock) {
+            panic!("attempt to write bitmap block, zap it instead");
+        }
         self.zap_block(data,iblock,offset);
         self.allocate_block(iblock);
     }
@@ -170,7 +213,7 @@ impl Disk {
         self.img.write_chunk(Chunk::PO(iblock), &data[offset..offset+actual_len].to_vec()).
             expect("write failed");
     }
-    fn get_available_block(&self) -> Option<u16> {
+    fn get_available_block(&mut self) -> Option<u16> {
         for block in 0..self.total_blocks {
             if self.is_block_free(block) {
                 return Some(block as u16);
@@ -192,9 +235,9 @@ impl Disk {
         volume_dir.header.format(self.total_blocks as u16,vol_name,time);
         let first = u16::from_le_bytes(volume_dir.header.bitmap_ptr) as usize;
 
-        // volume key block
+        // zap in the volume key block
         trace!("formatting: volume key");
-        self.write_block(&volume_dir.to_bytes(),VOL_KEY_BLOCK as usize,0);
+        self.zap_block(&volume_dir.to_bytes(),VOL_KEY_BLOCK as usize,0);
 
         // mark all blocks as free
         trace!("formatting: free all");
@@ -231,7 +274,7 @@ impl Disk {
             self.write_block(&this.to_bytes(),b as usize,0);
         }
     }
-    fn get_vol_header(&self) -> VolDirHeader {
+    fn get_vol_header(&mut self) -> VolDirHeader {
         let mut buf: Vec<u8> = vec![0;512];
         self.read_block(&mut buf,VOL_KEY_BLOCK as usize,0);
         let volume_dir = KeyBlock::<VolDirHeader>::from_bytes(&buf);
@@ -239,7 +282,7 @@ impl Disk {
     }
     /// Return the correct trait object assuming this block is a directory block.
     /// May return a key block or an entry block.
-    fn get_directory(&self,iblock: usize) -> Box<dyn Directory> {
+    fn get_directory(&mut self,iblock: usize) -> Box<dyn Directory> {
         let mut buf: Vec<u8> = vec![0;512];
         self.read_block(&mut buf,iblock,0);
         match (iblock==VOL_KEY_BLOCK as usize,buf[0]==0 && buf[1]==0) {
@@ -251,7 +294,7 @@ impl Disk {
     }
     /// Find the key block assuming this block is a directory block, and return the
     /// block pointer and corresponding trait object in a tuple.
-    fn get_key_directory(&self,ptr: u16) -> (u16,Box<dyn Directory>) {
+    fn get_key_directory(&mut self,ptr: u16) -> (u16,Box<dyn Directory>) {
         let mut curr = ptr;
         for _try in 0..100 {
             let test_dir = self.get_directory(curr as usize);
@@ -263,7 +306,7 @@ impl Disk {
         panic!("too many blocks for this directory, disk likely damaged");
     }
     /// Given an entry location get the entry from disk
-    fn read_entry(&self,loc: &EntryLocation) -> Entry {
+    fn read_entry(&mut self,loc: &EntryLocation) -> Entry {
         let dir = self.get_directory(loc.block as usize);
         return dir.get_entry(loc);
     }
@@ -337,7 +380,7 @@ impl Disk {
         panic!("too many blocks for this directory, disk likely damaged");
     }
     // Find specific entry in directory with the given key block
-    fn search_entries(&self,stype: &Vec<StorageType>,name: &String,key_block: u16) -> Option<EntryLocation> {
+    fn search_entries(&mut self,stype: &Vec<StorageType>,name: &String,key_block: u16) -> Option<EntryLocation> {
         let mut curr = key_block;
         for _try in 0..100 {
             let dir = self.get_directory(curr as usize);
@@ -357,7 +400,7 @@ impl Disk {
     }
     /// put path as [volume,subdir,subdir,...,last] where last could be an empty string,
     /// which indicates this is a directory.  If last is not empty, it could be either directory or file.
-    fn normalize_path(&self,path: &str) -> Vec<String> {
+    fn normalize_path(&mut self,path: &str) -> Vec<String> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         let prefix = volume_dir.name();
         let mut path_nodes: Vec<String> = path.split("/").map(|s| s.to_string().to_uppercase()).collect();
@@ -369,7 +412,7 @@ impl Disk {
         return path_nodes;
     }
     /// split the path into the last node (file or directory) and its parent path
-    fn split_path(&self,path: &str) -> Result<[String;2],Error> {
+    fn split_path(&mut self,path: &str) -> Result<[String;2],Error> {
         let mut path_nodes = self.normalize_path(path);
         // if last node is empty, remove it (means we have a directory)
         if path_nodes[path_nodes.len()-1].len()==0 {
@@ -384,7 +427,7 @@ impl Disk {
         let parent_path: String = path_nodes.iter().map(|s| "/".to_string() + s).collect::<Vec<String>>().concat();
         return Ok([parent_path,name]);
     }
-    fn search_volume(&self,file_types: &Vec<StorageType>,path: &str) -> Result<EntryLocation,Error> {
+    fn search_volume(&mut self,file_types: &Vec<StorageType>,path: &str) -> Result<EntryLocation,Error> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         let path_nodes = self.normalize_path(path);
         if &path_nodes[0]!=&volume_dir.name() {
@@ -419,11 +462,11 @@ impl Disk {
         }
         return Err(Error::PathNotFound);
     }
-    fn find_file(&self,path: &str) -> Result<EntryLocation,Error> {
+    fn find_file(&mut self,path: &str) -> Result<EntryLocation,Error> {
         return self.search_volume(&vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree],path);
     }
     /// Find the directory and return the key block pointer
-    fn find_dir_key_block(&self,path: &str) -> Result<u16,Error> {
+    fn find_dir_key_block(&mut self,path: &str) -> Result<u16,Error> {
         let volume_dir = self.get_directory(VOL_KEY_BLOCK as usize);
         if path=="/" || path=="" || path==&("/".to_string()+&volume_dir.name()) {
             return Ok(VOL_KEY_BLOCK);
@@ -435,7 +478,7 @@ impl Disk {
         return Err(Error::PathNotFound);
     }
     /// Read the data referenced by a single index block
-    fn read_index_block(&self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,fimg: &mut super::FileImage,count: &mut usize,eof: &mut usize) {
+    fn read_index_block(&mut self,entry: &Entry,index_ptr: u16,buf: &mut Vec<u8>,fimg: &mut super::FileImage,count: &mut usize,eof: &mut usize) {
         self.read_block(buf,index_ptr as usize,0);
         let index_block = buf.clone();
         for idx in 0..256 {
@@ -497,7 +540,7 @@ impl Disk {
     }
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
-    fn read_file(&self,entry: &Entry) -> super::FileImage {
+    fn read_file(&mut self,entry: &Entry) -> super::FileImage {
         let mut fimg = Disk::new_fimg(512);
         entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
@@ -532,7 +575,7 @@ impl Disk {
         }
     }
     /// Verify that the new name does not already exist
-    fn ok_to_rename(&self,path: &str,new_name: &str) -> Result<(),Error> {
+    fn ok_to_rename(&mut self,path: &str,new_name: &str) -> Result<(),Error> {
         let types = vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree,StorageType::SubDirEntry];
         let [parent_path,_old_name] = self.split_path(path)?;
         if let Ok(key_block) = self.find_dir_key_block(&parent_path) {
@@ -734,7 +777,7 @@ impl Disk {
     }
     /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
     fn modify(&mut self,loc: &EntryLocation,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,
-        maybe_new_type: Option<&str>,maybe_new_aux: Option<u16>) -> Result<(),Box<dyn std::error::Error>> {
+        maybe_new_type: Option<&str>,maybe_new_aux: Option<u16>) -> Result<(),Box<dyn std::error::Error>> {  
         let dir = self.get_directory(loc.block as usize);
         let mut entry = dir.get_entry(&loc);
         if !entry.get_access(Access::Rename) && maybe_new_name!=None {
@@ -773,7 +816,7 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&mut self, path: &str) -> Result<(),Box<dyn std::error::Error>> {
         match self.find_dir_key_block(path) {
             Ok(b) => {
                 let mut dir = self.get_directory(b as usize);
@@ -805,7 +848,7 @@ impl super::DiskFS for Disk {
                 println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,self.total_blocks);
                 println!();
                 Ok(())
-            }
+            },
             Err(e) => Err(Box::new(e))
         }
     }
@@ -827,7 +870,7 @@ impl super::DiskFS for Disk {
                 self.write_block(&subdir.to_bytes(),new_block as usize,0);
                 Ok(())
             },
-            Err(e) => return Err(Box::new(e))
+            Err(e) => Err(Box::new(e))
         }
     }
     fn delete(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>> {
@@ -914,7 +957,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn bload(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -937,7 +980,7 @@ impl super::DiskFS for Disk {
         fimg.aux = u16::to_le_bytes(start_addr).to_vec();
         return self.write_any(path,&fimg);
     }
-    fn load(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -966,7 +1009,7 @@ impl super::DiskFS for Disk {
         }
         return self.write_any(path,&fimg);
     }
-    fn read_text(&self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -984,7 +1027,7 @@ impl super::DiskFS for Disk {
         fimg.access = vec![STD_ACCESS];
         return self.write_any(path,&fimg);
     }
-    fn read_records(&self,path: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
+    fn read_records(&mut self,path: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
         let encoder = Encoder::new(vec![0x0d]);
         match self.find_file(path) {
             Ok(loc) => {
@@ -1009,7 +1052,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(e)
         }
     }
-    fn read_chunk(&self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
         match usize::from_str(num) {
             Ok(block) => {
                 let mut buf: Vec<u8> = vec![0;512];
@@ -1034,7 +1077,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&self,path: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&mut self,path: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc);
@@ -1044,6 +1087,10 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+        if fimg.file_system!="prodos" {
+            error!("cannot write {} file image to prodos",fimg.file_system);
+            return Err(Box::new(Error::IOError));
+        }
         if fimg.chunk_len!=512 {
             error!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
@@ -1065,7 +1112,7 @@ impl super::DiskFS for Disk {
                     Err(e) => Err(Box::new(e))
                 }
             },
-            Err(e) => return Err(Box::new(e))
+            Err(e) => Err(Box::new(e))
         }
     }
     fn decode_text(&self,dat: &Vec<u8>) -> String {
@@ -1079,7 +1126,7 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&self,ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+    fn standardize(&mut self,ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
         let mut ans: HashMap<Chunk,Vec<usize>> = HashMap::new();
         let mut curr = ref_con;
         while curr>0 {
@@ -1100,7 +1147,8 @@ impl super::DiskFS for Disk {
         }
         return ans;
     }
-    fn compare(&self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+        self.writeback_bitmap_buffer();
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         let dir = self.get_directory(VOL_KEY_BLOCK as usize);
         for block in 0..dir.total_blocks().unwrap() {
@@ -1124,6 +1172,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
+        self.writeback_bitmap_buffer();
         &mut self.img
     }
 }

@@ -17,6 +17,8 @@ use crate::img::disk525;
 use crate::img;
 use crate::img::woz::{TMAP_ID,TRKS_ID,INFO_ID,META_ID};
 
+use super::TrackBits;
+
 const TRACK_BYTE_CAPACITY: usize = 6646;
 
 #[derive(DiskStruct)]
@@ -70,7 +72,10 @@ pub struct Woz1 {
     info: Info,
     tmap: TMap,
     trks: Trks,
-    meta: Option<Vec<u8>>
+    meta: Option<Vec<u8>>,
+    // following not part of image file
+    track_obj: Option<Box<dyn TrackBits>>,
+    track_id: u8
 }
 
 impl Header {
@@ -226,7 +231,9 @@ impl Woz1 {
             info: Info::new(),
             tmap: TMap::new(),
             trks: Trks::new(),
-            meta: None
+            meta: None,
+            track_obj: None,
+            track_id: 0
         }
     }
     /// Create the image of a specific kind of disk (panics if unsupported disk kind).
@@ -241,7 +248,9 @@ impl Woz1 {
             info: Info::create(kind),
             tmap: TMap::create(kind),
             trks: Trks::create(vol,kind),
-            meta: None
+            meta: None,
+            track_obj: None,
+            track_id: 0
         }
     }
     /// Get index to the `Trk` structure, searching main track and nearby quarter-tracks.
@@ -268,8 +277,9 @@ impl Woz1 {
     fn get_trk_struct(&self,track: u8) -> Trk {
         return self.trks.tracks[self.get_trk_idx(track)];
     }
-    /// Get the trait object for the track bits.  The nibble format will be
-    /// determined by the image's underlying `DiskKind`.
+    /// Get a trait object for the track bits.  The nibble format will be
+    /// determined by the image's underlying `DiskKind`.  This object has its
+    /// own copy of the track buffer.
     fn get_track_obj(&self,track: u8) -> Box<dyn super::TrackBits> {
         let trk = self.get_trk_struct(track);
         let buf = trk.bits.to_vec();
@@ -287,6 +297,14 @@ impl Woz1 {
         };
         return ans;
     }
+    /// This gets called when we switch tracks during R/W, and when external
+    /// callers ask for the flattened image.
+    fn writeback_track_obj(&mut self) {
+        if let Some(obj) = self.track_obj.as_ref() {
+            let idx = self.get_trk_idx(self.track_id);
+            self.trks.tracks[idx].bits.copy_from_slice(&obj.to_buf());
+        }
+    }
 }
 
 impl img::woz::WozConverter for Woz1 {
@@ -296,12 +314,27 @@ impl img::woz::WozConverter for Woz1 {
     fn num_tracks(&self) -> usize {
         self.trks.num_tracks()
     }
-    fn get_track_obj(&self,track: u8) -> Box<dyn super::TrackBits> {
-        self.get_track_obj(track)
+    fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,img::NibbleError> {
+        if let Some(obj) = self.track_obj.as_mut() {
+            if self.track_id==track {
+                return obj.read_sector(track, sector);
+            }
+        }
+        self.writeback_track_obj();
+        self.track_obj = Some(self.get_track_obj(track));
+        self.track_id = track;
+        return self.track_obj.as_mut().unwrap().read_sector(track, sector);
     }
-    fn update_track(&mut self,track_obj: &mut Box<dyn super::TrackBits>,track: u8) {
-        let idx = self.get_trk_idx(track);
-        self.trks.tracks[idx].bits.copy_from_slice(&track_obj.to_buf());
+    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),img::NibbleError> {
+        if let Some(obj) = self.track_obj.as_mut() {
+            if self.track_id==track {
+                return obj.write_sector(dat, track, sector);
+            }
+        }
+        self.writeback_track_obj();
+        self.track_obj = Some(self.get_track_obj(track));
+        self.track_id = track;
+        return self.track_obj.as_mut().unwrap().write_sector(dat, track, sector);
     }
 }
 
@@ -323,19 +356,23 @@ impl img::DiskImage for Woz1 {
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::WOZ1
     }
+    fn file_extensions(&self) -> Vec<String> {
+        vec!["woz".to_string()]
+    }
     fn kind(&self) -> img::DiskKind {
         self.kind
     }
     fn change_kind(&mut self,kind: img::DiskKind) {
+        self.track_obj = None;
         self.kind = kind;
     }
-    fn read_chunk(&self,addr: crate::fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,addr: crate::fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         super::woz::read_chunk(self, addr)
     }
     fn write_chunk(&mut self, addr: crate::fs::Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
         super::woz::write_chunk(self, addr, dat)
     }
-    fn read_sector(&self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         super::woz::read_sector(self,cyl,head,sec)
     }
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
@@ -374,7 +411,8 @@ impl img::DiskImage for Woz1 {
         }
         return None;
     }
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&mut self) -> Vec<u8> {
+        self.writeback_track_obj();
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.header.to_bytes());
         ans.append(&mut self.info.to_bytes());
@@ -390,12 +428,14 @@ impl img::DiskImage for Woz1 {
         ans[11] = crc[3];
         return ans;
     }
-    fn get_track_buf(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        self.writeback_track_obj();
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
         let track_obj = self.get_track_obj(track_num as u8);
         Ok(track_obj.to_buf())
     }
-    fn get_track_nibbles(&self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+        self.writeback_track_obj();
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
         let mut track_obj = self.get_track_obj(track_num as u8);
         Ok(track_obj.to_nibbles())

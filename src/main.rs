@@ -44,13 +44,25 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     let img_types = ["d13","do","po","woz1","woz2","imd"];
     let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
-    let disk_kinds = ["8in","5.25in","3.5in","3.5in-ss","3.5in-ds","hdmax","5.25in-osborne"];
+    let disk_kinds = [
+        "8in",
+        "8in-trs80",
+        "8in-nabu",
+        "5.25in",
+        "5.25in-kayii",
+        "5.25in-kay4",
+        "5.25in-osb-sd",
+        "5.25in-osb-dd",
+        "3.5in",
+        "3.5in-ss",
+        "3.5in-ds",
+        "hdmax"];
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
     .after_long_help(long_help)
     .subcommand(Command::new("mkdsk")
-        .arg(arg!(-v --volume <VOLUME> "volume name or number"))
+        .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
         .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(img_types))
         .arg(arg!(-o --os <OS> "operating system format").possible_values(os_names))
         .arg(arg!(-b --bootable "make disk bootable").action(ArgAction::SetTrue))
@@ -58,7 +70,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .required(false)
             .default_value("5.25in"))
         .arg(arg!(-d --dimg <PATH> "disk image path to create"))
-        .about("write a blank disk image to stdout"))
+        .about("write a blank disk image to the given path"))
     // .subcommand(Command::new("reimage")
     //     .arg(arg!(-d --dimg <PATH> "path to old disk image"))
     //     .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(img_types))
@@ -161,7 +173,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         };
         if let Some(path_to_img) = cmd.value_of("dimg") {
             return match a2kit::create_fs_from_file(path_to_img) {
-                Ok(disk) => disk.catalog_to_stdout(&path_in_img),
+                Ok(mut disk) => disk.catalog_to_stdout(&path_in_img),
                 Err(e) => Err(e)
             };
         }
@@ -243,7 +255,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             Ok(ItemType::ApplesoftText) => {
                 lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 let mut renumberer = applesoft::renumber::Renumberer::new();
-                let object = renumberer.renumber(program,beg,end,first,step)?;
+                let object = renumberer.renumber(&program,beg,end,first,step)?;
                 println!("{}",&object);
                 Ok(())
             },

@@ -6,12 +6,14 @@
 
 use crate::fs::cpm::types::{DIR_ENTRY_SIZE,LOGICAL_EXTENT_SIZE,RECORD_SIZE};
 use log::debug;
+use std::fmt;
 
 /// The Disk Parameter Block (DPB) was introduced with CP/M v2.
 /// This allows CP/M to work with a variety of disk formats.
 /// The DPB was stored somewhere in the BIOS.
 /// The parameters are interdependent in a complicated way, see `verify` function.
 /// Fields are public, but should be changed by hand only with caution.
+#[derive(PartialEq,Eq,Clone)]
 pub struct DiskParameterBlock {
     /// number of 128-byte records per track
     pub spt: u16,
@@ -42,7 +44,10 @@ pub struct DiskParameterBlock {
     /// Physical record mask, PHM = sector_bytes/128 - 1
     /// Set to 0 if we don't need BDOS to translate.
     /// Requires CP/M v3 or higher.
-    pub phm: u8
+    pub phm: u8,
+    /// capacity in bytes of the reserved tracks
+    /// (a2kit extension useful for heuristics)
+    pub reserved_track_capacity: usize
 }
 
 pub const A2_525: DiskParameterBlock = DiskParameterBlock {
@@ -57,7 +62,8 @@ pub const A2_525: DiskParameterBlock = DiskParameterBlock {
     cks: 0x8000,
     off: 3,
     psh: 0,
-    phm: 0
+    phm: 0,
+    reserved_track_capacity: 3*32*128
 };
 
 pub const CPM1: DiskParameterBlock = DiskParameterBlock {
@@ -69,13 +75,32 @@ pub const CPM1: DiskParameterBlock = DiskParameterBlock {
     drm: 63,
     al0: 0b11000000,
     al1: 0b00000000,
-    cks: 0x8000,
+    cks: 16,
     off: 2,
     psh: 0,
-    phm: 0
+    phm: 0,
+    reserved_track_capacity: 2*26*128
 };
 
-pub const OSBORNE1: DiskParameterBlock = DiskParameterBlock {
+/// This covers standard Osborne1 disks
+pub const SSSD_525: DiskParameterBlock = DiskParameterBlock {
+    spt: 20,
+    bsh: 4,
+    blm: 15,
+    exm: 1,
+    dsm: 45,
+    drm: 63,
+    al0: 0b10000000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 3,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 3*20*128
+};
+
+/// This covers upgraded Osborne1 disks
+pub const SSDD_525_OFF3: DiskParameterBlock = DiskParameterBlock {
     spt: 40,
     bsh: 3,
     blm: 7,
@@ -84,10 +109,81 @@ pub const OSBORNE1: DiskParameterBlock = DiskParameterBlock {
     drm: 63,
     al0: 0b11000000,
     al1: 0b00000000,
-    cks: 0x8000,
+    cks: 16,
     off: 3,
     psh: 0,
-    phm: 0
+    phm: 0,
+    reserved_track_capacity: 3*40*128
+};
+
+/// This covers Kaypro II disks.
+/// 32*(DRM+1) uses half the blocks mapped by AL0.  The remainder are reserved OS blocks. 
+pub const SSDD_525_OFF1: DiskParameterBlock = DiskParameterBlock {
+    spt: 40,
+    bsh: 3,
+    blm: 7,
+    exm: 0,
+    dsm: 194,
+    drm: 63,
+    al0: 0b11110000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 1,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 40*128
+};
+
+/// This covers Kaypro 4 disks.
+/// Kaypro sector id's are sequenced by cylinder, but we
+/// still regard SPT as the count of sectors on only one side.
+/// 32*(DRM+1) uses half the blocks mapped by AL0.  The remainder are reserved OS blocks.
+pub const DSDD_525_OFF1: DiskParameterBlock = DiskParameterBlock {
+    spt: 40,
+    bsh: 4,
+    blm: 15,
+    exm: 1,
+    dsm: 196,
+    drm: 63,
+    al0: 0b11000000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 1,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 40*128
+};
+
+pub const TRS80_M2: DiskParameterBlock = DiskParameterBlock {
+    spt: 64,
+    bsh: 4,
+    blm: 15,
+    exm: 0,
+    dsm: 299,
+    drm: 127,
+    al0: 0b11000000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 2,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 26*128 + 16*512
+};
+
+pub const NABU: DiskParameterBlock = DiskParameterBlock {
+    spt: 52,
+    bsh: 4,
+    blm: 15,
+    exm: 0,
+    dsm: 493,
+    drm: 127,
+    al0: 0b11000000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 2,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 2*26*128
 };
 
 impl DiskParameterBlock {
@@ -95,7 +191,12 @@ impl DiskParameterBlock {
         match *kind {
             crate::img::names::A2_DOS33_KIND => A2_525,
             crate::img::names::IBM_CPM1_KIND => CPM1,
-            crate::img::names::OSBORNE_KIND => OSBORNE1,
+            crate::img::names::OSBORNE1_SD_KIND => SSSD_525,
+            crate::img::names::OSBORNE1_DD_KIND => SSDD_525_OFF3,
+            crate::img::names::KAYPROII_KIND => SSDD_525_OFF1,
+            crate::img::names::KAYPRO4_KIND => DSDD_525_OFF1,
+            crate::img::names::TRS80_M2_CPM_KIND => TRS80_M2,
+            crate::img::names::NABU_CPM_KIND => NABU,
             _ => panic!("Disk kind not supported")
         }
     }
@@ -135,16 +236,21 @@ impl DiskParameterBlock {
             }
         }
         if self.drm as usize + 1 > 16*bls/32 {
-            debug!("too many directory entries");
+            debug!("directory exceeds 16 blocks");
             return false;
         }
-        let mut entry_bits = 0;
-        for i in 0..8 {
-            entry_bits += (self.al0 >> i) & 0x01;
-            entry_bits += (self.al1 >> i) & 0x01;
+        let mut mask16 = self.al0 as u16 * 256 + self.al1 as u16;
+        let mut contiguous_dir_blocks = 0;
+        for _i in 0..16 {
+            if mask16 & 0x8000 > 0 {
+                contiguous_dir_blocks += 1;
+                mask16 <<= 1;
+            } else {
+                break;
+            }
         }
-        if entry_bits as usize != (self.drm as usize + 1)*32/bls {
-            debug!("directory block map mismatch");
+        if (contiguous_dir_blocks as usize) < (self.drm as usize + 1)*32/bls {
+            debug!("block map fails to cover directory : {} contiguous blocks were provided",contiguous_dir_blocks);
             return false;
         }
         if self.dir_blocks() > self.user_blocks() {
@@ -168,7 +274,7 @@ impl DiskParameterBlock {
     pub fn extent_capacity(&self) -> usize {
         (self.exm as usize + 1) * LOGICAL_EXTENT_SIZE
     }
-    /// blocks available for directory and data
+    /// blocks available for directory, data, and reserved blocks (which are in user tracks)
     pub fn user_blocks(&self) -> usize {
         self.dsm as usize + 1
     }
@@ -176,22 +282,56 @@ impl DiskParameterBlock {
     pub fn dir_entries(&self) -> usize {
         self.drm as usize + 1
     }
-    /// number of directory blocks
+    /// number of directory blocks (n.b. reserved blocks may follow)
     pub fn dir_blocks(&self) -> usize {
         self.dir_entries()*DIR_ENTRY_SIZE/self.block_size()
     }
+    /// how many blocks in the user area are reserved
+    pub fn reserved_blocks(&self) -> usize {
+        let mut ans = 0;
+        let mut mask16 = self.al0 as u16 * 256 + self.al1 as u16;
+        for _i in 0..16 {
+            if mask16 & 0x8000 > 0 {
+                ans += 1;
+                mask16 <<= 1;
+            }
+        }
+        ans
+    }
+    /// is block reserved according to the DPB bitmap
+    pub fn is_reserved(&self,block: usize) -> bool {
+        if block > 15 {
+            return false;
+        }
+        ((self.al0 as u16 * 256 + self.al1 as u16) << block) & 0x8000 > 0
+    }
     /// Work out the total byte capacity, accounting for OS tracks and unused "remainder sectors" on the last track.
-    /// This assumes that every track is used, and that all tracks have the same capacity (we cannot do better with
-    /// what is provided in the DPB).
     pub fn disk_capacity(&self) -> usize {
         let track_capacity = self.spt as usize * RECORD_SIZE;
-        let os = self.off as usize * track_capacity;
         let user = self.user_blocks() * self.block_size();
         let remainder = user % track_capacity;
         if remainder>0 {
-            return os + user + track_capacity - remainder;
+            return self.reserved_track_capacity + user + track_capacity - remainder;
         } else {
-            return os + user;
+            return self.reserved_track_capacity + user;
+        }
+    }
+}
+
+/// Allows the DPB to be displayed to the console using `println!`.  This also
+/// derives `to_string`, so the struct can be converted to `String`.
+impl fmt::Display for DiskParameterBlock {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            A2_525 => write!(f,"Apple 5.25 inch"),
+            CPM1 => write!(f,"IBM 8 inch SSSD"),
+            SSSD_525 => write!(f,"IBM 5.25 inch SSSD"),
+            SSDD_525_OFF1 => write!(f,"IBM 5.25 inch SSDD"),
+            SSDD_525_OFF3 => write!(f,"IBM 5.25 inch SSDD"),
+            DSDD_525_OFF1 => write!(f,"IBM 5.25 inch DSSD"),
+            TRS80_M2 => write!(f,"IBM 8 inch SSDD"),
+            NABU => write!(f,"IBM 8 inch DSDD"),
+            _ => write!(f,"unknown disk")
         }
     }
 }

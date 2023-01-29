@@ -49,7 +49,7 @@ impl img::DiskImage for PO {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         match addr {
             Chunk::PO(block) => Ok(self.data[block*BLOCK_SIZE..(block+1)*BLOCK_SIZE].to_vec()),
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
@@ -65,7 +65,7 @@ impl img::DiskImage for PO {
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
         }
     }
-    fn read_sector(&self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
@@ -88,20 +88,23 @@ impl img::DiskImage for PO {
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::PO
     }
+    fn file_extensions(&self) -> Vec<String> {
+        vec!["po".to_string()]
+    }
     fn kind(&self) -> img::DiskKind {
         self.kind
     }
     fn change_kind(&mut self,kind: img::DiskKind) {
         self.kind = kind;
     }
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
