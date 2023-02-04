@@ -1,29 +1,29 @@
 use clap;
 use std::io::Write;
 use std::str::FromStr;
-use std::error::Error;
 use log::error;
 use super::{ItemType,CommandError};
 use crate::fs::DiskFS;
+use crate::{STDRESULT,DYNERR};
 
 const RCH: &str = "unreachable was reached";
 
 // TODO: somehow fold FileImage and Records into the pattern
 fn output_get(
-    maybe_object: Result<(u16,Vec<u8>),Box<dyn Error>>,
+    maybe_object: Result<(u16,Vec<u8>),DYNERR>,
     maybe_typ: Result<ItemType,CommandError>,
     maybe_disk: Option<Box<dyn DiskFS>>
-) -> Result<(),Box<dyn Error>> {
+) -> STDRESULT {
     match maybe_object {
         Ok((start_addr,object)) => {
             if atty::is(atty::Stream::Stdout) {
                 match (maybe_typ,maybe_disk) {
-                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
-                    _ => crate::display_chunk(start_addr,&object)
+                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)?),
+                    _ => crate::display_block(start_addr,&object)
                 };
             } else {
                 match (maybe_typ,maybe_disk) {
-                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)),
+                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)?),
                     _ => std::io::stdout().write_all(&object).expect("could not write stdout")
                 };
             }
@@ -33,7 +33,7 @@ fn output_get(
     }
 }
 
-pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     if !atty::is(atty::Stream::Stdin) {
         error!("input is redirected, but `get` must start the pipeline");
         return Err(Box::new(CommandError::InvalidCommand));
@@ -57,8 +57,8 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                     // special handling for sparse data
                     if let Ok(ItemType::FileImage) = typ {
                         return match disk.read_any(&src_path) {
-                            Ok(chunks) => {
-                                println!("{}",chunks.to_json(4));
+                            Ok(fimg) => {
+                                println!("{}",fimg.to_json(4));
                                 Ok(())
                             },
                             Err(e) => Err(e)
@@ -92,7 +92,7 @@ pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                         Ok(ItemType::Binary) => disk.bload(&src_path),
                         Ok(ItemType::Text) => disk.read_text(&src_path),
                         Ok(ItemType::Raw) => disk.read_text(&src_path),
-                        Ok(ItemType::Chunk) => disk.read_chunk(&src_path),
+                        Ok(ItemType::Block) => disk.read_block(&src_path),
                         _ => {
                             return Err(Box::new(CommandError::UnsupportedItemType));
                         }

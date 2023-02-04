@@ -113,31 +113,26 @@ impl SectorDataFormat {
 }
 
 /// This is the main interface for interacting with 5.25 inch disk tracks.
-/// This represents a track at the level of bits.
 /// Writing to the track is at the bit stream level, any bit pattern will be accepted.
 /// Reading can be done by direct bit stream consumption, or through a soft latch.
-/// The underlying `Vec<u8>` is exposed only upon construction, any padding is determined at this stage.
 /// This will also behave as a cyclic buffer to reflect a circular track.
 pub struct TrackBits {
+    id: usize,
     adr_fmt: SectorAddressFormat,
     dat_fmt: SectorDataFormat,
     bit_count: usize,
     bit_ptr: usize,
-    buf: Vec<u8>
 }
 impl TrackBits {
-    /// Create an empty track with formatting protocol (but no actual format).
+    /// Create a track  with formatting protocol (but no actual format).
     /// Use `disk525::create_track`, or variants, to actually format the track.
-    pub fn create(buf: Vec<u8>,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
-        if bit_count > buf.len()*8 {
-            panic!("buffer cannot hold requested bits");
-        }
+    pub fn create(id: usize,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
         Self {
+            id,
             adr_fmt,
             dat_fmt,
             bit_count,
-            bit_ptr: 0,
-            buf
+            bit_ptr: 0
         }
     }
     /// Change the formatting protocol (but not the actual format).
@@ -168,18 +163,18 @@ impl TrackBits {
     /// Read bytes through a soft latch, this is a shortcut that takes the place of
     /// the logic state sequencer, and simplifies the process of retrieving nibbles.
     /// The number of track bits that passed by is returned (not necessarily 8*bytes)
-    pub fn read_latch(&mut self,data: &mut [u8],num_bytes: usize) -> usize {
+    pub fn read_latch(&mut self,bits: &[u8],data: &mut [u8],num_bytes: usize) -> usize {
         let mut bit_count: usize = 0;
         for byte in 0..num_bytes {
             for _try in 0..self.bit_count {
                 bit_count += 1;
-                if self.next()==1 {
+                if self.next(bits)==1 {
                     break;
                 }
             }
             let mut val: u8 = 1;
             for _bit in 0..7 {
-                val = val*2 + self.next();
+                val = val*2 + self.next(bits);
             }
             data[byte] = val;
             bit_count += 7;
@@ -187,22 +182,22 @@ impl TrackBits {
         return bit_count;
     }
     /// Read the current bit, return in LSB of a byte; perhaps more efficient than `read` for matching bit patterns
-    pub fn next(&mut self) -> u8 {
+    pub fn next(&mut self,bits: &[u8]) -> u8 {
         let i = self.bit_ptr/8;
         let b = 7 - (self.bit_ptr%8) as u8;
         self.shift_fwd(1);
-        return (self.buf[i] >> b) & 1;
+        return (bits[i] >> b) & 1;
     }
     /// Bits are loaded into a slice of packed bytes, only `num_bits` of them loaded,
     /// the remaining are left untouched.  Bit order is MSB to LSB.
     /// Only use to copy tracks or track segments, decodable bits must go through the latch.
-    pub fn read(&mut self,data: &mut [u8],num_bits: usize) {
+    pub fn read(&mut self,bits: &[u8],data: &mut [u8],num_bits: usize) {
         for i in 0..num_bits {
             let src_idx = self.bit_ptr/8;
             let src_rel_bit = 7 - (self.bit_ptr%8) as u8;
             let dst_idx = i/8;
             let dst_rel_bit = 7 - (i%8) as u8;
-            let term = ((self.buf[src_idx] >> src_rel_bit) & 1) << dst_rel_bit;
+            let term = ((bits[src_idx] >> src_rel_bit) & 1) << dst_rel_bit;
             data[dst_idx] &= (1 << dst_rel_bit) ^ u8::MAX;
             data[dst_idx] |= term;
             self.shift_fwd(1);
@@ -210,26 +205,22 @@ impl TrackBits {
     }
     /// Bits are packed into a slice of bytes, only `num_bits` of them are unpacked and written,
     /// the rest are padding that is ignored.  Bit order is MSB to LSB.
-    pub fn write(&mut self,data: &[u8],num_bits: usize) {
+    pub fn write(&mut self,bits: &mut [u8],data: &[u8],num_bits: usize) {
         for i in 0..num_bits {
             let dst_idx = self.bit_ptr/8;
             let dst_rel_bit = 7 - (self.bit_ptr%8) as u8;
             let src_idx = i/8;
             let src_rel_bit = 7 - (i%8) as u8;
             let term = ((data[src_idx] >> src_rel_bit) & 1) << dst_rel_bit;
-            self.buf[dst_idx] &= (1 << dst_rel_bit) ^ u8::MAX;
-            self.buf[dst_idx] |= term;
+            bits[dst_idx] &= (1 << dst_rel_bit) ^ u8::MAX;
+            bits[dst_idx] |= term;
             self.shift_fwd(1);
         }
     }
-    /// Retrieve a copy of the bytes in which the bits are packed
-    pub fn to_buffer(&self) -> Vec<u8> {
-        return self.buf.clone();
-    }
     /// Assuming bit pointer is at an address, return tuple with (vol,track,sector,chksum)
-    fn decode_addr(&mut self) -> (u8,u8,u8,u8) {
+    fn decode_addr(&mut self,bits: &[u8]) -> (u8,u8,u8,u8) {
         let mut buf: [u8;8] = [0;8];
-        self.read_latch(&mut buf,8);
+        self.read_latch(bits,&mut buf,8);
         return (
             decode_44([buf[0],buf[1]]),
             decode_44([buf[2],buf[3]]),
@@ -241,20 +232,20 @@ impl TrackBits {
     /// Low bits in `mask` will cause corresponding bits in `patt` to automatically match.
     /// If `cap` is `None` the entire track will be searched.  `mask` must be as long as `patt`.
     /// If pattern is found return the number of bits by which pointer advanced, otherwise return None.
-    fn find_byte_pattern(&mut self,patt: &[u8],mask: &[u8],cap: Option<usize>) -> Option<usize> {
+    fn find_byte_pattern(&mut self,bits: &[u8],patt: &[u8],mask: &[u8],cap: Option<usize>) -> Option<usize> {
         if patt.len()==0 {
             return Some(0);
         }
         let mut bit_count: usize = 0;
         let mut matches = 0;
         let mut test_byte: [u8;1] = [0;1];
-        for tries in 0..self.buf.len() {
+        for tries in 0..bits.len() {
             if let Some(max) = cap {
                 if tries>=max {
                     return None;
                 }
             }
-            bit_count += self.read_latch(&mut test_byte,1);
+            bit_count += self.read_latch(bits,&mut test_byte,1);
             if test_byte[0] & mask[matches] == patt[matches] & mask[matches] {
                 matches += 1;
             } else {
@@ -270,7 +261,7 @@ impl TrackBits {
     /// Advance the bit pointer to the end of the address epilog, and return the volume number, or an error.
     /// We do not go looking for the data prolog at this stage, because it may not exist.
     /// E.g., DOS 3.2 `INIT` will not write any data fields outside of the boot tracks.
-    fn find_sector(&mut self,ts: [u8;2]) -> Result<u8,NibbleError> {
+    fn find_sector(&mut self,bits: &[u8],ts: [u8;2]) -> Result<u8,NibbleError> {
         trace!("seeking sector {}",ts[1]);
         // Copy search patterns
         let adr_pro = self.adr_fmt.prolog.clone();
@@ -279,8 +270,8 @@ impl TrackBits {
         let adr_epi_mask = self.adr_fmt.epilog_mask.clone();
         // Loop over attempts to read a sector
         for _try in 0..32 {
-            if let Some(_shift) = self.find_byte_pattern(&adr_pro,&adr_pro_mask,None) {
-                let (vol,track,sector,chksum) = self.decode_addr();
+            if let Some(_shift) = self.find_byte_pattern(bits,&adr_pro,&adr_pro_mask,None) {
+                let (vol,track,sector,chksum) = self.decode_addr(bits);
                 let chk = self.adr_fmt.chk_seed ^ vol ^ track ^ sector ^ chksum;
                 if self.adr_fmt.verify_track && track!=ts[0] {
                     warn!("track mismatch (want {}, got {})",ts[0],track);
@@ -290,7 +281,7 @@ impl TrackBits {
                     warn!("checksum nonzero ({})",chk);
                     continue;
                 }
-                if self.find_byte_pattern(&adr_epi,&adr_epi_mask,Some(10))==None {
+                if self.find_byte_pattern(bits,&adr_epi,&adr_epi_mask,Some(10))==None {
                     warn!("missed address epilog");
                     continue;
                 }
@@ -312,7 +303,7 @@ impl TrackBits {
     }
     /// Assuming the bit pointer is at sector data, write a 5-3 encoded sector
     /// Should be called only by encode_sector.
-    fn encode_sector_53(&mut self,dat: &Vec<u8>) {
+    fn encode_sector_53(&mut self,bits: &mut [u8],dat: &[u8]) {
         // first work with bytes; adapted from CiderPress `EncodeNibble53`
         let mut bak_buf: [u8;411] = [0;411];
         let mut top: [u8;256] = [0;256];
@@ -349,11 +340,11 @@ impl TrackBits {
         }
         bak_buf[idx] = encode_53(chksum);
         // now copy the bits into the track from the backing buffer
-        self.write(&bak_buf,411*8);
+        self.write(bits,&bak_buf,411*8);
     }
     /// Assuming the bit pointer is at sector data, write a 6-2 encoded sector.
     /// Should be called only by encode_sector.
-    fn encode_sector_62(&mut self,dat: &Vec<u8>) {
+    fn encode_sector_62(&mut self,bits: &mut [u8],dat: &[u8]) {
         // first work with bytes; direct adaptation from CiderPress `EncodeNibble62`
         let mut bak_buf: [u8;343] = [0;343];
         let mut top: [u8;256] = [0;256];
@@ -384,37 +375,37 @@ impl TrackBits {
         }
         bak_buf[idx] = encode_62(chksum);
         // now copy the bits into the track from the backing buffer
-        self.write(&bak_buf,343*8);
+        self.write(bits,&bak_buf,343*8);
     }
     /// This writes sync bytes, prolog, data, and epilog.
     /// Assumes bit pointer is at the end of the address epilog.
     /// This function is allowed to panic.
-    fn encode_sector(&mut self,dat: &Vec<u8>) {
+    fn encode_sector(&mut self,bits: &mut [u8],dat: &[u8]) {
         trace!("encoding sector");
         let dat_fmt = self.dat_fmt;
         match dat_fmt.nib {
             NibbleType::Enc44 => panic!("only 5-3 or 6-2 nibbles allowed in data"),
             NibbleType::Enc53 => {
-                self.write_sync_gap(10,9);
-                self.write(&dat_fmt.prolog,24);
-                self.encode_sector_53(dat);
-                self.write(&dat_fmt.epilog,24);
+                self.write_sync_gap(bits,10,9);
+                self.write(bits,&dat_fmt.prolog,24);
+                self.encode_sector_53(bits,dat);
+                self.write(bits,&dat_fmt.epilog,24);
             },
             NibbleType::Enc62 => {
-                self.write_sync_gap(10,10);
-                self.write(&dat_fmt.prolog,24);
-                self.encode_sector_62(dat);
-                self.write(&dat_fmt.epilog,24);
+                self.write_sync_gap(bits,10,10);
+                self.write(bits,&dat_fmt.prolog,24);
+                self.encode_sector_62(bits,dat);
+                self.write(bits,&dat_fmt.epilog,24);
             }
         }
     }
     /// Assuming the bit pointer is at sector data, decode from 5-3 and return the sector.
     /// Should only be called by decode_sector.
-    fn decode_sector_53(&mut self) -> Result<Vec<u8>,NibbleError> {
+    fn decode_sector_53(&mut self,bits: &[u8]) -> Result<Vec<u8>,NibbleError> {
         let mut ans: Vec<u8> = Vec::new();
         // First get the bits into an ordinary byte-aligned buffer
         let mut bak_buf: [u8;411] = [0;411];
-        self.read_latch(&mut bak_buf,411);
+        self.read_latch(bits,&mut bak_buf,411);
         // Now decode; adaptation from CiderPress `DecodeNibble53`
         let mut base: [u8;256] = [0;256];
         let mut threes: [u8;154] = [0;154];
@@ -467,11 +458,11 @@ impl TrackBits {
     }
     /// Assuming the bit pointer is at sector data, decode from 6-2 and return the sector.
     /// Should only be called by decode_sector.
-    fn decode_sector_62(&mut self) -> Result<Vec<u8>,NibbleError> {
+    fn decode_sector_62(&mut self,bits: &[u8]) -> Result<Vec<u8>,NibbleError> {
         let mut ans: Vec<u8> = Vec::new();
         // First get the bits into an ordinary byte-aligned buffer
         let mut bak_buf: [u8;343] = [0;343];
-        self.read_latch(&mut bak_buf,343);
+        self.read_latch(bits,&mut bak_buf,343);
         // Now decode; direct adaptation from CiderPress `DecodeNibble62`
         let mut twos: [u8;CHUNK62 as usize*3] = [0;CHUNK62 as usize*3];
         let mut chksum = self.dat_fmt.chk_seed;
@@ -510,18 +501,18 @@ impl TrackBits {
     }
     /// Decode the sector using the scheme for this track.
     /// Assumes bit pointer is at the end of the address epilog.
-    fn decode_sector(&mut self) -> Result<Vec<u8>,NibbleError> {
+    fn decode_sector(&mut self,bits: &[u8]) -> Result<Vec<u8>,NibbleError> {
         trace!("decoding sector");
         // Find data prolog without looking ahead too far, for if it does not exist, we
         // are to interpret the sector as empty.
         let prolog = self.dat_fmt.prolog.clone();
         let mask = self.dat_fmt.prolog_mask.clone();
-        if let Some(_shift) = self.find_byte_pattern(&prolog,&mask,Some(40)) {
+        if let Some(_shift) = self.find_byte_pattern(bits,&prolog,&mask,Some(40)) {
             trace!("data field found");
             return match self.dat_fmt.nib {
                 NibbleType::Enc44 => Err(NibbleError::NibbleType),
-                NibbleType::Enc53 => self.decode_sector_53(),
-                NibbleType::Enc62 => self.decode_sector_62()
+                NibbleType::Enc53 => self.decode_sector_53(bits),
+                NibbleType::Enc62 => self.decode_sector_62(bits)
             };
         } else {
             return Ok([0;256].to_vec());
@@ -529,16 +520,16 @@ impl TrackBits {
     }
     /// Add `num` n-bit sync-bytes to the track, where n = `num_bits`.
     /// For DOS 3.3 and compatible track formats, n=10, for DOS 3.2 and compatible n=9.
-    fn write_sync_gap(&mut self,num: usize,num_bits: usize) {
+    fn write_sync_gap(&mut self,bits: &mut [u8],num: usize,num_bits: usize) {
         for _i in 0..num {
-            self.write(&[0xff,0x00],num_bits);
+            self.write(bits,&[0xff,0x00],num_bits);
         }
     }
 }
 
 impl super::TrackBits for TrackBits {
-    fn len(&self) -> usize {
-        self.buf.len()
+    fn id(&self) -> usize {
+        self.id
     }
     fn bit_count(&self) -> usize {
         self.bit_count
@@ -549,33 +540,33 @@ impl super::TrackBits for TrackBits {
     fn get_bit_ptr(&self) -> usize {
         self.bit_ptr
     }
-    fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError> {
-        match self.find_sector([track,sector]) {
-            Ok(_vol) => self.decode_sector(),
+    fn set_bit_ptr(&mut self,displ: usize) {
+        self.bit_ptr = displ;
+    }
+    fn read_sector(&mut self,bits: &[u8],track: u8,sector: u8) -> Result<Vec<u8>,NibbleError> {
+        match self.find_sector(bits,[track,sector]) {
+            Ok(_vol) => self.decode_sector(bits),
             Err(e) => Err(e)
         }
     }
-    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError> {
-        match self.find_sector([track,sector]) {
-            Ok(_vol) => Ok(self.encode_sector(dat)),
+    fn write_sector(&mut self,bits: &mut [u8],dat: &[u8],track: u8,sector: u8) -> Result<(),NibbleError> {
+        match self.find_sector(bits,[track,sector]) {
+            Ok(_vol) => Ok(self.encode_sector(bits,dat)),
             Err(e) => Err(e)
         }
     }
-    fn to_buf(&self) -> Vec<u8> {
-        self.buf.clone()
-    }
-    fn to_nibbles(&mut self) -> Vec<u8> {
+    fn to_nibbles(&mut self,bits: &[u8]) -> Vec<u8> {
         // dump exactly one revolution starting on an address prolog
         let mut ans: Vec<u8> = Vec::new();
         let mut byte: [u8;1] = [0;1];
-        if self.find_byte_pattern(&self.adr_fmt.prolog.clone(), &self.adr_fmt.prolog_mask.clone(), None) == None {
+        if self.find_byte_pattern(bits,&self.adr_fmt.prolog.clone(), &self.adr_fmt.prolog_mask.clone(), None) == None {
             self.reset();
         } else {
             self.shift_rev(self.adr_fmt.prolog.len()*8);
         }
         let mut bit_count = 0;
-        for _try in 0..self.buf.len()*2 {
-            bit_count += self.read_latch(&mut byte,1);
+        for _try in 0..bits.len()*2 {
+            bit_count += self.read_latch(bits,&mut byte,1);
             ans.push(byte[0]);
             if bit_count >= self.bit_count {
                 break;
@@ -632,9 +623,11 @@ fn decode_62(byte: u8,inv: [u8;256]) -> u8 {
 }
 
 /// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
+/// The returned tuple has (track buffer, TrackBits object)
 /// For 13 sector disks, data segments are filled with high bits.
 /// For 16 sector disks, the data segment is created, and the data itself is zeroed.
-pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) -> Box<dyn super::TrackBits> {
+pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) ->
+    (Vec<u8>,Box<dyn super::TrackBits>) {
     let bit_count_13 = 40*9 + 13*((3+8+3)*8 + 10*9 + (3+411+3)*8 + 20*9);
     let bit_count_16 = 40*10 + 16*((3+8+3)*8 + 10*10 + (3+343+3)*8 + 20*10);
     let (sectors,bit_count,sync_bits) = match dat_fmt.nib {
@@ -642,50 +635,50 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         NibbleType::Enc62 => (16,bit_count_16,10),
         _ => panic!("only 5-3 or 6-2 nibbles allowed")
     };
-    let buf: Vec<u8> = vec![0;buf_len];
-    let mut ans = TrackBits::create(buf,bit_count,adr_fmt,dat_fmt);
-    ans.write_sync_gap(40,sync_bits);
+    let mut bits: Vec<u8> = vec![0;buf_len];
+    let mut ans = TrackBits::create(track as usize,bit_count,adr_fmt,dat_fmt);
+    ans.write_sync_gap(&mut bits,40,sync_bits);
     for sector in 0..sectors {
         // address field
-        ans.write(&adr_fmt.prolog,24);
-        ans.write(&encode_44(vol),16);
-        ans.write(&encode_44(track),16);
+        ans.write(&mut bits,&adr_fmt.prolog,24);
+        ans.write(&mut bits,&encode_44(vol),16);
+        ans.write(&mut bits,&encode_44(track),16);
         let sec_addr = match sectors {
             // DOS 3.2 skews the sectors directly on the disk track
             13 => skew::DOS32_PHYSICAL[sector] as u8,
             // DOS 3.3 writes addresses in physical order, skew is in software
             _ => sector as u8
         };
-        ans.write(&encode_44(sec_addr),16);
+        ans.write(&mut bits,&encode_44(sec_addr),16);
         let chksum = adr_fmt.chk_seed ^ vol ^ track ^ sec_addr;
-        ans.write(&encode_44(chksum),16);
-        ans.write(&adr_fmt.epilog,24);
+        ans.write(&mut bits,&encode_44(chksum),16);
+        ans.write(&mut bits,&adr_fmt.epilog,24);
         // data segment
         match sectors {
             13 => {
-                ans.write_sync_gap(10,sync_bits);
-                ans.write(&[0xff;417],417*8);
+                ans.write_sync_gap(&mut bits,10,sync_bits);
+                ans.write(&mut bits,&[0xff;417],417*8);
             },
             _ => {
-                ans.encode_sector(&[0;256].to_vec());
+                ans.encode_sector(&mut bits,&[0;256].to_vec());
             }
         }
         //sync gap
-        ans.write_sync_gap(20,sync_bits);
+        ans.write_sync_gap(&mut bits,20,sync_bits);
     }
     let mut obj: Box<dyn super::TrackBits> = Box::new(ans);
     obj.reset();
-    return obj;
+    return (bits,obj);
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.3 and ProDOS
-pub fn create_std16_track(vol: u8,track: u8,buf_len: usize) -> Box<dyn super::TrackBits> {
+pub fn create_std16_track(vol: u8,track: u8,buf_len: usize) -> (Vec<u8>,Box<dyn super::TrackBits>) {
     debug!("create 16 sectors on track {}",track);
     return create_track(vol,track,buf_len,SectorAddressFormat::create_std16(),SectorDataFormat::create_std16());
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.0, 3.1, and 3.2
-pub fn create_std13_track(vol: u8,track: u8,buf_len: usize) -> Box<dyn super::TrackBits> {
+pub fn create_std13_track(vol: u8,track: u8,buf_len: usize) -> (Vec<u8>,Box<dyn super::TrackBits>) {
     debug!("create 13 sectors on track {}",track);
     return create_track(vol,track,buf_len,SectorAddressFormat::create_std13(),SectorDataFormat::create_std13());
 }

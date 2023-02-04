@@ -1,12 +1,12 @@
 use clap;
 use std::str::FromStr;
-use std::error::Error;
 use log::{error,info};
 use crate::bios::dpb;
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType,names};
 use super::CommandError;
+use crate::{STDRESULT,DYNERR};
 
 const RCH: &str = "unreachable was reached";
 const BOOT_MESS: &str = "omit boot flag; for this OS you will need to copy boot files after formatting";
@@ -14,7 +14,7 @@ const BOOT_MESS_CPM: &str = "omit boot flag; for this OS you will need to copy r
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&str>) -> Result<Box<dyn DiskImage>,Box<dyn Error>> {
+fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&str>) -> Result<Box<dyn DiskImage>,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -49,7 +49,7 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&str>) -> R
     };
 }
 
-fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if img.byte_capacity()!=35*13*256 && img.byte_capacity()!=35*16*256 {
         error!("disk image capacity {} not consistent with DOS 3.x",img.byte_capacity());
         return Err(Box::new(CommandError::OutOfRange));
@@ -79,10 +79,10 @@ fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u
             }
             let mut disk = Box::new(dos3x::Disk::from_img(img));
             match kind {
-                DiskKind::LogicalSectors(img::names::A2_DOS32) => disk.init32(v,boot),
-                DiskKind::D525(img::names::A2_DOS32) => disk.init32(v,boot),
-                DiskKind::LogicalSectors(img::names::A2_DOS33) => disk.init33(v,boot),
-                DiskKind::D525(img::names::A2_DOS33) => disk.init33(v,boot),
+                DiskKind::LogicalSectors(img::names::A2_DOS32) => disk.init32(v,boot)?,
+                DiskKind::D525(img::names::A2_DOS32) => disk.init32(v,boot)?,
+                DiskKind::LogicalSectors(img::names::A2_DOS33) => disk.init33(v,boot)?,
+                DiskKind::D525(img::names::A2_DOS33) => disk.init33(v,boot)?,
                 _ => {
                     error!("disk incompatible with DOS 3.x");
                     return Err(Box::new(CommandError::UnsupportedFormat));
@@ -97,7 +97,7 @@ fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u
     }
 }
 
-fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -110,7 +110,7 @@ fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
     };
     if let Some(vol_name) = vol {
         let mut disk = Box::new(prodos::Disk::from_img(img));
-        disk.format(vol_name,floppy,None);
+        disk.format(vol_name,floppy,None)?;
         return Ok(disk.get_img().to_bytes());
     } else {
         error!("prodos fs requires volume name");
@@ -118,7 +118,7 @@ fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
     }
 }
 
-fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -127,7 +127,7 @@ fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
         let mut disk = Box::new(pascal::Disk::from_img(img));
         match disk.format(vol_name,0xee,None) {
             Ok(()) => Ok(disk.get_img().to_bytes()),
-            Err(e) => return Err(Box::new(e))
+            Err(e) => return Err(e)
         }
     } else {
         error!("pascal fs requires volume name");
@@ -135,7 +135,7 @@ fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
     }
 }
 
-fn mkcpm(vol: Option<&str>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,Box<dyn Error>> {
+fn mkcpm(vol: Option<&str>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS_CPM);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -147,16 +147,45 @@ fn mkcpm(vol: Option<&str>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -
     };
     match disk.format(vol_name,None) {
         Ok(()) => Ok(disk.get_img().to_bytes()),
-        Err(e) => return Err(Box::new(e))
+        Err(e) => return Err(e)
     }
 }
 
-pub fn mkdsk(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     let dest_path= cmd.value_of("dimg").expect(RCH);
     let which_fs = cmd.value_of("os").expect(RCH);
     if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs) {
         return Err(Box::new(CommandError::UnknownItemType));
     }
+    // First make sure destination is OK
+    let dest_path_abstract = std::path::Path::new(dest_path);
+    if let Some(parent) = std::path::Path::parent(dest_path_abstract) {
+        if parent.to_string_lossy().len()>0 {
+            match std::path::Path::try_exists(parent) {
+                Ok(true) => {},
+                Ok(false) => {
+                    error!("destination directory does not exist ({})",parent.to_string_lossy());
+                    return Err(Box::new(CommandError::InvalidCommand));
+                },
+                Err(e) => {
+                    error!("problem with this destination path");
+                    return Err(Box::new(e))
+                }
+            }
+        }
+    }
+    match std::path::Path::try_exists(dest_path_abstract) {
+        Ok(true) => {
+            error!("cannot overwrite existing disk image");
+            return Err(Box::new(CommandError::InvalidCommand));
+        },
+        Ok(false) => info!("destination path OK, preparing to write"),
+        Err(e) => {
+            error!("problem with this destination path");
+            return Err(Box::new(e))
+        }
+    }
+    // Destination is OK, proceed
     let maybe_vol = cmd.value_of("volume");
     let mut kind = DiskKind::from_str(cmd.value_of("kind").expect(RCH)).unwrap();
     let img_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();

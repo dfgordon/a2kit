@@ -1,6 +1,5 @@
 // test of CP/M disk image module
 use std::path::Path;
-use std::str::FromStr;
 use a2kit::fs::{cpm,TextEncoder,DiskFS};
 use a2kit::img::{dsk_do,names};
 use a2kit_macro::DiskStruct;
@@ -36,7 +35,7 @@ fn read_small() {
     // Formatting: FORMAT.COM, writing: ED.COM, emulator: Virtual II
     // This tests small CP/M text files
     let img = std::fs::read(&Path::new("tests").join("cpm-smallfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check text file
     let (_z,raw) = emulator_disk.read_text("POLARIS.TXT").expect("error");
@@ -56,8 +55,8 @@ fn write_small() {
 
     // save the text
     disk.write_text("POLARIS.BAK",&Vec::new()).expect("error");
-    let txt_data = cpm::types::SequentialText::from_str(ED_TEST).expect("text encode error");
-    disk.write_text("POLARIS.TXT",&txt_data.to_bytes()).expect("write error");
+    let txt_data = disk.encode_text(ED_TEST).expect("could not encode text");
+    disk.write_text("POLARIS.TXT",&txt_data).expect("write error");
 
     let ignore = disk.standardize(0);
     disk.compare(&Path::new("tests").join("cpm-smallfiles.dsk"),&ignore);

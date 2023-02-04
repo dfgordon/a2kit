@@ -6,6 +6,7 @@ pub mod mkdsk;
 pub mod put;
 pub mod get;
 pub mod get_img;
+pub mod put_img;
 
 use std::str::FromStr;
 
@@ -45,7 +46,7 @@ pub enum ItemType {
     MerlinTokens,
     ApplesoftVars,
     IntegerVars,
-    Chunk,
+    Block,
     Track,
     Sector,
     RawTrack,
@@ -69,7 +70,7 @@ impl FromStr for ItemType {
             "mtok" => Ok(Self::MerlinTokens),
             "avar" => Ok(Self::ApplesoftVars),
             "ivar" => Ok(Self::IntegerVars),
-            "chunk" => Ok(Self::Chunk),
+            "block" => Ok(Self::Block),
             "track" => Ok(Self::Track),
             "raw_track" => Ok(Self::RawTrack),
             "sec" => Ok(Self::Sector),

@@ -64,8 +64,13 @@ use log::{warn,info};
 use regex::Regex;
 use hex;
 
+type DYNERR = Box<dyn std::error::Error>;
+type STDRESULT = Result<(),Box<dyn std::error::Error>>;
+
+const KNOWN_FILE_EXTENSIONS: &str = "dsk,d13,do,po,woz,imd";
+
 /// Save the image file (make changes permanent)
-pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> Result<(),Box<dyn std::error::Error>> {
+pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
     std::fs::write(img_path,disk.get_img().to_bytes())?;
     Ok(())
 }
@@ -107,41 +112,58 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
 }
 
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
-pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
-    if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
-        info!("identified IMD image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+/// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    let ext = match maybe_ext {
+        Some(x) => x.to_string().to_lowercase(),
+        None => "".to_string()
+    };
+    if img::imd::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+            info!("identified IMD image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
-    if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
-        info!("identified woz1 image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+    if img::woz1::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
+            info!("identified woz1 image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
-    if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
-        info!("identified woz2 image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+    if img::woz2::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
+            info!("identified woz2 image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
-    if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
-        info!("Possible D13 image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+    if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+            info!("Possible D13 image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
-    if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
-        info!("Possible DO image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+    if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
+            info!("Possible DO image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
-    if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
-        info!("Possible PO image");
-        if let Some(disk) = try_img(Box::new(img)) {
-            return Ok(disk);
+    if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
+            info!("Possible PO image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
         }
     }
     warn!("cannot match any file system");
@@ -149,31 +171,48 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Disk
 }
 
 /// Given a bytestream return a disk image without any file system.
-/// N.b. the ordering cannot always be determined without the file system.
-pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn DiskImage>,Box<dyn std::error::Error>> {
-    if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
-        info!("identified IMD image");
-        return Ok(Box::new(img));
+/// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
+/// N.b. the ordering for DSK types cannot always be determined without the file system.
+pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskImage>,DYNERR> {
+    let ext = match maybe_ext {
+        Some(x) => x.to_string().to_lowercase(),
+        None => "".to_string()
+    };
+    if img::imd::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+            info!("identified IMD image");
+            return Ok(Box::new(img));
+        }
     }
-    if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
-        info!("identified woz1 image");
-        return Ok(Box::new(img));
+    if img::woz1::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
+            info!("identified woz1 image");
+            return Ok(Box::new(img));
+        }
     }
-    if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
-        info!("identified woz2 image");
-        return Ok(Box::new(img));
+    if img::woz2::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
+            info!("identified woz2 image");
+            return Ok(Box::new(img));
+        }
     }
-    if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
-        info!("Possible D13 image");
-        return Ok(Box::new(img));
+    if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+            info!("Possible D13 image");
+            return Ok(Box::new(img));
+        }
     }
-    if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
-        info!("Possible DO image");
-        return Ok(Box::new(img));
+    if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
+            info!("Possible DO image");
+            return Ok(Box::new(img));
+        }
     }
-    if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
-        info!("Possible PO image");
-        return Ok(Box::new(img));
+    if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
+            info!("Possible PO image");
+            return Ok(Box::new(img));
+        }
     }
     warn!("cannot match any image format");
     return Err(Box::new(img::Error::ImageTypeMismatch));
@@ -181,41 +220,62 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>) -> Result<Box<dyn Dis
 
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,Box<dyn std::error::Error>> {
+/// File extension will be used to restrict image types that are tried,
+/// unless the extension is unknown, in which case all will be tried.
+pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR> {
     match std::fs::read(img_path) {
-        Ok(disk_img_data) => create_img_from_bytestream(&disk_img_data),
+        Ok(disk_img_data) => {
+            let mut maybe_ext = img_path.split('.').last();
+            if let Some(ext) = maybe_ext {
+                if !KNOWN_FILE_EXTENSIONS.contains(ext) {
+                    maybe_ext = None;
+                }
+            }
+            create_img_from_bytestream(&disk_img_data,maybe_ext)
+        },
         Err(e) => Err(Box::new(e))
     }
 }
 
-/// Calls `create_fs_from_bytestream` getting the bytes from stdin
-pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
+/// Calls `create_fs_from_bytestream` getting the bytes from stdin.
+/// All image types and file systems will be tried heuristically.
+pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
     let mut disk_img_data = Vec::new();
     match std::io::stdin().read_to_end(&mut disk_img_data) {
-        Ok(_n) => create_fs_from_bytestream(&disk_img_data),
+        Ok(_n) => create_fs_from_bytestream(&disk_img_data,None),
         Err(e) => Err(Box::new(e))
     }
 }
 
 /// Calls `create_fs_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
-pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,Box<dyn std::error::Error>> {
+/// File extension will be used to restrict image types that are tried,
+/// unless the extension is unknown, in which case all will be tried.
+pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
     match std::fs::read(img_path) {
-        Ok(disk_img_data) => create_fs_from_bytestream(&disk_img_data),
+        Ok(disk_img_data) => {
+            let mut maybe_ext = img_path.split('.').last();
+            if let Some(ext) = maybe_ext {
+                if !KNOWN_FILE_EXTENSIONS.contains(ext) {
+                    maybe_ext = None;
+                }
+            }
+            create_fs_from_bytestream(&disk_img_data,maybe_ext)
+        },
         Err(e) => Err(Box::new(e))
     }
 }
 
 /// Display binary to stdout in columns of hex, +ascii, and -ascii
-pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
+pub fn display_block(start_addr: u16,block: &Vec<u8>) {
     let mut slice_start = 0;
     loop {
         let row_label = start_addr as usize + slice_start;
         let mut slice_end = slice_start + 16;
-        if slice_end > chunk.len() {
-            slice_end = chunk.len();
+        if slice_end > block.len() {
+            slice_end = block.len();
         }
-        let slice = chunk[slice_start..slice_end].to_vec();
+        let slice = block[slice_start..slice_end].to_vec();
         let txt: Vec<u8> = slice.iter().map(|c| match *c {
             x if x<32 => '.' as u8,
             x if x<127 => x,
@@ -238,7 +298,7 @@ pub fn display_chunk(start_addr: u16,chunk: &Vec<u8>) {
         }
         println!("|-| {}",String::from_utf8_lossy(&neg_txt));
         slice_start += 16;
-        if slice_end==chunk.len() {
+        if slice_end==block.len() {
             break;
         }
     }

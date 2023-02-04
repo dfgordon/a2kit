@@ -70,10 +70,10 @@ impl FromStr for FileType {
 
 /// This is for convenience in testing.  Sometimes the emulator will pad the data with random bytes at the end.
 /// We need a way to append these bytes without changing the length calculation for comparisons.
-fn append_junk(dat: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Vec<u8> {
+fn append_junk(dat: &[u8],trailing: Option<&[u8]>) -> Vec<u8> {
     match trailing {
-        Some(v) => [dat.clone(),v.clone()].concat(),
-        None => dat.clone()
+        Some(v) => [dat.to_vec(),v.to_vec()].concat(),
+        None => dat.to_vec()
     }
 }
 
@@ -109,7 +109,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+    fn decode(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x8d {
@@ -136,7 +136,7 @@ pub struct TokenizedProgram {
 
 impl TokenizedProgram {
     /// Take unstructured bytes representing the tokens only (sans header) and pack it into the structure
-    pub fn pack(prog: &Vec<u8>,trailing: Option<&Vec<u8>>) -> Self {
+    pub fn pack(prog: &[u8],trailing: Option<&[u8]>) -> Self {
         let padded = append_junk(prog,trailing);
         Self {
             length: u16::to_le_bytes(prog.len() as u16),
@@ -197,7 +197,7 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x8d]);
         if let Some(dat) = encoder.encode(s) {
             return Ok(Self {
                 text: dat.clone(),
@@ -213,7 +213,7 @@ impl FromStr for SequentialText {
 /// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x8d]);
         if let Some(ans) = encoder.decode(&self.text) {
             return write!(f,"{}",ans);
         }
@@ -267,11 +267,11 @@ pub struct BinaryData {
 
 impl BinaryData {
     /// Take unstructured bytes representing the data only (sans header) and pack it into the structure
-    pub fn pack(bin: &Vec<u8>, addr: u16) -> Self {
+    pub fn pack(bin: &[u8], addr: u16) -> Self {
         Self {
             start: u16::to_le_bytes(addr),
             length: u16::to_le_bytes(bin.len() as u16),
-            data: bin.clone()
+            data: bin.to_vec()
         }
     }
 }

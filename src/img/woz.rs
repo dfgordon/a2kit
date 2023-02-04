@@ -1,10 +1,15 @@
 //! ## Common components for WOZ1 or WOZ2 disk images
+//! 
+//! Limitations of WOZ support (TODO)
+//! * extended 0-runs are not randomized
+//! * no flux tracks allowed
 
 use log::{debug,trace};
 use std::fmt::Write;
-use crate::fs::Chunk;
+use crate::fs::Block;
 use crate::bios::skew;
 
+use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
 pub const INFO_ID: u32 = 0x4f464e49;
@@ -14,13 +19,18 @@ pub const WRIT_ID: u32 = 0x54495257;
 pub const META_ID: u32 = 0x4154454D;
 pub const ALLOWED_TRACKS_525: [usize;1] = [35];
 
-/// Trait allowing us to write only 1 set of conversions for both WOZ types.
+pub struct HeadCoords {
+    pub track: usize,
+    pub bit_ptr: usize
+}
+
+/// Trait allowing us to write only 1 set of operations for both WOZ types.
 /// We end up with some generic functions that get called by methods of the same name.
-pub trait WozConverter {
+pub trait WozUnifier {
 	fn kind(&self) -> super::DiskKind;
 	fn num_tracks(&self) -> usize;
     /// Wrapper for track object function that works with a cached object
-    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),super::NibbleError>;
+    fn write_sector(&mut self,dat: &[u8],track: u8,sector: u8) -> Result<(),super::NibbleError>;
     /// Wrapper for track object function that works with a cached object
     fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,super::NibbleError>;
 }
@@ -94,7 +104,7 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	let size = u32::from_le_bytes([buf[ptr+4],buf[ptr+5],buf[ptr+6],buf[ptr+7]]);
 	let end = ptr + 8 + size as usize;
 	let mut next = end;
-	// if size puts us beyond end of file this is not a good chunk
+	// if size puts us beyond end of file this is not a good chunk, and also no more chunks
 	if end > buf.len() {
 		return (0,0,None);
 	}
@@ -102,7 +112,11 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	if next+8 > buf.len() {
 		next = 0;
 	}
-	debug!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
+	if id==0 && size==0 {
+		debug!("expected chunk, got nulls");
+	} else {
+		debug!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
+	}
 	match id {
 		INFO_ID | TMAP_ID | TRKS_ID | WRIT_ID | META_ID => {
 			// found something
@@ -115,23 +129,23 @@ pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-/// Get the ordered physical track-sector list and sector size for any chunk
-fn get_ts_list(addr: Chunk,kind: &super::DiskKind) -> (Vec<[usize;2]>,usize) {
+/// Get the ordered physical track-sector list and sector size for any block
+fn get_ts_list(addr: Block,kind: &super::DiskKind) -> Result<(Vec<[usize;2]>,usize),DYNERR> {
 	match addr {
-		Chunk::D13([t,s]) => (vec![[t,s]],256),
-		Chunk::DO([t,s]) => (vec![[t,skew::DOS_LSEC_TO_DOS_PSEC[s]]],256),
-		Chunk::PO(block) => {
-			let mut ans = skew::ts_from_prodos_block(block,kind);
+		Block::D13([t,s]) => Ok((vec![[t,s]],256)),
+		Block::DO([t,s]) => Ok((vec![[t,skew::DOS_LSEC_TO_DOS_PSEC[s]]],256)),
+		Block::PO(block) => {
+			let mut ans = skew::ts_from_prodos_block(block,kind)?;
 			match *kind {
 				super::names::A2_DOS33_KIND => {
 					ans[0][1] = skew::DOS_LSEC_TO_DOS_PSEC[ans[0][1]];
 					ans[1][1] = skew::DOS_LSEC_TO_DOS_PSEC[ans[1][1]];
-					(ans,256)
+					Ok((ans,256))
 				},
-				_ => (ans,524)
+				_ => Ok((ans,524))
 			}
 		},
-		Chunk::CPM((_block,_bsh,_off)) => {
+		Block::CPM((_block,_bsh,_off)) => {
 			let mut ans: Vec<[usize;2]> = Vec::new();
 			let lsecs = addr.get_lsecs(32);
 			// the following assumes blocks are aligned to even lsecs; also the list must be ordered.
@@ -140,7 +154,7 @@ fn get_ts_list(addr: Chunk,kind: &super::DiskKind) -> (Vec<[usize;2]>,usize) {
 					ans.push([ts[0],skew::CPM_LSEC_TO_DOS_PSEC[ts[1]-1]]);
 				}
 			}
-			(ans,256)
+			Ok((ans,256))
 		}
 	}
 }
@@ -149,10 +163,10 @@ fn get_ts_list(addr: Chunk,kind: &super::DiskKind) -> (Vec<[usize;2]>,usize) {
 /// Blocks are not allowed to cross track boundaries.
 /// This relies on the disk kind being correct to invoke the correct nibbles.
 /// For 3.5 inch disks, the returned data has the tag bytes stripped.
-pub fn read_chunk<T: WozConverter>(woz: &mut T,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+pub fn read_block<T: WozUnifier>(woz: &mut T,addr: Block) -> Result<Vec<u8>,DYNERR> {
 	trace!("reading {}",addr);
 	let mut ans: Vec<u8> = Vec::new();
-	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind());
+	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind())?;
 	let track = ts_list[0][0];
 	if track >= woz.num_tracks() {
 		debug!("track {} out of bounds ({})",track,woz.num_tracks());
@@ -176,17 +190,17 @@ pub fn read_chunk<T: WozConverter>(woz: &mut T,addr: Chunk) -> Result<Vec<u8>,Bo
 /// Blocks are not allowed to cross track boundaries.
 /// This relies on the disk kind being correct to invoke the correct nibbles.
 /// For 3.5 inch disks, tag bytes should not be included.
-pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:Chunk,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+pub fn write_block<T: WozUnifier>(woz: &mut T,addr:Block,dat: &[u8]) -> STDRESULT {
 	trace!("writing {}",addr);
-	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind());
+	let (ts_list,sec_len) = get_ts_list(addr,&woz.kind())?;
 	let track = ts_list[0][0];
 	let padded = match sec_len {
 		524 => {
 			let mut tagged: Vec<u8> = vec![0;12];
-			tagged.append(&mut dat.clone());
-			super::quantize_chunk(&tagged, ts_list.len()*sec_len)
+			tagged.append(&mut dat.to_vec());
+			super::quantize_block(&tagged, ts_list.len()*sec_len)
 		},
-		_ => super::quantize_chunk(dat, ts_list.len()*sec_len)
+		_ => super::quantize_block(dat, ts_list.len()*sec_len)
 	};
 	if track >= woz.num_tracks() {
 		debug!("track {} out of bounds ({})",track,woz.num_tracks());
@@ -202,7 +216,7 @@ pub fn write_chunk<T: WozConverter>(woz: &mut T,addr:Chunk,dat: &Vec<u8>) -> Res
 	return Ok(());
 }
 
-pub fn cyl_head_to_track<T: WozConverter>(woz: &T,cyl: usize,head: usize) -> Result<usize,Box<dyn std::error::Error>> {
+pub fn cyl_head_to_track<T: WozUnifier>(woz: &T,cyl: usize,head: usize) -> Result<usize,DYNERR> {
 	let (track,heads) = match woz.kind() {
 		super::names::A2_400_KIND => (cyl,1),
 		super::names::A2_800_KIND => (2*cyl+head,2),
@@ -222,7 +236,7 @@ pub fn cyl_head_to_track<T: WozConverter>(woz: &T,cyl: usize,head: usize) -> Res
 /// Read the physical track and sector.
 /// This relies on the disk kind being correct to invoke the correct nibbles.
 /// For 3.5 inch disks, the returned data has the tag bytes stripped.
-pub fn read_sector<T: WozConverter>(woz: &mut T,cyl: usize,head: usize,sector: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+pub fn read_sector<T: WozUnifier>(woz: &mut T,cyl: usize,head: usize,sector: usize) -> Result<Vec<u8>,DYNERR> {
 	let track = cyl_head_to_track(woz,cyl,head)?;
 	trace!("woz read track {} sector {}",track,sector);
 	let ans = woz.read_sector(track as u8,sector as u8)?;
@@ -236,15 +250,15 @@ pub fn read_sector<T: WozConverter>(woz: &mut T,cyl: usize,head: usize,sector: u
 /// Blocks are not allowed to cross track boundaries.
 /// This relies on the disk kind being correct to invoke the correct nibbles.
 /// For 3.5 inch disks, tag bytes should not be included.
-pub fn write_sector<T: WozConverter>(woz: &mut T,cyl: usize,head: usize,sector: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+pub fn write_sector<T: WozUnifier>(woz: &mut T,cyl: usize,head: usize,sector: usize,dat: &[u8]) -> STDRESULT {
 	let track = cyl_head_to_track(woz, cyl, head)?;
 	let padded = match woz.kind() {
 		super::names::A2_400_KIND | super::names::A2_800_KIND => {
 			let mut tagged: Vec<u8> = vec![0;12];
-			tagged.append(&mut dat.clone());
-			super::quantize_chunk(&tagged, 524)
+			tagged.append(&mut dat.to_vec());
+			super::quantize_block(&tagged, 524)
 		},
-		_ => super::quantize_chunk(dat, 256)
+		_ => super::quantize_block(dat, 256)
 	};
 	trace!("woz write track {} sector {}",track,sector);
 	woz.write_sector(&padded,track as u8,sector as u8)?;
@@ -252,7 +266,7 @@ pub fn write_sector<T: WozConverter>(woz: &mut T,cyl: usize,head: usize,sector: 
 }
 
 /// Display aligned track nibbles to stdout in columns of hex, track mnemonics
-pub fn display_track<T: WozConverter>(woz: &T,start_addr: u16,trk: &Vec<u8>) -> String {
+pub fn display_track<T: WozUnifier>(woz: &T,start_addr: u16,trk: &[u8]) -> String {
 	let mut ans = String::new();
     let mut slice_start = 0;
     let mut addr_count = 0;

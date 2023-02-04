@@ -6,14 +6,19 @@
 
 use log::{trace,error};
 use crate::img;
-use crate::fs::Chunk;
+use crate::fs::Block;
 use crate::bios::skew;
+use crate::{STDRESULT,DYNERR};
 
 const CPM_RECORD: usize = 128;
 const SECTOR_SIZE: usize = 256;
 const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
 const MIN_BLOCKS: usize = 280;
+
+pub fn file_extensions() -> Vec<String> {
+    vec!["do".to_string(),"dsk".to_string()]
+}
 
 /// Wrapper for DO data.
 /// Although this is DOS 3.3 ordered, we allow an extended (and abstract) mapping
@@ -52,26 +57,26 @@ impl img::DiskImage for DO {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
-        trace!("reading {}",addr);
+    fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
+        trace!("read {}",addr);
         match addr {
-            Chunk::D13(_) => Err(Box::new(img::Error::ImageTypeMismatch)),
-            Chunk::DO([t,s]) => {
+            Block::D13(_) => Err(Box::new(img::Error::ImageTypeMismatch)),
+            Block::DO([t,s]) => {
                 let mut ans: Vec<u8> = Vec::new();
                 let offset = t*self.sectors as usize*SECTOR_SIZE + s*SECTOR_SIZE;
                 ans.append(&mut self.data[offset..offset+SECTOR_SIZE].to_vec());
                 Ok(ans) 
             },
-            Chunk::PO(block) => {
+            Block::PO(block) => {
                 let mut ans: Vec<u8> = Vec::new();
-                let ts_list = skew::ts_from_prodos_block(block,&self.kind);
+                let ts_list = skew::ts_from_prodos_block(block,&self.kind)?;
                 for [t,s] in ts_list {
                     let offset = t*self.sectors as usize*SECTOR_SIZE + s*SECTOR_SIZE;
                     ans.append(&mut self.data[offset..offset+SECTOR_SIZE].to_vec());    
                 }
                 Ok(ans) 
             },
-            Chunk::CPM((_block,_bsh,_off)) => {
+            Block::CPM((_block,_bsh,_off)) => {
                 let mut ans: Vec<u8> = Vec::new();
                 let ts_list = addr.get_lsecs(32);
                 for ts in ts_list {
@@ -85,19 +90,19 @@ impl img::DiskImage for DO {
             }
         }
     }
-    fn write_chunk(&mut self, addr: Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
-        trace!("writing {}",addr);
+    fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT {
+        trace!("write {}",addr);
         match addr {
-            Chunk::D13(_) => Err(Box::new(img::Error::ImageTypeMismatch)),
-            Chunk::DO([t,s]) => {
-                let padded = super::quantize_chunk(dat, SECTOR_SIZE);
+            Block::D13(_) => Err(Box::new(img::Error::ImageTypeMismatch)),
+            Block::DO([t,s]) => {
+                let padded = super::quantize_block(dat, SECTOR_SIZE);
                 let offset = t*self.sectors as usize*SECTOR_SIZE + s*SECTOR_SIZE;
                 self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
                 Ok(())
             },
-            Chunk::PO(block) => {
-                let padded = super::quantize_chunk(dat, BLOCK_SIZE);
-                let ts_list = skew::ts_from_prodos_block(block,&self.kind);
+            Block::PO(block) => {
+                let padded = super::quantize_block(dat, BLOCK_SIZE);
+                let ts_list = skew::ts_from_prodos_block(block,&self.kind)?;
                 let mut src_offset = 0;
                 for [t,s] in ts_list {
                     let offset = t*self.sectors as usize*SECTOR_SIZE + s*SECTOR_SIZE;
@@ -106,8 +111,8 @@ impl img::DiskImage for DO {
                 }
                 Ok(())
             },
-            Chunk::CPM((_block,bsh,_off)) => {
-                let padded = super::quantize_chunk(dat, CPM_RECORD << bsh);
+            Block::CPM((_block,bsh,_off)) => {
+                let padded = super::quantize_block(dat, CPM_RECORD << bsh);
                 let ts_list = addr.get_lsecs(32);
                 let mut src_offset = 0;
                 for ts in ts_list {
@@ -122,7 +127,7 @@ impl img::DiskImage for DO {
             }
         }
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
         if cyl>=self.track_count() || head>0 || sec>=self.sectors as usize {
             error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,self.sectors-1);
             return Err(Box::new(img::Error::SectorAccess));
@@ -130,13 +135,13 @@ impl img::DiskImage for DO {
         let offset = (cyl*self.sectors as usize + skew::DOS_PSEC_TO_DOS_LSEC[sec])*SECTOR_SIZE;
         Ok(self.data[offset..offset+SECTOR_SIZE].to_vec())
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         if cyl>=self.track_count() || head>0 || sec>=self.sectors as usize {
             error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,self.sectors-1);
             return Err(Box::new(img::Error::SectorAccess));
         }
         let offset = (cyl*self.sectors as usize + skew::DOS_PSEC_TO_DOS_LSEC[sec])*SECTOR_SIZE;
-        let padded = super::quantize_chunk(dat, SECTOR_SIZE);
+        let padded = super::quantize_block(dat, SECTOR_SIZE);
         self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
         Ok(())
     }
@@ -164,7 +169,7 @@ impl img::DiskImage for DO {
         img::DiskImageType::DO
     }
     fn file_extensions(&self) -> Vec<String> {
-        vec!["do".to_string(),"dsk".to_string()]
+        file_extensions()
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
@@ -175,15 +180,19 @@ impl img::DiskImage for DO {
     fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("DO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+        error!("DO images have no track bits");
+        return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("DO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
-    fn display_track(&self,_bytes: &Vec<u8>) -> String {
+    fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("DO images have no track bits to display")
     }
 }

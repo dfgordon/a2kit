@@ -56,7 +56,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "3.5in",
         "3.5in-ss",
         "3.5in-ds",
-        "hdmax"];
+        "hdmax"
+    ];
+    let get_put_types = [
+        "atok","itok","mtok","bin","txt","raw","block","sec","track","raw_track","rec","any"     
+    ];
 
     let matches = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
@@ -71,10 +75,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .default_value("5.25in"))
         .arg(arg!(-d --dimg <PATH> "disk image path to create"))
         .about("write a blank disk image to the given path"))
-    // .subcommand(Command::new("reimage")
-    //     .arg(arg!(-d --dimg <PATH> "path to old disk image"))
-    //     .arg(arg!(-t --type <TYPE> "type of new disk image").possible_values(img_types))
-    //     .about("Transform an image into another type of image"))
     .subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
@@ -116,14 +116,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-s --step <NUM> "step between numbers"))
         .about("renumber BASIC program lines"))
     .subcommand(Command::new("get")
-        .arg(arg!(-f --file <PATH> "source path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","sec","track","raw_track","rec","any"]))
+        .arg(arg!(-f --file <PATH> "source path or address, maybe inside disk image"))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"))
     .subcommand(Command::new("put")
-        .arg(arg!(-f --file <PATH> "destination path or chunk index, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(["atok","itok","mtok","bin","txt","raw","chunk","sec","rec","any"]))
+        .arg(arg!(-f --file <PATH> "destination path or address, maybe inside disk image"))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"))
@@ -140,25 +140,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("read from stdin, detokenize, write to stdout"))
     .get_matches();
     
-    // TODO: Transform an image into another type of image
-
-    // if let Some(cmd) = matches.subcommand_matches("reimage") {
-    //     let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-    //     let new_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();
-    //     // we need to get the file system also in order to determine the ordering
-    //     return match a2kit::create_fs_from_file(&path_to_img) {
-    //         Ok(disk) => {
-    //             match new_typ {
-    //                 _ => {
-    //                     return Err(Box::new(CommandError::UnsupportedFormat))
-    //                 }
-    //             };
-    //             Ok(())
-    //         },
-    //         Err(e) => Err(e)
-    //     };
-    // }    
-
     // Create a disk image
 
     if let Some(cmd) = matches.subcommand_matches("mkdsk") {
@@ -289,7 +270,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                     let object = tokenizer.tokenize(&program,addr);
                     if atty::is(atty::Stream::Stdout) {
-                        a2kit::display_chunk(addr,&object);
+                        a2kit::display_block(addr,&object);
                     } else {
                         std::io::stdout().write_all(&object).expect("could not write output stream");
                     }
@@ -305,7 +286,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
                 let object = tokenizer.tokenize(String::from(&program));
                 if atty::is(atty::Stream::Stdout) {
-                    a2kit::display_chunk(0,&object);
+                    a2kit::display_block(0,&object);
                 } else {
                     std::io::stdout().write_all(&object).expect("could not write output stream");
                 }
@@ -319,7 +300,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
                 let object = tokenizer.tokenize(String::from(&program));
                 if atty::is(atty::Stream::Stdout) {
-                    a2kit::display_chunk(0,&object);
+                    a2kit::display_block(0,&object);
                 } else {
                     std::io::stdout().write_all(&object).expect("could not write output stream");
                 }

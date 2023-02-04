@@ -32,6 +32,11 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
         // we are writing to a disk image
         (Some(typ_str),Some(img_path)) => {
             let typ = ItemType::from_str(typ_str);
+            // If putting a track or sector, no need to resolve file system, handle differently
+            match typ {
+                Ok(ItemType::Track) | Ok(ItemType::RawTrack) | Ok(ItemType::Sector) => return super::put_img::put(cmd,&file_data),
+                _ => {}
+            }
             let load_address: u16 = match (cmd.value_of("addr"),&typ) {
                 (Some(a),_) => u16::from_str(a).expect("bad address"),
                 (_ ,Ok(ItemType::Binary)) => {
@@ -58,7 +63,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                             }
                         },
                         Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
-                        Ok(ItemType::Chunk) => disk.write_chunk(&dest_path,&file_data),
+                        Ok(ItemType::Block) => disk.write_block(&dest_path,&file_data),
                         Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
                             Ok(s) => match Records::from_json(s) {
                                 Ok(recs) => disk.write_records(&dest_path,&recs),
@@ -71,7 +76,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                         },
                         Ok(ItemType::FileImage) => match std::str::from_utf8(&file_data) {
                             Ok(s) => match FileImage::from_json(s) {
-                                Ok(chunks) => disk.write_any(&dest_path,&chunks),
+                                Ok(fimg) => disk.write_any(&dest_path,&fimg),
                                 Err(e) => Err(e)
                             },
                             _ => {

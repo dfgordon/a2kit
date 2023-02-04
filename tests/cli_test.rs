@@ -4,9 +4,10 @@ use std::process::{Command,Stdio}; // Run programs
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
+type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
 #[test]
-fn parse_simple_file() -> Result<(), Box<dyn std::error::Error>> {
+fn parse_simple_file() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     if let Ok(fd) = File::open(Path::new("tests").join("test.bas")) {
         cmd.arg("verify")
@@ -20,7 +21,7 @@ fn parse_simple_file() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn invalid_file_type() -> Result<(), Box<dyn std::error::Error>> {
+fn invalid_file_type() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     if let Ok(fd) = File::open(Path::new("tests").join("test.bas")) {
         cmd.arg("verify")
@@ -34,7 +35,7 @@ fn invalid_file_type() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn catalog_cpm() -> Result<(), Box<dyn std::error::Error>> {
+fn catalog_cpm() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
 r#"A>USER 0
@@ -53,7 +54,7 @@ found 1 user
 }
 
 #[test]
-fn catalog_dos32() -> Result<(), Box<dyn std::error::Error>> {
+fn catalog_dos32() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
 r#"DISK VOLUME 254
@@ -71,7 +72,7 @@ r#"DISK VOLUME 254
 }
 
 #[test]
-fn catalog_dos33() -> Result<(), Box<dyn std::error::Error>> {
+fn catalog_dos33() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
 r#"DISK VOLUME 254
@@ -89,7 +90,7 @@ r#"DISK VOLUME 254
 }
 
 #[test]
-fn catalog_prodos() -> Result<(), Box<dyn std::error::Error>> {
+fn catalog_prodos() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected =
 r#".NEW.DISK
@@ -111,7 +112,7 @@ BLOCKS FREE: 225\s+BLOCKS USED: 55\s+TOTAL BLOCKS: 280"#;
 }
 
 #[test]
-fn catalog_pascal() -> Result<(), Box<dyn std::error::Error>> {
+fn catalog_pascal() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected =
 r#"BLANK:
@@ -130,7 +131,7 @@ TEST3.TEXT\s+4.*TEXT
 
 // N.b. extensive tokenization tests are in the language modules
 #[test]
-fn tokenize_stdin() -> Result<(), Box<dyn std::error::Error>> {
+fn tokenize_stdin() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let test_prog =
 r#"10 home
@@ -155,7 +156,7 @@ r#"10 home
 }
 
 #[test]
-fn detokenize_stdin() -> Result<(), Box<dyn std::error::Error>> {
+fn detokenize_stdin() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let test_prog =
 r#"10  HOME 

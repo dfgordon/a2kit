@@ -5,14 +5,19 @@
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
 use crate::img;
-use crate::fs::Chunk;
+use crate::fs::Block;
 
-use log::error;
+use log::{trace,error};
 use super::BlockLayout;
+use crate::{STDRESULT,DYNERR};
 
 const BLOCK_SIZE: usize = 512;
 const MAX_BLOCKS: usize = 65535;
 const MIN_BLOCKS: usize = 280;
+
+pub fn file_extensions() -> Vec<String> {
+    vec!["po".to_string(),"dsk".to_string()]
+}
 
 fn select_kind(blocks: u16) -> img::DiskKind {
     match blocks {
@@ -49,27 +54,29 @@ impl img::DiskImage for PO {
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
-    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
+        trace!("read {}",addr);
         match addr {
-            Chunk::PO(block) => Ok(self.data[block*BLOCK_SIZE..(block+1)*BLOCK_SIZE].to_vec()),
+            Block::PO(block) => Ok(self.data[block*BLOCK_SIZE..(block+1)*BLOCK_SIZE].to_vec()),
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
         }
     }
-    fn write_chunk(&mut self, addr: Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT {
+        trace!("write {}",addr);
         match addr {
-            Chunk::PO(block) => {
-                let padded = super::quantize_chunk(dat, BLOCK_SIZE);
+            Block::PO(block) => {
+                let padded = super::quantize_block(dat, BLOCK_SIZE);
                 self.data[block*BLOCK_SIZE..(block+1)*BLOCK_SIZE].copy_from_slice(&padded);
                 Ok(())
             },
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
         }
     }
-    fn read_sector(&mut self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,DYNERR> {
         error!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
-    fn write_sector(&mut self,_cyl: usize,_head: usize,_sec: usize,_dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_sector(&mut self,_cyl: usize,_head: usize,_sec: usize,_dat: &[u8]) -> STDRESULT {
         error!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
@@ -89,7 +96,7 @@ impl img::DiskImage for PO {
         img::DiskImageType::PO
     }
     fn file_extensions(&self) -> Vec<String> {
-        vec!["po".to_string()]
+        file_extensions()
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
@@ -100,15 +107,19 @@ impl img::DiskImage for PO {
     fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+        error!("PO images have no track bits");
+        return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
-    fn display_track(&self,_bytes: &Vec<u8>) -> String {
+    fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("PO images have no track bits to display")
     }
 }

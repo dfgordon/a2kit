@@ -6,9 +6,10 @@
 //! The sector skews are kept separate from file systems and disk images because multiple
 //! submodules of either can use the same tables.
 
-use log::trace;
+use log::{trace,error};
 use crate::img::disk35;
 use crate::img::{names,DiskKind};
+use crate::DYNERR;
 
 /// Get the interleave ratio from a *physical* skew table.
 /// Will panic if the largest id occurs first or table is bad.
@@ -53,23 +54,23 @@ pub const DOS_PSEC_TO_DOS_LSEC: [usize;16] = [0,7,14,6,13,5,12,4,11,3,10,2,9,1,8
 
 /// Get block number and byte offset into block corresponding to
 /// track and logical sector.  Returned in tuple (block,offset)
-pub fn prodos_block_from_ts(track: usize,sector: usize) -> (usize,usize) {
+pub fn prodos_block_from_ts(track: usize,sector: usize) -> Result<(usize,usize),DYNERR> {
     let block_offset: [usize;16] = [0,7,6,6,5,5,4,4,3,3,2,2,1,1,0,7];
     let byte_offset: [usize;16] = [0,0,256,0,256,0,256,0,256,0,256,0,256,0,256,256];
-    return (8*track + block_offset[sector], byte_offset[sector]);
+    Ok((8*track + block_offset[sector], byte_offset[sector]))
 }
 
 /// Get vector of track and logical sector pairs corresponding to a block.
 /// The returned vector is arranged in order.
 /// Works for either 5.25 inch (two pairs) or 3.5 inch (one pair) disks.
-pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Vec<[usize;2]> {
+pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2]>,DYNERR> {
     match *kind {
         DiskKind::LogicalSectors(names::A2_DOS33) | names::A2_DOS33_KIND => {
             let sector1: [usize;8] = [0,13,11,9,7,5,3,1];
             let sector2: [usize;8] = [14,12,10,8,6,4,2,15];
             let [track,sec1,sec2] = [block/8,sector1[block%8],sector2[block%8]];
             trace!("locate block for 5.25 inch disk: track {}, sectors {},{}",track,sec1,sec2);
-            vec![[track,sec1],[track,sec2]]
+            Ok(vec![[track,sec1],[track,sec2]])
         },
         names::A2_400_KIND => {
             let zone = match block {
@@ -85,7 +86,7 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Vec<[usize;2]> {
             let track = 16 * zone + rel_block/secs_per_track;
             let sector = rel_block%secs_per_track;
             trace!("locate block for 3.5 inch disk: track {}, sector {}",track,sector);
-            vec![[track,sector]]
+            Ok(vec![[track,sector]])
         },
         names::A2_800_KIND => {
             let zone = match block {
@@ -101,8 +102,11 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Vec<[usize;2]> {
             let track = 32 * zone + rel_block/secs_per_track;
             let sector = rel_block%secs_per_track;
             trace!("locate block for 3.5 inch disk: track {}, sector {}",track,sector);
-            vec![[track,sector]]
+            Ok(vec![[track,sector]])
         },
-        _ => panic!("disk cannot interpret ProDOS block")
+        _ => {
+            error!("cannot map ProDOS block to {}",*kind);
+            Err(Box::new(super::Error::IncompatibleDiskKind))
+        }
     }
 }

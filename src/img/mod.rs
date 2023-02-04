@@ -27,9 +27,9 @@
 //! order in which they pass by the read/write head, we have a "physical" skew.
 //! 
 //! The way this is handled within `a2kit` is as follows.  The `fs` module provides
-//! an enumeration called `Chunk` which identifies a disk address in a given file system's
-//! own language.  Each disk image implementation has to provide `read_chunk` and `write_chunk`.
-//! These functions have to be able to take a `Chunk` and transform it into whatever disk
+//! an enumeration called `Block` which identifies a disk address in a given file system's
+//! own language.  Each disk image implementation has to provide `read_block` and `write_block`.
+//! These functions have to be able to take a `Block` and transform it into whatever disk
 //! addressing the image uses.  The tables in `bios::skew` are accessible to any image.
 
 pub mod disk35;
@@ -47,6 +47,7 @@ use std::str::FromStr;
 use std::fmt;
 use log::info;
 use crate::fs;
+use crate::{STDRESULT,DYNERR};
 
 /// Enumerates disk image errors.  The `Display` trait will print equivalent long message.
 #[derive(thiserror::Error,Debug)]
@@ -235,26 +236,25 @@ impl FromStr for DiskImageType {
     }
 }
 
-// TODO: TrackBits owns its own track data:
-// is this the clone anti-pattern?
-
+/// Lightweight trait object for reading and writing track bits.
+/// The track buffer is borrowed.
 pub trait TrackBits {
-    /// Length of the track buffer in bytes
-    fn len(&self) -> usize;
+    /// get id of the track, usually sequence indexed from 0
+    fn id(&self) -> usize;
     /// Bits actually on the track
     fn bit_count(&self) -> usize;
     /// Rotate the disk to the reference bit
     fn reset(&mut self);
     /// Get the current displacement from the reference bit
     fn get_bit_ptr(&self) -> usize;
+    /// Set the current displacement from the reference bit
+    fn set_bit_ptr(&mut self,displ: usize);
     /// Write physical sector (as identified by address field)
-    fn write_sector(&mut self,dat: &Vec<u8>,track: u8,sector: u8) -> Result<(),NibbleError>;
+    fn write_sector(&mut self,bits: &mut [u8],dat: &[u8],track: u8,sector: u8) -> Result<(),NibbleError>;
     /// Read physical sector (as identified by address field)
-    fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
-    /// Copy of the unfiltered track buffer
-    fn to_buf(&self) -> Vec<u8>;
+    fn read_sector(&mut self,bits: &[u8],track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
     /// Get aligned track nibbles; n.b. head position will move.
-    fn to_nibbles(&mut self) -> Vec<u8>;
+    fn to_nibbles(&mut self,bits: &[u8]) -> Vec<u8>;
 }
 
 /// The main trait for working with any kind of disk image.
@@ -270,24 +270,26 @@ pub trait DiskImage {
     fn change_kind(&mut self,kind: DiskKind);
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
     fn to_bytes(&mut self) -> Vec<u8>;
-    /// Read a chunk (block or sector) from the image; can affect disk state
-    fn read_chunk(&mut self,addr: fs::Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
-    /// Write a chunk (block or sector) to the image
-    fn write_chunk(&mut self, addr: fs::Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>>;
+    /// Read a block from the image; can affect disk state
+    fn read_block(&mut self,addr: fs::Block) -> Result<Vec<u8>,DYNERR>;
+    /// Write a block to the image
+    fn write_block(&mut self, addr: fs::Block, dat: &[u8]) -> STDRESULT;
     /// Read a physical sector from the image; can affect disk state
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR>;
     /// Write a physical sector to the image
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>>;
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT;
     /// Get the track buffer exactly in the form the image stores it; for user inspection
-    fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
+    /// Set the track buffer using another track buffer, the sizes must match
+    fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT;
     /// Get the track bytes as aligned nibbles; for user inspection
-    fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
     /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`
-    fn display_track(&self,bytes: &Vec<u8>) -> String;
+    fn display_track(&self,bytes: &[u8]) -> String;
 }
 
 /// Test a buffer for a size match to DOS-oriented track and sector counts.
-pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usize) -> Result<(),Box<dyn std::error::Error>> {
+pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usize) -> STDRESULT {
     let bytes = dsk.len();
     for tracks in allowed_track_counts {
         if bytes==tracks*sectors*256 {
@@ -300,7 +302,7 @@ pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usiz
 
 /// If a data source is smaller than `quantum` bytes, pad it with zeros.
 /// If it is larger, do not include the extra bytes.
-pub fn quantize_chunk(src: &Vec<u8>,quantum: usize) -> Vec<u8> {
+pub fn quantize_block(src: &[u8],quantum: usize) -> Vec<u8> {
 	let mut padded: Vec<u8> = Vec::new();
 	for i in 0..quantum {
 		if i<src.len() {

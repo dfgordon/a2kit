@@ -202,7 +202,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+    fn decode(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x0d {
@@ -224,8 +224,7 @@ impl TextEncoder for Encoder {
 /// Structured representation of sequential text files on disk.
 /// For random access text use `fs::Records` instead.
 pub struct SequentialText {
-    pub text: Vec<u8>,
-    terminator: u8
+    pub text: Vec<u8>
 }
 
 /// Allows the structure to be created from string slices using `from_str`.
@@ -233,11 +232,10 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x0d]);
         if let Some(dat) = encoder.encode(s) {
             return Ok(Self {
-                text: dat.clone(),
-                terminator: 0
+                text: dat.clone()
             });
         }
         Err(std::fmt::Error)
@@ -249,7 +247,7 @@ impl FromStr for SequentialText {
 /// This changes CR to LF, and nulls out negative ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x0d]);
         if let Some(ans) = encoder.decode(&self.text) {
             return write!(f,"{}",ans);
         }
@@ -261,8 +259,7 @@ impl DiskStruct for SequentialText {
     /// Create an empty structure
     fn new() -> Self {
         Self {
-            text: Vec::new(),
-            terminator: 0
+            text: Vec::new()
         }
     }
     /// Create structure using flattened bytes (typically from disk)
@@ -271,22 +268,19 @@ impl DiskStruct for SequentialText {
             text: match dat.split(|x| *x==0).next() {
                 Some(v) => v.to_vec(),
                 _ => dat.clone()
-            },
-            terminator: 0
+            }
         }
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.text.clone());
-        ans.push(self.terminator);
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
     fn update_from_bytes(&mut self,dat: &Vec<u8>) {
         let temp = SequentialText::from_bytes(&dat);
         self.text = temp.text.clone();
-        self.terminator = 0;
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {

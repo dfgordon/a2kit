@@ -32,10 +32,12 @@ use a2kit_macro::DiskStruct;
 use log::{trace,info,debug,warn,error};
 use types::*;
 use directory::*;
-use super::Chunk;
+use super::Block;
 use crate::bios::dpb::DiskParameterBlock;
 use crate::img;
 use crate::commands::ItemType;
+
+use crate::{STDRESULT,DYNERR};
 
 fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
     let now = match time {
@@ -187,7 +189,7 @@ fn update_fimg_with_name(fimg: &mut super::FileImage,s: &str) {
 }
 
 /// Take string such as `2:USER2.TXT` and return (2,"USER2.TXT")
-fn split_user_filename(xname: &str) -> Result<(u8,String),Box<dyn std::error::Error>> {
+fn split_user_filename(xname: &str) -> Result<(u8,String),DYNERR> {
     let parts: Vec<&str> = xname.split(':').collect();
     if parts.len()==1 {
         return Ok((0,xname.to_string()));
@@ -216,7 +218,7 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> 
     }
     let mut buf: Vec<u8> = Vec::new();
     for iblock in 0..dpb.dir_blocks() {
-        if let Ok(dat) = img.read_chunk(Chunk::CPM((iblock,dpb.bsh,dpb.off))) {
+        if let Ok(dat) = img.read_block(Block::CPM((iblock,dpb.bsh,dpb.off))) {
             buf.append(&mut dat.clone());
         } else {
             debug!("cannot read CP/M block {}",iblock);
@@ -357,11 +359,12 @@ impl Disk
     fn get_directory(&mut self) -> Directory {
         return get_directory(&mut self.img,&self.dpb).expect("directory broken");
     }
-    fn save_directory(&mut self,dir: &Directory) {
+    fn save_directory(&mut self,dir: &Directory) -> STDRESULT {
         let buf = dir.to_bytes();
         for iblock in 0..self.dpb.dir_blocks() {
-            self.write_block(&buf,iblock,iblock * self.dpb.block_size());
+            self.write_block(&buf,iblock,iblock * self.dpb.block_size())?;
         }
+        Ok(())
     }
     fn is_block_free(&self,iblock: usize,directory: &Directory) -> bool {
         if self.dpb.is_reserved(iblock) || iblock >= self.dpb.user_blocks() {
@@ -415,38 +418,35 @@ impl Disk
     }
     /// Read a block of data into buffer `data` starting at `offset` within the buffer.
     /// Will read as many bytes as will fit in the buffer starting at `offset`.
-    fn read_block(&mut self,data: &mut Vec<u8>, iblock: usize, offset: usize) {
+    fn read_block(&mut self,data: &mut [u8], iblock: usize, offset: usize) -> STDRESULT {
         let bytes = self.dpb.block_size() as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in read block"),
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        if let Ok(buf) = self.img.read_chunk(Chunk::CPM((iblock,self.dpb.bsh,self.dpb.off))) {
-            for i in 0..actual_len {
-                data[offset + i] = buf[i];
-            }
-        } else {
-            panic!("read failed for block {}",iblock);
+        let buf = self.img.read_block(Block::CPM((iblock,self.dpb.bsh,self.dpb.off)))?;
+        for i in 0..actual_len {
+            data[offset + i] = buf[i];
         }
+        Ok(())
     }
     /// Writes a block of data from buffer `data`, starting at `offset` within the buffer.
     /// If `data` is shorter than the block, trailing bytes are unaffected.
     /// Same as zap since there is no track bitmap in CP/M file system.
-    fn write_block(&mut self,data: &Vec<u8>, iblock: usize, offset: usize) {
-        self.zap_block(data,iblock,offset);
+    fn write_block(&mut self,data: &[u8], iblock: usize, offset: usize) -> STDRESULT {
+        self.zap_block(data,iblock,offset)
     }
     /// Writes a block of data from buffer `data`, starting at `offset` within the buffer.
     /// If `data` is shorter than the block, trailing bytes are unaffected.
-    fn zap_block(&mut self,data: &Vec<u8>, iblock: usize, offset: usize) {
+    fn zap_block(&mut self,data: &[u8], iblock: usize, offset: usize) -> STDRESULT {
         let bytes = self.dpb.block_size() as i32;
         let actual_len = match data.len() as i32 - offset as i32 {
             x if x<0 => panic!("invalid offset in write block"),
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        self.img.write_chunk(Chunk::CPM((iblock,self.dpb.bsh,self.dpb.off)), &data[offset..offset+actual_len].to_vec()).
-            expect("write failed");
+        self.img.write_block(Block::CPM((iblock,self.dpb.bsh,self.dpb.off)), &data[offset..offset+actual_len].to_vec())
     }
     fn get_available_block(&mut self,dir: &Directory) -> Option<u16> {
         for block in 0..self.dpb.user_blocks() {
@@ -466,16 +466,16 @@ impl Disk
     }
     /// Format disk for the CP/M file system.  The `time` argument is currently ignored, because we
     /// are not using the disk label extent.
-    pub fn format(&mut self, vol_name: &str, _time: Option<chrono::NaiveDateTime>) -> Result<(),Error> {
+    pub fn format(&mut self, vol_name: &str, _time: Option<chrono::NaiveDateTime>) -> STDRESULT {
         if !is_name_valid(vol_name) {
             error!("CP/M volume name invalid");
-            return Err(Error::BadFormat);
+            return Err(Box::new(Error::BadFormat));
         }
         // Formatting an empty disk is nothing more than filling all user sectors with
         // the deleted file mark.  If we want to put the OS in the reserved tracks
-        // we cannot use `write_block` (we need to use chunks with OFF=0).
+        // we cannot use `write_block` (we need to use blocks with OFF=0).
         for iblock in 0..self.dpb.user_blocks() {
-            self.write_block(&vec![DELETED;self.dpb.block_size()],iblock,0);
+            self.write_block(&vec![DELETED;self.dpb.block_size()],iblock,0)?;
         }
         return Ok(());
     }
@@ -494,7 +494,7 @@ impl Disk
         return None;
     }
     /// Read any file into a file image. Use `FileImage::sequence` to make the result sequential.
-    fn read_file(&mut self,name: &str,user: u8) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_file(&mut self,name: &str,user: u8) -> Result<super::FileImage,DYNERR> {
         let dir = self.get_directory();
         let files = build_files(&dir, &self.dpb, self.cpm_vers)?;
         if let Some(pointers) = self.get_file_metadata(&files,name,user) {
@@ -530,7 +530,7 @@ impl Disk
                         }
                         if iblock>0 {
                             debug!("read block {}",iblock);
-                            self.read_block(&mut buf, iblock as usize, 0);
+                            self.read_block(&mut buf, iblock as usize, 0)?;
                             ans.chunks.insert(block_count,buf.clone());
                         }
                         block_count += 1;
@@ -578,7 +578,7 @@ impl Disk
         dir.set_file(entry_ptr,fx);
     }
     /// Write any file from a file image.  Use `FileImage::desequence` to convert sequential data.
-    fn write_file(&mut self,name: &str, user: u8,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_file(&mut self,name: &str, user: u8,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         if !is_name_valid(name) {
             return Err(Box::new(Error::BadFormat));
         }
@@ -653,7 +653,7 @@ impl Disk
                         if let Some(fx) = maybe_fx.as_mut() {
                             fx.set_block_ptr(loc_slot, lx, iblock, &self.dpb);
                             dir.set_file(&entry_ptr, &fx);
-                            self.write_block(&fimg.chunks[&glob_slot], iblock as usize, 0);
+                            self.write_block(&fimg.chunks[&glob_slot], iblock as usize, 0)?;
                         }
                     }
                 }
@@ -677,13 +677,13 @@ impl Disk
             self.close_extent(&entry_ptr,&mut maybe_fx.unwrap(),&mut dir,1,true,&fimg);
         }
         // save the directory changes
-        self.save_directory(&dir);
+        self.save_directory(&dir)?;
         return Ok(0);
     }
     /// Modify a file, optionally rename, retype, change access flags.
     /// The access array has this code: negative=set high bit low, 0=leave high bit alone, positive=set high bit high.
     /// For this function, filenames include the user, as in `0:fname`, `1:fname`, etc.
-    fn modify(&mut self,old_xname: &str,maybe_new_xname: Option<&str>,access: [i8;11]) -> Result<(),Box<dyn std::error::Error>> {
+    fn modify(&mut self,old_xname: &str,maybe_new_xname: Option<&str>,access: [i8;11]) -> STDRESULT {
         let (old_user,old_name) = split_user_filename(old_xname)?;
         if !is_name_valid(&old_name) {
             return Err(Box::new(Error::BadFormat));
@@ -731,7 +731,7 @@ impl Disk
                     dir.set_file(ptr,&fx);
                 }
             }
-            self.save_directory(&dir);
+            self.save_directory(&dir)?;
             return Ok(());
         } else {
             return Err(Box::new(Error::FileNotFound));
@@ -743,7 +743,7 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&mut self, _path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn catalog_to_stdout(&mut self, _path: &str) -> STDRESULT {
         let dir = self.get_directory();
         for i in 0..dir.num_entries() {
             if let Some(label) = dir.get_label(&Ptr::ExtentEntry(i)) {
@@ -809,11 +809,11 @@ impl super::DiskFS for Disk {
         }
         return Ok(());
     }
-    fn create(&mut self,_path: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn create(&mut self,_path: &str) -> STDRESULT {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn delete(&mut self,xname: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn delete(&mut self,xname: &str) -> STDRESULT {
         let (user,name) = split_user_filename(xname)?;
         let mut dir = self.get_directory();
         let files = build_files(&dir, &self.dpb, self.cpm_vers)?;
@@ -828,24 +828,24 @@ impl super::DiskFS for Disk {
                     dir.set_file(ptr,&fx);
                 }
             }
-            self.save_directory(&dir);
+            self.save_directory(&dir)?;
             return Ok(());
         } else {
             return Err(Box::new(Error::FileNotFound));
         }
     }
-    fn lock(&mut self,xname: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn lock(&mut self,xname: &str) -> STDRESULT {
         // CP/M v2 or higher uses bit 7 of typ[0] for read only
         return self.modify(xname,None,[0,0,0,0,0,0,0,0,1,0,0]);
     }
-    fn unlock(&mut self,xname: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn unlock(&mut self,xname: &str) -> STDRESULT {
         // CP/M v2 or higher uses bit 7 of typ[0] for read only
         return self.modify(xname,None,[0,0,0,0,0,0,0,0,-1,0,0]);
     }
-    fn rename(&mut self,old_xname: &str,new_xname: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn rename(&mut self,old_xname: &str,new_xname: &str) -> STDRESULT {
         return self.modify(old_xname,Some(new_xname),[0;11]);
     }
-    fn retype(&mut self,xname: &str,new_type: &str,_sub_type: &str) -> Result<(),Box<dyn std::error::Error>> {
+    fn retype(&mut self,xname: &str,new_type: &str,_sub_type: &str) -> STDRESULT {
         // CP/M v2 or higher uses bit 7 of typ[1] for system file (hidden file)
         if new_type=="sys" {
             return self.modify(xname,None,[0,0,0,0,0,0,0,0,0,1,0]);
@@ -857,58 +857,58 @@ impl super::DiskFS for Disk {
             return Err(Box::new(Error::Select));
         }
     }
-    fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
             Ok(sd) => Ok((0,sd.sequence())),
             Err(e) => Err(e)
         }
     }
-    fn bsave(&mut self,xname: &str, dat: &Vec<u8>,_start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn bsave(&mut self,xname: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         let padded = match trailing {
-            Some(v) => [dat.clone(),v.clone()].concat(),
-            None => dat.clone()
+            Some(v) => [dat.to_vec(),v.to_vec()].concat(),
+            None => dat.to_vec()
         };
         let mut fimg = self.new_fimg(self.dpb.block_size());
         fimg.desequence(&padded);
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name,user,&fimg);
     }
-    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn save(&mut self,_name: &str, _dat: &Vec<u8>, _typ: ItemType, _trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn save(&mut self,_name: &str, _dat: &[u8], _typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
             Ok(sd) => Ok((0,sd.sequence())),
             Err(e) => Err(e)
         }
     }
-    fn write_text(&mut self,xname: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_text(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         let mut fimg = self.new_fimg(self.dpb.block_size());
         fimg.desequence(&dat);
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name, user, &fimg);
     }
-    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,Box<dyn std::error::Error>> {
+    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,DYNERR> {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>> {
+    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         match usize::from_str(num) {
             Ok(block) => {
-                match self.img.read_chunk(Chunk::CPM((block,self.dpb.bsh,self.dpb.off))) {
+                match self.img.read_block(Block::CPM((block,self.dpb.bsh,self.dpb.off))) {
                     Ok(buf) => Ok((0,buf)),
                     Err(e) => Err(e)
                 }
@@ -916,13 +916,13 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         match usize::from_str(num) {
             Ok(block) => {
                 if dat.len() > self.dpb.block_size() {
                     return Err(Box::new(Error::Select));
                 }
-                match self.img.write_chunk(Chunk::CPM((block,self.dpb.bsh,self.dpb.off)), dat) {
+                match self.img.write_block(Block::CPM((block,self.dpb.bsh,self.dpb.off)), dat) {
                     Ok(()) => Ok(dat.len()),
                     Err(e) => Err(e)
                 }
@@ -930,11 +930,11 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&mut self,xname: &str) -> Result<super::FileImage,Box<dyn std::error::Error>> {
+    fn read_any(&mut self,xname: &str) -> Result<super::FileImage,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         return self.read_file(&name,user);
     }
-    fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,Box<dyn std::error::Error>> {
+    fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         if fimg.file_system!="cpm" {
             error!("cannot write {} file image to cpm",fimg.file_system);
@@ -946,26 +946,26 @@ impl super::DiskFS for Disk {
         }
         return self.write_file(&name,user,fimg);
     }
-    fn decode_text(&self,dat: &Vec<u8>) -> String {
-        let file = types::SequentialText::from_bytes(&dat);
-        return file.to_string();
+    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
+        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        Ok(file.to_string())
     }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
             Err(e) => Err(Box::new(e))
         }
     }
-    fn standardize(&mut self,_ref_con: u16) -> HashMap<Chunk,Vec<usize>> {
+    fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {
         return HashMap::new();
     }
-    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>) {
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
         for block in 0..self.dpb.user_blocks() {
-            let addr = Chunk::CPM((block,self.dpb.bsh,self.dpb.off));
-            let mut actual = self.img.read_chunk(addr).expect("bad sector access");
-            let mut expected = emulator_disk.get_img().read_chunk(addr).expect("bad sector access");
+            let addr = Block::CPM((block,self.dpb.bsh,self.dpb.off));
+            let mut actual = self.img.read_block(addr).expect("bad sector access");
+            let mut expected = emulator_disk.get_img().read_block(addr).expect("bad sector access");
             if let Some(ignorable) = ignore.get(&addr) {
                 for offset in ignorable {
                     actual[*offset] = 0;

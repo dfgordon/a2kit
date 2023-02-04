@@ -12,7 +12,7 @@ pub mod tokenizer;
 pub mod minifier;
 pub mod renumber;
 
-pub fn deduce_address(tokens: &Vec<u8>) -> u16 {
+pub fn deduce_address(tokens: &[u8]) -> u16 {
     let line2_addr = u16::from_le_bytes([tokens[0],tokens[1]]);
     let mut line2_rel = 4;
     while tokens[line2_rel]>0 {

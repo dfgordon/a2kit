@@ -10,3 +10,10 @@
 
 pub mod skew;
 pub mod dpb;
+
+/// Enumerates bios errors.  The `Display` trait will print equivalent long message.
+#[derive(thiserror::Error,Debug)]
+pub enum Error {
+    #[error("incompatible disk kind")]
+    IncompatibleDiskKind
+}

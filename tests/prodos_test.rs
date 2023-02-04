@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::fmt::Write;
 use std::collections::HashMap;
-use a2kit::fs::{Chunk,prodos,TextEncoder,DiskFS};
+use a2kit::fs::{Block,prodos,TextEncoder,DiskFS};
 use a2kit::fs::prodos::types::BLOCK_SIZE;
 use a2kit::lang::applesoft;
 use a2kit::commands::ItemType;
@@ -18,13 +18,13 @@ pub const JSON_REC: &str = "
     }
 }";
 
-fn ignore_boot_blocks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
+fn ignore_boot_blocks(ignore: &mut HashMap<Block,Vec<usize>>) {
     for block in 0..2 {
         let mut all: Vec<usize> = Vec::new();
         for i in 0..BLOCK_SIZE {
             all.push(i);
         }
-        ignore.insert(Chunk::PO(block),all);
+        ignore.insert(Block::PO(block),all);
     }
 }
 
@@ -40,7 +40,7 @@ fn get_tokens(filename: &str) -> Vec<u8> {
 fn format() {
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     let ignore = disk.standardize(2);
     disk.compare(&Path::new("tests").join("prodos-blank.po"),&ignore);
 }
@@ -49,7 +49,7 @@ fn format() {
 fn create_dirs() {
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // Virtual II added an extra byte, why?
     disk.save("hello",&tokens,ItemType::ApplesoftTokens,None).expect("dimg error");
@@ -68,7 +68,7 @@ fn read_small() {
     // Formatting: Copy2Plus, writing: Virtual II:
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.do")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -93,7 +93,7 @@ fn write_small() {
     // This tests a small BASIC program, binary, and text file
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     // save the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -104,8 +104,8 @@ fn write_small() {
     disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
 
     // save the text
-    let encoder = prodos::types::Encoder::new(vec![0x0d]);
-    disk.write_text("thetext",&encoder.encode("HELLO FROM EMULATOR").unwrap()).expect("error");
+    let txt = disk.encode_text("HELLO FROM EMULATOR").expect("could not encode text");
+    disk.write_text("thetext",&txt).expect("error");
 
     let mut ignore = disk.standardize(2);
     ignore_boot_blocks(&mut ignore);
@@ -117,7 +117,7 @@ fn out_of_space() {
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
     let big: Vec<u8> = vec![0;0x7f00];
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     disk.bsave("f1",&big,0x800,None).expect("error");
     disk.bsave("f2",&big,0x800,None).expect("error");
     disk.bsave("f3",&big,0x800,None).expect("error");
@@ -136,7 +136,7 @@ fn read_big() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a seedling, a sapling, and two trees (both sparse)
     let img = std::fs::read(&Path::new("tests").join("prodos-bigfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program, this is a seedling file
@@ -169,7 +169,7 @@ fn write_big() {
     let mut buf: Vec<u8>;
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     // create and save the BASIC program, this is a seedling file
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -200,7 +200,7 @@ fn fill_dirs() {
     // Make a lot of directories and put sparse files in a few of them
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // extra and it was counted
@@ -234,7 +234,7 @@ fn rename_delete() {
     // test delete and rename of sparse tree files and directories inside a large subdirectory
     let img = a2kit::img::dsk_po::PO::create(280);
     let mut disk = prodos::Disk::from_img(Box::new(img));
-    disk.format(&String::from("NEW.DISK"),true,None);
+    disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // extra and it was counted

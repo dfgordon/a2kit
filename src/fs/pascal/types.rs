@@ -224,7 +224,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+    fn decode(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         let mut await_indent = false;
         for i in 0..src.len() {
@@ -257,14 +257,26 @@ pub struct SequentialText {
     pub text: Vec<u8>
 }
 
+impl SequentialText {
+    /// Pascal has a 1K header on all text files for internal use by the editor.
+    /// This creates a header copied from an example.  We should find out the meaning of the header data.
+    fn create_header() -> [u8;TEXT_PAGE] {
+        let mut ans: [u8;TEXT_PAGE] = [0;TEXT_PAGE];
+        ans[0] = 1;
+        ans[0x70..0x80].copy_from_slice(&[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x4F, 0x00, 0x05, 0x00, 0x5E, 0x00]);
+        ans[0x80..0x90].copy_from_slice(&[0x13, 0xA3, 0x13, 0xA3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        ans
+    }
+}
+
 /// Allows the structure to be created from string slices using `from_str`.
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x0d]);
         if let Some(dat) = encoder.encode(s) {
             return Ok(Self {
-                header: [0;TEXT_PAGE].to_vec(),
+                header: Self::create_header().to_vec(),
                 text: dat.clone()
             });
         }
@@ -276,7 +288,7 @@ impl FromStr for SequentialText {
 /// derives `to_string`, so the structure can be converted to `String`.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![]);
+        let encoder = Encoder::new(vec![0x0d]);
         if let Some(ans) = encoder.decode(&self.text) {
             return write!(f,"{}",ans);
         }

@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use a2kit::img;
-use a2kit::fs::{Chunk,dos3x,TextEncoder,DiskFS};
+use a2kit::fs::{Block,dos3x,TextEncoder,DiskFS};
 use a2kit::commands::ItemType;
 use a2kit::lang::applesoft;
 use a2kit_macro::DiskStruct;
@@ -17,14 +17,14 @@ pub const JSON_REC: &str = "
     }
 }";
 
-fn ignore_boot_tracks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
+fn ignore_boot_tracks(ignore: &mut HashMap<Block,Vec<usize>>) {
     for t in 0..3 {
         for s in 0..16 {
             let mut all = vec![0;256];
             for i in 0..256 {
                 all[i] = i;
             }
-            ignore.insert(Chunk::DO([t,s]),all);
+            ignore.insert(Block::DO([t,s]),all);
         }
     }
 }
@@ -44,7 +44,7 @@ fn format() {
     // is left with value 18, *as if* a greeting program had been written there.
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
-    disk.init(254,true,18,35,16);
+    disk.init(254,true,18,35,16).expect("failed to INIT");
     let ignore = disk.standardize(0);
     disk.compare(&Path::new("tests").join("dos33-boot.do"),&ignore);
 }
@@ -54,7 +54,7 @@ fn read_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos33-smallfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -79,7 +79,7 @@ fn write_small() {
     // This tests a small BASIC program, binary, and text file
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
-    disk.init33(254,true);
+    disk.init33(254,true).expect("failed to INIT");
 
     // save the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -90,8 +90,8 @@ fn write_small() {
     disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
 
     // save the text
-    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
-    disk.write_text("thetext",&encoder.encode("HELLO FROM EMULATOR").unwrap()).expect("error");
+    let txt = disk.encode_text("HELLO FROM EMULATOR").expect("could not encode text");
+    disk.write_text("thetext",&txt).expect("error");
 
     let mut ignore = disk.standardize(0);
     ignore_boot_tracks(&mut ignore);
@@ -103,7 +103,7 @@ fn out_of_space() {
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
     let big: Vec<u8> = vec![0;0x7f00];
-    disk.init33(254,true);
+    disk.init33(254,true).expect("failed to INIT");
     disk.bsave("f1",&big,0x800,None).expect("error");
     disk.bsave("f2",&big,0x800,None).expect("error");
     disk.bsave("f3",&big,0x800,None).expect("error");
@@ -121,7 +121,7 @@ fn read_big() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, large binary, and two sparse text files
     let img = std::fs::read(&Path::new("tests").join("dos33-bigfiles.do")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("could not interpret image");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program
@@ -154,7 +154,7 @@ fn write_big() {
     let mut buf: Vec<u8>;
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
-    disk.init33(254,true);
+    disk.init33(254,true).expect("failed to INIT");
 
     // create and save the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -187,7 +187,7 @@ fn rename_delete() {
     let mut buf: Vec<u8>;
     let img = img::dsk_do::DO::create(35, 16);
     let mut disk = dos3x::Disk::from_img(Box::new(img));
-    disk.init(254,true,17,35,16);
+    disk.init(254,true,17,35,16).expect("failed to INIT");
 
     // create and save the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -225,13 +225,13 @@ fn read_big_woz1() {
     // Formatting: DOS, Writing: Virtual II
     // This tests the same file system information used for read_big and write_big.
     // Here we are simply reading from WOZ1 and DO and making sure we get
-    // the same chunks either way.
+    // the same blocks either way.
 
     let buf = Path::new("tests").join("dos33-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
     let mut disk = a2kit::create_fs_from_file(woz1_path).expect("could not get image");
     let mut ignore = disk.standardize(2);
     ignore_boot_tracks(&mut ignore);
-    a2kit::fs::add_ignorable_offsets(&mut ignore, Chunk::DO([18,12]), vec![243]);
+    a2kit::fs::add_ignorable_offsets(&mut ignore, Block::DO([18,12]), vec![243]);
     disk.compare(&Path::new("tests").join("dos33-bigfiles.do"),&ignore);    
 }

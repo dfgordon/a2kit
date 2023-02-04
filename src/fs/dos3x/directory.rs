@@ -20,6 +20,18 @@ use a2kit_macro_derive::DiskStruct;
 // This gives 50*32*256 = 409600, i.e., a 400K disk.
 // Large DOS volumes were supported on 800K floppies and hard drives by a few third parties.
 
+/// VTOC fields that are safely assumed constant.
+pub struct VolumeConstants {
+    pub track1: u8,
+    pub sector1: u8,
+    pub version: u8,
+    pub vol: u8,
+    pub max_pairs: u8,
+    pub tracks: u8,
+    pub sectors: u8,
+    pub bytes: [u8;2]
+}
+
 #[derive(DiskStruct)]
 pub struct VTOC {
     pub pad1: u8,
@@ -38,6 +50,21 @@ pub struct VTOC {
     pub sectors: u8,
     pub bytes: [u8;2],
     pub bitmap: [u8;140]
+}
+
+impl VTOC {
+    pub fn get_constants(&self) -> VolumeConstants {
+        VolumeConstants {
+            track1: self.track1, 
+            sector1: self.sector1, 
+            version: self.version, 
+            vol: self.vol,
+            max_pairs: self.max_pairs,
+            tracks: self.tracks, 
+            sectors: self.sectors, 
+            bytes: self.bytes
+        }
+    }
 }
 
 #[derive(DiskStruct)]

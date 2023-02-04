@@ -8,12 +8,12 @@
 //! object.  This is a low level representation of the file that works for any of the supported
 //! file systems.
 //! 
-//! This module also contains the `Chunk` enumeration, which specifies and locates allocation units.
-//! The enumeration names the file system's allocation system, and its value is a specific chunk.
-//! The value can take any form, e.g., DOS chunks are 2-element lists with [track,sector], whereas
-//! CPM chunks are 3-tuples with (block,BSH,OFF).
+//! This module also contains the `Block` enumeration, which specifies and locates allocation units.
+//! The enumeration names the file system's allocation system, and its value is a specific block.
+//! The value can take any form, e.g., DOS blocks are 2-element lists with [track,sector], whereas
+//! CPM blocks are 3-tuples with (block,BSH,OFF).
 //! 
-//! Sector skews are not handled here.  Transformation of a `Chunk` to a physical disk address is
+//! Sector skews are not handled here.  Transformation of a `Block` to a physical disk address is
 //! handled within the `img` module.  Transformations that go between a file system and a disk,
 //! such as sector skews, are kept in the `bios` module.
 
@@ -28,6 +28,7 @@ use std::collections::{BTreeMap,HashMap};
 use log::{debug,warn,error};
 use crate::img;
 use crate::commands::ItemType;
+use crate::{STDRESULT,DYNERR};
 
 /// Enumerates file system errors.  The `Display` trait will print equivalent long message.
 #[derive(thiserror::Error,Debug)]
@@ -43,12 +44,12 @@ pub enum Error {
 /// Encapsulates the disk address and addressing mode used by a file system.
 /// Disk addresses generally involve some transformation between logical (file system) and physical (disk fields) addresses.
 /// The disk image layer has the final responsibility for making this transformation.
-/// The `Chunk` implementation includes a simple mapping from blocks to sectors; disk images can use this or not as appropriate.
-/// Disk images can also decide whether to immediately return an error given certain chunk types; e.g., a PO image might refuse
-/// to locate a DO chunk type.  However, do not get confused, e.g., a DO image should usually be prepared to process a
-/// PO chunk, since there are many ProDOS DSK images that are DOS ordered.
+/// The `Block` implementation includes a simple mapping from blocks to sectors; disk images can use this or not as appropriate.
+/// Disk images can also decide whether to immediately return an error given certain block types; e.g., a PO image might refuse
+/// to locate a DO block type.  However, do not get confused, e.g., a DO image should usually be prepared to process a
+/// PO block, since there are many ProDOS DSK images that are DOS ordered.
 #[derive(PartialEq,Eq,Clone,Copy,Hash)]
-pub enum Chunk {
+pub enum Block {
     /// value is [track,sector]
     D13([usize;2]),
     /// value is [track,sector]
@@ -59,9 +60,9 @@ pub enum Chunk {
     CPM((usize,u8,u16))
 }
 
-impl Chunk {
+impl Block {
     /// At this level we can only take sectors per track, and return a track-sector list,
-    /// where a simple monotonically increasing relationship is assumed between chunks and sectors.
+    /// where a simple monotonically increasing relationship is assumed between blocks and sectors.
     /// Any further skewing must be handled by the caller.  CP/M track offset is accounted for,
     /// and CP/M sector numbering starts at 1.
     pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
@@ -80,7 +81,7 @@ impl Chunk {
         }
     }
 }
-impl fmt::Display for Chunk {
+impl fmt::Display for Block {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::D13([t,s]) => write!(f,"D13 track {} sector {}",t,s),
@@ -92,7 +93,7 @@ impl fmt::Display for Chunk {
 }
 
 /// Testing aid, adds offsets to the existing key, or create a new key if needed
-pub fn add_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,key: Chunk, offsets: Vec<usize>) {
+pub fn add_ignorable_offsets(map: &mut HashMap<Block,Vec<usize>>,key: Block, offsets: Vec<usize>) {
     if let Some(val) = map.get(&key) {
         map.insert(key,[val.clone(),offsets].concat());
     } else {
@@ -101,7 +102,7 @@ pub fn add_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,key: Chunk, off
 }
 
 /// Testing aid, combines offsets from two maps (used to fold in subdirectory offsets)
-pub fn combine_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,other: HashMap<Chunk,Vec<usize>>) {
+pub fn combine_ignorable_offsets(map: &mut HashMap<Block,Vec<usize>>,other: HashMap<Block,Vec<usize>>) {
     for (k,v) in other.iter() {
         add_ignorable_offsets(map, *k, v.clone());
     }
@@ -111,8 +112,8 @@ pub fn combine_ignorable_offsets(map: &mut HashMap<Chunk,Vec<usize>>,other: Hash
 pub trait TextEncoder {
     fn new(line_terminator: Vec<u8>) -> Self where Self: Sized;
     fn encode(&self,txt: &str) -> Option<Vec<u8>>;
-    fn decode(&self,raw: &Vec<u8>) -> Option<String>;
-    fn is_terminated(bytes: &Vec<u8>,term: &Vec<u8>) -> bool {
+    fn decode(&self,raw: &[u8]) -> Option<String>;
+    fn is_terminated(bytes: &[u8],term: &[u8]) -> bool {
         if term.len()==0 {
             return true;
         }
@@ -204,7 +205,7 @@ impl FileImage {
         return ans;
     }
     /// use any byte stream as the file image data; internally this organizes the data into chunks
-    pub fn desequence(&mut self, dat: &Vec<u8>) {
+    pub fn desequence(&mut self, dat: &[u8]) {
         let mut mark = 0;
         let mut idx = 0;
         if dat.len()==0 {
@@ -244,7 +245,7 @@ impl FileImage {
         ans
     }
     /// compute a usize assuming missing trailing bytes are 0
-    fn usize_from_truncated_le_bytes(bytes: &Vec<u8>) -> usize {
+    fn usize_from_truncated_le_bytes(bytes: &[u8]) -> usize {
         let mut ans: usize = 0;
         for i in 0..bytes.len() {
             if i == usize::BITS as usize/8 {
@@ -254,7 +255,7 @@ impl FileImage {
         }
         ans
     }
-    pub fn parse_hex_to_vec(key: &str,parsed: &json::JsonValue) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    pub fn parse_hex_to_vec(key: &str,parsed: &json::JsonValue) -> Result<Vec<u8>,DYNERR> {
         if let Some(s) = parsed[key].as_str() {
             if let Ok(bytes) = hex::decode(s) {
                 return Ok(bytes);
@@ -263,14 +264,14 @@ impl FileImage {
         error!("a record is missing in the file image");
         return Err(Box::new(Error::FileImageFormat));
     }
-    pub fn parse_usize(key: &str,parsed: &json::JsonValue) -> Result<usize,Box<dyn std::error::Error>> {
+    pub fn parse_usize(key: &str,parsed: &json::JsonValue) -> Result<usize,DYNERR> {
         if let Some(val) = parsed[key].as_usize() {
             return Ok(val);
         }
         error!("a record is missing in the file image");
         return Err(Box::new(Error::FileImageFormat));
     }
-    pub fn parse_str(key: &str,parsed: &json::JsonValue) -> Result<String,Box<dyn std::error::Error>> {
+    pub fn parse_str(key: &str,parsed: &json::JsonValue) -> Result<String,DYNERR> {
         if let Some(s) = parsed[key].as_str() {
             return Ok(s.to_string());
         }
@@ -278,7 +279,7 @@ impl FileImage {
         return Err(Box::new(Error::FileImageFormat));
     }
     /// Get chunks from the JSON string representation
-    pub fn from_json(json_str: &str) -> Result<FileImage,Box<dyn std::error::Error>> {
+    pub fn from_json(json_str: &str) -> Result<FileImage,DYNERR> {
         let parsed = json::parse(json_str)?;
         let fimg_version = FileImage::parse_str("fimg_version",&parsed)?;
         let fs = FileImage::parse_str("file_system",&parsed)?;
@@ -381,7 +382,7 @@ impl Records {
     /// Derive records from file image, this should find any real record, but may also find spurious ones.
     /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
     /// This routine assumes ASCII null terminates any record.
-    pub fn from_fimg(fimg: &FileImage,record_length: usize,encoder: impl TextEncoder) -> Result<Records,Box<dyn std::error::Error>> {
+    pub fn from_fimg(fimg: &FileImage,record_length: usize,encoder: impl TextEncoder) -> Result<Records,DYNERR> {
         if record_length==0 {
             return Err(Box::new(Error::FileFormat));
         }
@@ -432,7 +433,7 @@ impl Records {
     }
     /// Update a file image's data using the records, this is usually done before writing to a disk image.
     /// This will set the file image's eof, but no other metadata.
-    pub fn update_fimg(&self,ans: &mut FileImage,require_first: bool,encoder: impl TextEncoder) -> Result<(),Box<dyn std::error::Error>> {
+    pub fn update_fimg(&self,ans: &mut FileImage,require_first: bool,encoder: impl TextEncoder) -> STDRESULT {
         let chunk_len = ans.chunk_len;
         let mut eof: usize = 0;
         // always need to have the first chunk referenced on ProDOS
@@ -478,7 +479,7 @@ impl Records {
         return Ok(());
     }
     /// Get records from the JSON string representation
-    pub fn from_json(json_str: &str) -> Result<Records,Box<dyn std::error::Error>> {
+    pub fn from_json(json_str: &str) -> Result<Records,DYNERR> {
         match json::parse(json_str) {
             Ok(parsed) => {
                 let maybe_type = parsed["fimg_type"].as_str();
@@ -561,65 +562,65 @@ impl fmt::Display for Records {
 }
 
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
-/// Provides BASIC-like high level commands, chunk operations, and file image operations.
+/// Provides BASIC-like high level commands, block operations, and file image operations.
 pub trait DiskFS {
     /// Create an empty file image appropriate for this file system
     fn new_fimg(&self,chunk_len: usize) -> FileImage;
     /// List all the files on disk to standard output, mirrors `CATALOG`
-    fn catalog_to_stdout(&mut self, path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT;
     /// Create a new directory
-    fn create(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn create(&mut self,path: &str) -> STDRESULT;
     /// Delete a file or directory
-    fn delete(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn delete(&mut self,path: &str) -> STDRESULT;
     /// Rename a file or directory
-    fn rename(&mut self,path: &str,name: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn rename(&mut self,path: &str,name: &str) -> STDRESULT;
     /// write protect a file
-    fn lock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn lock(&mut self,path: &str) -> STDRESULT;
     // remove write protection from a file
-    fn unlock(&mut self,path: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn unlock(&mut self,path: &str) -> STDRESULT;
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
-    fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> Result<(),Box<dyn std::error::Error>>;
+    fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> STDRESULT;
     /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
-    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
     /// Write a binary file to the disk, mirrors `BSAVE`
-    fn bsave(&mut self,path: &str, dat: &Vec<u8>,start_addr: u16,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>>;
+    fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
     /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
     /// Detokenization is handled in a different module.  Returns (aux,data), aux = 0
-    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
     /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
     /// Tokenization is handled in a different module.
-    fn save(&mut self,path: &str, dat: &Vec<u8>, typ: ItemType,trailing: Option<&Vec<u8>>) -> Result<usize,Box<dyn std::error::Error>>;
+    fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
     /// Read sequential text file from the disk, mirrors `READ`, text remains in raw A2 format.
     /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
-    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
+    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
     /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
     /// Use `encode_text` to generate data from a UTF8 string.
-    fn write_text(&mut self,path: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>>;
+    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
     /// Read records from a random access text file.  This finds all possible records, some may be spurious.
     /// The `record_length` can be set to 0 on file systems where this is stored with the file.
-    fn read_records(&mut self,path: &str,record_length: usize) -> Result<Records,Box<dyn std::error::Error>>;
+    fn read_records(&mut self,path: &str,record_length: usize) -> Result<Records,DYNERR>;
     /// Write records to a random access text file
-    fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,Box<dyn std::error::Error>>;
+    fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,DYNERR>;
     /// Read a file into a generalized representation
-    fn read_any(&mut self,path: &str) -> Result<FileImage,Box<dyn std::error::Error>>;
+    fn read_any(&mut self,path: &str) -> Result<FileImage,DYNERR>;
     /// Write a file from a generalized representation
-    fn write_any(&mut self,path: &str,fimg: &FileImage) -> Result<usize,Box<dyn std::error::Error>>;
-    /// Get a chunk (block or sector) appropriate for this file system
-    fn read_chunk(&mut self,num: &str) -> Result<(u16,Vec<u8>),Box<dyn std::error::Error>>;
-    /// Put a chunk (block or sector) appropriate for this file system.
-    /// N.b. this simply zaps the chunk and can break the file system.
-    fn write_chunk(&mut self, num: &str, dat: &Vec<u8>) -> Result<usize,Box<dyn std::error::Error>>;
+    fn write_any(&mut self,path: &str,fimg: &FileImage) -> Result<usize,DYNERR>;
+    /// Get a native file system allocation unit
+    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR>;
+    /// Put a native file system allocation unit
+    /// N.b. this simply zaps the block and can break the file system.
+    fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR>;
     /// Convert file system text to a UTF8 string
-    fn decode_text(&self,dat: &Vec<u8>) -> String;
+    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR>;
     /// Convert UTF8 string to file system text
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,Box<dyn std::error::Error>>;
+    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR>;
     /// Standardize for comparison with other sources of disk images.
-    /// Returns a map from chunks to offsets within the chunk that are to be zeroed or ignored.
+    /// Returns a map from blocks to offsets within the block that are to be zeroed or ignored.
     /// Typically it is important to call this before deletions happen.
     /// May be recursive, ref_con can be used to initialize each recursion.
-    fn standardize(&mut self,ref_con: u16) -> HashMap<Chunk,Vec<usize>>;
+    fn standardize(&mut self,ref_con: u16) -> HashMap<Block,Vec<usize>>;
     /// Compare this disk with a reference disk for testing purposes.  Panics if comparison fails.
-    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Chunk,Vec<usize>>);
+    fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>);
     /// Mutably borrow the underlying disk image
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage>;
 }

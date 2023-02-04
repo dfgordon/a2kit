@@ -6,6 +6,7 @@ use crate::lang;
 use crate::lang::Visit;
 use std::collections::HashMap;
 use log::{trace,error};
+use crate::DYNERR;
 
 struct Primaries {
     line: String,
@@ -116,7 +117,7 @@ impl Renumberer {
     /// If update_refs, update line number references globally (otherwise not at all).
     /// This function assumes the existing numbering is valid.
     pub fn renumber(&mut self,source: &str, beg: usize, end: usize, first: usize, step: usize) 
-    -> Result<String,Box<dyn std::error::Error>> {
+    -> Result<String,DYNERR> {
         self.renumbered = String::new();
         self.map = HashMap::new();
 		let mut parser = tree_sitter::Parser::new();

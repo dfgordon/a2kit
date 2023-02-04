@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::pascal::types::BLOCK_SIZE;
-use a2kit::fs::{Chunk,pascal,TextEncoder,DiskFS};
+use a2kit::fs::{Block,pascal,TextEncoder,DiskFS};
 use a2kit_macro::DiskStruct;
 
 // Some sample programs to test
@@ -32,13 +32,13 @@ const PROG3: &str =
        WRITE('HELLO FROM TEST3')
     END.";
 
-fn ignore_boot_blocks(ignore: &mut HashMap<Chunk,Vec<usize>>) {
+fn ignore_boot_blocks(ignore: &mut HashMap<Block,Vec<usize>>) {
     for block in 0..2 {
         let mut all: Vec<usize> = Vec::new();
         for i in 0..BLOCK_SIZE {
             all.push(i);
         }
-        ignore.insert(Chunk::PO(block),all);
+        ignore.insert(Block::PO(block),all);
     }
 }
 
@@ -57,7 +57,7 @@ fn read_small() {
     // Formatting: CiderPress, writing: MicroM8:
     // This tests small Pascal source files
     let img = std::fs::read(&Path::new("tests").join("pascal-smallfiles.do")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check source 1
     let (_z,raw) = emulator_disk.read_text("hello.text").expect("error");
@@ -79,6 +79,27 @@ fn read_small() {
     let encoder = pascal::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode(PROG3).unwrap());
     assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG3)+"\n");
+}
+
+#[test]
+fn write_small() {
+    // Formatting: CiderPress, writing: MicroM8:
+    // This tests small Pascal source files
+    let img = a2kit::img::dsk_do::DO::create(35,16);
+    let mut disk = pascal::Disk::from_img(Box::new(img));
+    disk.format(&String::from("BLANK"),0,None).expect("failed to format");
+
+    // save the text
+    let txt = disk.encode_text(PROG1).expect("could not encode text");
+    disk.write_text("hello.text",&txt).expect("error");
+    let txt = disk.encode_text(PROG2).expect("could not encode text");
+    disk.write_text("test2.text",&txt).expect("error");
+    let txt = disk.encode_text(PROG3).expect("could not encode text");
+    disk.write_text("test3.text",&txt).expect("error");
+
+    let mut ignore = disk.standardize(0);
+    ignore_boot_blocks(&mut ignore);
+    disk.compare(&Path::new("tests").join("pascal-smallfiles.do"),&ignore);
 }
 
 #[test]

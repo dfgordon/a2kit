@@ -15,7 +15,8 @@ use a2kit_macro::DiskStruct;
 use crate::fs::cpm::types::RECORD_SIZE;
 use crate::img;
 use crate::bios::skew;
-use crate::fs::Chunk;
+use crate::fs::Block;
+use crate::{STDRESULT,DYNERR};
 
 pub enum Mode {
     Fm500Kbps = 0,
@@ -30,6 +31,10 @@ pub const SECTOR_SIZE_BASE: usize = 128;
 pub const CYL_MAP_FLAG: u8 = 0x80;
 pub const HEAD_MAP_FLAG: u8 = 0x40;
 pub const HEAD_MASK: u8 = 0b1111;
+
+pub fn file_extensions() -> Vec<String> {
+    vec!["imd".to_string()]
+}
 
 #[derive(FromPrimitive)]
 pub enum SectorData {
@@ -400,7 +405,7 @@ impl Imd {
         debug!("cannot find cyl {} head {}",cyl,head);
         Err(img::Error::SectorAccess)
     }
-    fn check_user_area_up_to_cyl(&self,cyl: usize,off: u16) -> Result<(),Box<dyn std::error::Error>> {
+    fn check_user_area_up_to_cyl(&self,cyl: usize,off: u16) -> STDRESULT {
         let sectors = self.tracks[off as usize].sectors;
         let sector_shift = self.tracks[off as usize].sector_shift;
         for i in off as usize..cyl*self.heads+1 {
@@ -412,7 +417,7 @@ impl Imd {
         }
         Ok(())
     }
-    fn get_skew(&self,head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_skew(&self,head: usize) -> Result<Vec<u8>,DYNERR> {
         match (self.kind,head) {
             (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
             (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
@@ -454,10 +459,10 @@ impl img::DiskImage for Imd {
         }
         ans
     }
-    fn read_chunk(&mut self,addr: Chunk) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
         trace!("reading {}",addr);
         match addr {
-            Chunk::CPM((_block,_bsh,off)) => {
+            Block::CPM((_block,_bsh,off)) => {
                 let sectors = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let mut ans: Vec<u8> = Vec::new();
@@ -478,17 +483,17 @@ impl img::DiskImage for Imd {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn write_chunk(&mut self, addr: Chunk, dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT {
         trace!("writing {}",addr);
         match addr {
-            Chunk::CPM((_block,_bsh,off)) => {
+            Block::CPM((_block,_bsh,off)) => {
                 let sectors = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
                 let chs_list = cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 let mut src_offset = 0;
                 let psec_size = SECTOR_SIZE_BASE << sector_shift;
-                let padded = super::quantize_chunk(dat, chs_list.len()*psec_size);
+                let padded = super::quantize_block(dat, chs_list.len()*psec_size);
                 for [cyl,head,lsec] in chs_list {
                     self.check_user_area_up_to_cyl(cyl, off)?;
                     let skew_table = self.get_skew(head)?;
@@ -502,7 +507,7 @@ impl img::DiskImage for Imd {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
         trace!("seeking sector {} (R)",sec);
         let trk = self.get_track_mut(cyl,head)?;
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
@@ -527,11 +532,11 @@ impl img::DiskImage for Imd {
         debug!("sector map {:?}",trk.sector_map);
         Err(Box::new(img::Error::SectorAccess))
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &Vec<u8>) -> Result<(),Box<dyn std::error::Error>> {
+    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         trace!("seeking sector {} (W)",sec);
         let trk = self.get_track_mut(cyl,head)?;
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
-        let padded = super::quantize_chunk(dat, psec_size);
+        let padded = super::quantize_block(dat, psec_size);
         // advance to the requested sector
         for _i in 0..trk.sector_map.len() {
             let (sec_idx,buf_idx) = trk.adv_sector();
@@ -619,7 +624,7 @@ impl img::DiskImage for Imd {
         img::DiskImageType::IMD
     }
     fn file_extensions(&self) -> Vec<String> {
-        vec!["imd".to_string()]
+        file_extensions()
     }
     fn kind(&self) -> img::DiskKind {
         self.kind
@@ -638,15 +643,19 @@ impl img::DiskImage for Imd {
         }
         return ans;
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,Box<dyn std::error::Error>> {
+    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+        error!("IMD images have no track bits");
+        return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
-    fn display_track(&self,_bytes: &Vec<u8>) -> String {
+    fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("IMD images have no track bits to display")
     }
 }

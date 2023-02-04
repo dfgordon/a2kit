@@ -1,6 +1,5 @@
 use std::str::FromStr;
 use std::fmt;
-use log::debug;
 use a2kit_macro::DiskStruct;
 use super::super::TextEncoder;
 
@@ -114,7 +113,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &Vec<u8>) -> Option<String> {
+    fn decode(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x0d {

@@ -215,6 +215,9 @@ impl VolDirHeader {
         self.bitmap_ptr = [6,0];
         self.total_blocks = u16::to_le_bytes(blocks);
     }
+    pub fn total_blocks(&self) -> u16 {
+        u16::from_le_bytes(self.total_blocks)
+    }
 }
 
 impl SubDirHeader {

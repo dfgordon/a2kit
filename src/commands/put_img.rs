@@ -1,15 +1,13 @@
-//! ## get from image
+//! ## put to image
 //! 
-//! Handles getting item types that do not require resolution of the file system.
-//! This is invoked from the `get` module.
+//! Handles putting item types that do not require resolution of the file system.
+//! This is invoked from the `put` module.
 
 use clap;
-use std::io::Write;
 use std::str::FromStr;
 use std::error::Error;
 use log::{debug,error};
 use super::{ItemType,CommandError};
-use crate::img::DiskImage;
 
 const RCH: &str = "unreachable was reached";
 
@@ -40,41 +38,31 @@ fn parse_track(farg: &str) -> Result<[usize;2],Box<dyn Error>> {
     Ok([cyl,head])
 }
 
-fn output_get(dat: Vec<u8>,typ: ItemType,img: Box<dyn DiskImage>) {
-    if atty::is(atty::Stream::Stdout) {
-        match typ {
-            ItemType::Track => println!("{}",img.display_track(&dat)),
-            _ => crate::display_block(0,&dat)
-        };
-    } else {
-        std::io::stdout().write_all(&dat).expect("could not write stdout")
-    }
-}
-
-pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> Result<(),Box<dyn Error>> {
     // presence of arguments should already be resolved
-    let src_path = String::from(cmd.value_of("file").expect(RCH));
+    let dest_path = String::from(cmd.value_of("file").expect(RCH));
     let typ = ItemType::from_str(&String::from(cmd.value_of("type").expect(RCH))).expect(RCH);
     let img_path = String::from(cmd.value_of("dimg").expect(RCH));
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {
-            let bytes = match typ {
+            match typ {
                 ItemType::Sector => {
-                    let [cyl,head,sec] = parse_sector(&src_path)?;
-                    img.read_sector(cyl, head, sec)?
-                },
-                ItemType::Track => {
-                    let [cyl,head] = parse_track(&src_path)?;
-                    img.get_track_nibbles(cyl, head)?
+                    let [cyl,head,sec] = parse_sector(&dest_path)?;
+                    img.write_sector(cyl, head, sec, dat)?
                 },
                 ItemType::RawTrack => {
-                    let [cyl,head] = parse_track(&src_path)?;
-                    img.get_track_buf(cyl, head)?
+                    let [cyl,head] = parse_track(&dest_path)?;
+                    img.set_track_buf(cyl, head, dat)?
                 },
+                ItemType::Track => {
+                    error!("cannot copy nibbles, try using the raw track");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                }
                 _ => panic!("{}",RCH)
             };
-            return Ok(output_get(bytes,typ,img));
+            std::fs::write(img_path,img.to_bytes())?;
+            return Ok(());
         },
         Err(e) => return Err(e)
     }
