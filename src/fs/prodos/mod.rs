@@ -394,6 +394,10 @@ impl Disk {
     }
     // Find specific entry in directory with the given key block
     fn search_entries(&mut self,stype: &Vec<StorageType>,name: &String,key_block: u16) -> Result<Option<EntryLocation>,DYNERR> {
+        if !is_name_valid(&name) {
+            error!("invalid ProDOS name {}",&name);
+            return Err(Box::new(Error::Syntax));
+        }
         let mut curr = key_block;
         for _try in 0..100 {
             let dir = self.get_directory(curr as usize)?;
@@ -593,6 +597,10 @@ impl Disk {
     }
     /// Verify that the new name does not already exist
     fn ok_to_rename(&mut self,path: &str,new_name: &str) -> STDRESULT {
+        if !is_name_valid(new_name) {
+            error!("invalid ProDOS name {}",new_name);
+            return Err(Box::new(Error::Syntax));
+        }
         let types = vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree,StorageType::SubDirEntry];
         let vhdr = self.get_vol_header()?;
         let [parent_path,_old_name] = self.split_path(&vhdr.name(),path)?;
@@ -608,6 +616,10 @@ impl Disk {
         let types = vec![StorageType::Seedling,StorageType::Sapling,StorageType::Tree,StorageType::SubDirEntry];
         let vhdr = self.get_vol_header()?;
         let [parent_path,name] = self.split_path(&vhdr.name(),path)?;
+        if !is_name_valid(&name) {
+            error!("invalid ProDOS name {}",&name);
+            return Err(Box::new(Error::Syntax));
+        }
         // find the parent key block, entry location, and new data block (or new key block if directory)
         if let Ok(key_block) = self.find_dir_key_block(&parent_path) {
             if let Some(_loc) = self.search_entries(&types, &name, key_block)? {
@@ -1123,7 +1135,7 @@ impl super::DiskFS for Disk {
                 // create the entry
                 match Entry::create_file(&name,fimg,new_key_block,dir_key_block,None) {
                     Ok(entry) => self.write_entry(&loc,&entry)?,
-                    Err(e) => return Err(Box::new(e))
+                    Err(e) => return Err(e)
                 }
                 // write blocks
                 match self.write_file(loc,fimg) {

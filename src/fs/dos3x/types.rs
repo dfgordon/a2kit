@@ -159,7 +159,7 @@ impl DiskStruct for TokenizedProgram {
         let end_byte = u16::from_le_bytes([dat[0],dat[1]]) as usize;
         // equality is not required because there could be sector padding
         if end_byte > dat.len() {
-            panic!("inconsistent tokenized program length");
+            panic!("inconsistent tokenized program length, try raw");
         }
         return Self {
             length: [dat[0],dat[1]],
@@ -289,6 +289,9 @@ impl DiskStruct for BinaryData {
     /// Create structure using flattened bytes (typically from disk)
     fn from_bytes(dat: &Vec<u8>) -> Self {
         let end_byte = u16::from_le_bytes([dat[2],dat[3]]) + 4;
+        if end_byte as usize > dat.len() {
+            panic!("inconsistent binary file length, try raw");
+        }
         Self {
             start: [dat[0],dat[1]],
             length: [dat[2],dat[3]],

@@ -73,7 +73,7 @@ fn is_name_valid(s: &str) -> bool {
 
     for char in [base,ext].concat().chars() {
         if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            info!("bad file name character `{}` (codepoint {})",char,char as u32);
+            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
@@ -580,6 +580,7 @@ impl Disk
     /// Write any file from a file image.  Use `FileImage::desequence` to convert sequential data.
     fn write_file(&mut self,name: &str, user: u8,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         if !is_name_valid(name) {
+            error!("invalid CP/M filename");
             return Err(Box::new(Error::BadFormat));
         }
         let mut dir = self.get_directory();
@@ -686,6 +687,7 @@ impl Disk
     fn modify(&mut self,old_xname: &str,maybe_new_xname: Option<&str>,access: [i8;11]) -> STDRESULT {
         let (old_user,old_name) = split_user_filename(old_xname)?;
         if !is_name_valid(&old_name) {
+            error!("invalid CP/M filename");
             return Err(Box::new(Error::BadFormat));
         }
         let mut dir = self.get_directory();
@@ -695,6 +697,7 @@ impl Disk
             if let Some(new_user_and_name) = maybe_new_xname {
                 let (new_user,new_name) = split_user_filename(new_user_and_name)?;
                 if !is_name_valid(&new_name) {
+                    error!("invalid CP/M filename");
                     return Err(Box::new(Error::BadFormat));
                 }
                 debug!("renaming to {}, user {}",new_name,new_user);

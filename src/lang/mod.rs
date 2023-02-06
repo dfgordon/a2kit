@@ -18,6 +18,8 @@ use std::io::Write;
 use atty;
 use log::error;
 
+use crate::{STDRESULT,DYNERR};
+
 pub enum WalkerChoice {
     GotoChild,
     GotoSibling,
@@ -26,11 +28,15 @@ pub enum WalkerChoice {
 }
 
 #[derive(Error,Debug)]
-pub enum LanguageError {
+pub enum Error {
     #[error("Syntax error")]
     Syntax,
     #[error("Invalid Line Number")]
     LineNumber,
+    #[error("Tokenization error")]
+    Tokenization,
+    #[error("Detokenization error")]
+    Detokenization
 }
 
 /// Get text of the node, source should be a single line.
@@ -103,7 +109,7 @@ impl Visit for SyntaxCheckVisitor {
 }
 
 /// Simple verify, returns an error if any issues
-pub fn verify_str(lang: tree_sitter::Language,code: &str) -> Result<(),LanguageError> {
+pub fn verify_str(lang: tree_sitter::Language,code: &str) -> STDRESULT {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(lang).expect("Error loading grammar");
     let mut visitor = SyntaxCheckVisitor::new(String::new());
@@ -118,14 +124,14 @@ pub fn verify_str(lang: tree_sitter::Language,code: &str) -> Result<(),LanguageE
         }
     }
     if visitor.err_count > 0 {
-        return Err(LanguageError::Syntax);
+        return Err(Box::new(Error::Syntax));
     }
     Ok(())
 }
 
 /// detect syntax errors in any language.  Returns tuple with long and short result messages, or an error.
 /// N.b. there is extra behavior in the event either stdin or stdout are the console.
-pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,String),LanguageError>
+pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,String),DYNERR>
 {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(lang).expect("Error loading grammar");
@@ -180,6 +186,6 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,
     } else {
         // following message is not used, perhaps pack it into the error type?
         writeln!(res,"\u{2717} {} ({})","Syntax Errors".to_string().red(),visitor.err_count).expect("formatting error");
-        return Err(LanguageError::Syntax);
+        return Err(Box::new(Error::Syntax));
     }
 }

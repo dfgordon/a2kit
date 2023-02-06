@@ -1,14 +1,14 @@
 use clap;
 use std::io::Read;
 use std::str::FromStr;
-use std::error::Error;
 use log::error;
 use super::{ItemType,CommandError};
 use crate::fs::{Records,FileImage};
+use crate::{STDRESULT,DYNERR};
 
 const RCH: &str = "unreachable was reached";
 
-pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
     if atty::is(atty::Stream::Stdin) {
         error!("cannot use `put` with console input, please pipe something in");
         return Err(Box::new(CommandError::InvalidCommand));
@@ -55,11 +55,11 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                         Ok(ItemType::Text) => match std::str::from_utf8(&file_data) {
                             Ok(s) => match disk.encode_text(s) {
                                 Ok(encoded) => disk.write_text(&dest_path,&encoded),
-                                Err(e) => Err(e)
+                                Err(e) => Err::<usize,DYNERR>(e)
                             },
                             _ => {
                                 error!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::UnknownFormat));
+                                Err::<usize,DYNERR>(Box::new(CommandError::UnknownFormat))
                             }
                         },
                         Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
@@ -71,7 +71,7 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                             },
                             _ => {
                                 error!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::UnknownFormat));
+                                Err::<usize,DYNERR>(Box::new(CommandError::UnknownFormat))
                             }
                         },
                         Ok(ItemType::FileImage) => match std::str::from_utf8(&file_data) {
@@ -81,12 +81,10 @@ pub fn put(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
                             },
                             _ => {
                                 error!("could not encode data as UTF8");
-                                return Err(Box::new(CommandError::UnknownFormat));
+                                Err::<usize,DYNERR>(Box::new(CommandError::UnknownFormat))
                             }
                         },
-                        _ => {
-                            return Err(Box::new(CommandError::UnsupportedItemType));
-                        }
+                        _ => Err::<usize,DYNERR>(Box::new(CommandError::UnsupportedItemType))
                     };
                     return match result {
                         Ok(_len) => crate::save_img(&mut disk,img_path),

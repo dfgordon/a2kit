@@ -54,7 +54,7 @@ use super::tokenizer::Tokenizer;
 fn test_tokenizer(test_code: &str,expected: &str) {
 	let mut tokenizer = Tokenizer::new();
 	// get actual into hex string
-	let bytes = tokenizer.tokenize(test_code.to_string());
+	let bytes = tokenizer.tokenize(test_code.to_string()).expect("tokenizer failed");
 	let mut listfmt = String::new();
 	write!(&mut listfmt,"{:02X?}",bytes).expect("formatting error");
 	let re = Regex::new(r"[\[\] ,]").unwrap();

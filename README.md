@@ -6,11 +6,11 @@ Command line interface and library for manipulating Apple ][ language files and 
 * Languages - Applesoft, Integer BASIC, Merlin Assembly
     - full syntax comprehension
     - tokenization, detokenization
-* File Systems - DOS 3.x, ProDOS, CP/M (soon), Pascal
+* File Systems - DOS 3.x, ProDOS, CP/M, Pascal
     - full read and write access
     - high or low level manipulations
     - interface for handling sparse (random access) files
-* Disk Images - DSK (and variants), WOZ (1 and 2), IMD (soon)
+* Disk Images - DSK (and variants), WOZ (1 and 2), IMD
 
 ## Documentation
 

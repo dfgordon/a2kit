@@ -33,8 +33,8 @@ Set RUST_LOG environment variable to control logging level.
 
 Examples:
 ---------
-create DOS image:      `a2kit mkdsk -o dos33 -v 254 -t woz1 > myimg.woz`
-create ProDOS image:   `a2kit mkdsk -o prodos -v disk.new -t po > myimg.po`
+create DOS image:      `a2kit mkdsk -o dos33 -v 254 -t woz2 -d myimg.woz`
+create ProDOS image:   `a2kit mkdsk -o prodos -v disk.new -t woz2 -d myimg.woz`
 Language line entry:   `a2kit verify -t atxt`
 Language file check:   `a2kit get -f myprog.bas | a2kit verify -t atxt`
 Tokenize to file:      `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt > prog.atok
@@ -62,10 +62,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "atok","itok","mtok","bin","txt","raw","block","sec","track","raw_track","rec","any"     
     ];
 
-    let matches = Command::new("a2kit")
+    let mut main_cmd = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
-    .after_long_help(long_help)
-    .subcommand(Command::new("mkdsk")
+        .after_long_help(long_help);
+    main_cmd = main_cmd.subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
         .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(img_types))
         .arg(arg!(-o --os <OS> "operating system format").possible_values(os_names))
@@ -74,71 +74,72 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .required(false)
             .default_value("5.25in"))
         .arg(arg!(-d --dimg <PATH> "disk image path to create"))
-        .about("write a blank disk image to the given path"))
-    .subcommand(Command::new("mkdir")
+        .about("write a blank disk image to the given path"));
+    main_cmd = main_cmd.subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("create a new directory inside a disk image"))
-    .subcommand(Command::new("delete")
+        .about("create a new directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("delete")
         .arg(arg!(-f --file <PATH> "path inside disk image to delete"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("delete a file or directory inside a disk image"))
-    .subcommand(Command::new("lock")
+        .about("delete a file or directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("lock")
         .arg(arg!(-f --file <PATH> "path inside disk image to lock"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("write protect a file or directory inside a disk image"))
-    .subcommand(Command::new("unlock")
+        .about("write protect a file or directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("unlock")
         .arg(arg!(-f --file <PATH> "path inside disk image to unlock"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("remove write protection from a file or directory inside a disk image"))
-    .subcommand(Command::new("rename")
+        .about("remove write protection from a file or directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("rename")
         .arg(arg!(-f --file <PATH> "path inside disk image to rename"))
         .arg(arg!(-n --name <NAME> "new name"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("rename a file or directory inside a disk image"))
-    .subcommand(Command::new("retype")
+        .about("rename a file or directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("retype")
         .arg(arg!(-f --file <PATH> "path inside disk image to retype"))
         .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic"))
         .arg(arg!(-a --aux <AUX> "file system auxiliary metadata"))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
-        .about("change file type inside a disk image"))
-    .subcommand(Command::new("verify")
+        .about("change file type inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("verify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
-        .about("read from stdin and error check"))
-    .subcommand(Command::new("minify")
+        .about("read from stdin and error check"));
+    main_cmd = main_cmd.subcommand(Command::new("minify")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
-        .about("reduce program size"))
-    .subcommand(Command::new("renumber")
+        .about("reduce program size"));
+    main_cmd = main_cmd.subcommand(Command::new("renumber")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
         .arg(arg!(-b --beg <NUM> "lowest number to renumber"))
         .arg(arg!(-e --end <NUM> "highest number to renumber plus 1"))
         .arg(arg!(-f --first <NUM> "first number"))
         .arg(arg!(-s --step <NUM> "step between numbers"))
-        .about("renumber BASIC program lines"))
-    .subcommand(Command::new("get")
+        .about("renumber BASIC program lines"));
+    main_cmd = main_cmd.subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or address, maybe inside disk image"))
         .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
-        .about("read from local or disk image, write to stdout"))
-    .subcommand(Command::new("put")
+        .about("read from local or disk image, write to stdout"));
+    main_cmd = main_cmd.subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "destination path or address, maybe inside disk image"))
         .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
-        .about("read from stdin, write to local or disk image"))
-    .subcommand(Command::new("catalog")
+        .about("read from stdin, write to local or disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("catalog")
         .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
         .arg(arg!(-d --dimg <PATH> "path to disk image"))
-        .about("write disk image catalog to stdout"))
-    .subcommand(Command::new("tokenize")
+        .about("write disk image catalog to stdout"));
+    main_cmd = main_cmd.subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
-        .about("read from stdin, tokenize, write to stdout"))
-    .subcommand(Command::new("detokenize")
+        .about("read from stdin, tokenize, write to stdout"));
+    main_cmd = main_cmd.subcommand(Command::new("detokenize")
         .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atok","itok","mtok"]))
-        .about("read from stdin, detokenize, write to stdout"))
-    .get_matches();
+        .about("read from stdin, detokenize, write to stdout"));
+
+    let matches = main_cmd.get_matches();
     
     // Create a disk image
 
@@ -179,10 +180,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     return Ok(());
                 },
                 Err(e) => {
-                    return Err(Box::new(e));
+                    return Err(e);
                 }
             }
-
         }
     }
 
@@ -195,7 +195,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         }
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
         let mut program = String::new();
-        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        match std::io::stdin().read_to_string(&mut program) {
+            Ok(_) => {},
+            Err(e) => {
+                error!("the file to minify could not be interpreted as a string");
+                return Err(Box::new(e));
+            }
+        }
         if program.len()==0 {
             error!("minify did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
@@ -205,7 +211,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             Ok(ItemType::ApplesoftText) => {
                 lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 let mut minifier = applesoft::minifier::Minifier::new();
-                let object = minifier.minify(&program);
+                let object = minifier.minify(&program)?;
                 println!("{}",&object);
                 Ok(())
             },
@@ -226,7 +232,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         let first = usize::from_str_radix(cmd.value_of("first").unwrap(),10)?;
         let step = usize::from_str_radix(cmd.value_of("step").unwrap(),10)?;
         let mut program = String::new();
-        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        match std::io::stdin().read_to_string(&mut program) {
+            Ok(_) => {},
+            Err(e) => {
+                error!("the file to renumber could not be interpreted as a string");
+                return Err(Box::new(e));
+            }
+        }
         if program.len()==0 {
             error!("renumber did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
@@ -254,7 +266,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
         let addr_opt = cmd.value_of("addr");
         let mut program = String::new();
-        std::io::stdin().read_to_string(&mut program).expect("could not read input stream");
+        match std::io::stdin().read_to_string(&mut program) {
+            Ok(_) => {},
+            Err(e) => {
+                error!("the file to tokenize could not be interpreted as a string");
+                return Err(Box::new(e));
+            }
+        }
         if program.len()==0 {
             error!("tokenize did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
@@ -262,13 +280,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         return match typ
         {
             Ok(ItemType::ApplesoftText) => {
+                lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 if addr_opt==None {
                     error!("address needed to tokenize Applesoft");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 if let Ok(addr) = u16::from_str_radix(addr_opt.expect(RCH),10) {
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
-                    let object = tokenizer.tokenize(&program,addr);
+                    let object = tokenizer.tokenize(&program,addr)?;
                     if atty::is(atty::Stream::Stdout) {
                         a2kit::display_block(addr,&object);
                     } else {
@@ -279,12 +298,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Err(Box::new(CommandError::OutOfRange))
             },
             Ok(ItemType::IntegerText) => {
+                lang::verify_str(tree_sitter_integerbasic::language(),&program)?;
                 if let Some(_addr) = addr_opt {
                     error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
-                let object = tokenizer.tokenize(String::from(&program));
+                let object = tokenizer.tokenize(String::from(&program))?;
                 if atty::is(atty::Stream::Stdout) {
                     a2kit::display_block(0,&object);
                 } else {
@@ -293,12 +313,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 Ok(())
             },
             Ok(ItemType::MerlinText) => {
+                lang::verify_str(tree_sitter_merlin6502::language(),&program)?;
                 if let Some(_addr) = addr_opt {
                     error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
-                let object = tokenizer.tokenize(String::from(&program));
+                let object = tokenizer.tokenize(String::from(&program))?;
                 if atty::is(atty::Stream::Stdout) {
                     a2kit::display_block(0,&object);
                 } else {
@@ -328,7 +349,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         {
             Ok(ItemType::ApplesoftTokens) => {
                 let tokenizer = applesoft::tokenizer::Tokenizer::new();
-                let program = tokenizer.detokenize(&tok);
+                let program = tokenizer.detokenize(&tok)?;
                 for line in program.lines() {
                     println!("{}",line);
                 }
@@ -336,7 +357,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             },
             Ok(ItemType::IntegerTokens) => {
                 let tokenizer = integer::tokenizer::Tokenizer::new();
-                let program = tokenizer.detokenize(&tok);
+                let program = tokenizer.detokenize(&tok)?;
                 for line in program.lines() {
                     println!("{}",line);
                 }
@@ -344,7 +365,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             },
             Ok(ItemType::MerlinTokens) => {
                 let tokenizer = merlin::tokenizer::Tokenizer::new();
-                let program = tokenizer.detokenize(&tok);
+                let program = tokenizer.detokenize(&tok)?;
                 for line in program.lines() {
                     println!("{}",line);
                 }

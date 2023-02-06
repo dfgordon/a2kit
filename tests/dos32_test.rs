@@ -34,7 +34,7 @@ fn get_tokens(filename: &str) -> Vec<u8> {
         join("disk_builders").
         join(filename)).expect("failed to read source code");
     let mut tokenizer = integer::tokenizer::Tokenizer::new();
-    return tokenizer.tokenize(basic_program);
+    tokenizer.tokenize(basic_program).expect("tokenizer failed")
 }
 
 #[test]

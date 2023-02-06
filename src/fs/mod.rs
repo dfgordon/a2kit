@@ -25,7 +25,7 @@ pub mod cpm;
 use std::fmt;
 use std::str::FromStr;
 use std::collections::{BTreeMap,HashMap};
-use log::{debug,warn,error};
+use log::{warn,error};
 use crate::img;
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};

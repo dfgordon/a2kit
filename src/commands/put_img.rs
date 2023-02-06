@@ -5,13 +5,13 @@
 
 use clap;
 use std::str::FromStr;
-use std::error::Error;
 use log::{debug,error};
 use super::{ItemType,CommandError};
+use crate::{STDRESULT,DYNERR};
 
 const RCH: &str = "unreachable was reached";
 
-fn parse_sector(farg: &str) -> Result<[usize;3],Box<dyn Error>> {
+fn parse_sector(farg: &str) -> Result<[usize;3],DYNERR> {
     let fcopy = String::from(farg);
     let it: Vec<&str> = fcopy.split(',').collect();
     if it.len()!=3 {
@@ -25,7 +25,7 @@ fn parse_sector(farg: &str) -> Result<[usize;3],Box<dyn Error>> {
     Ok([cyl,head,sec])
 }
 
-fn parse_track(farg: &str) -> Result<[usize;2],Box<dyn Error>> {
+fn parse_track(farg: &str) -> Result<[usize;2],DYNERR> {
     let fcopy = String::from(farg);
     let it: Vec<&str> = fcopy.split(',').collect();
     if it.len()!=2 {
@@ -38,7 +38,7 @@ fn parse_track(farg: &str) -> Result<[usize;2],Box<dyn Error>> {
     Ok([cyl,head])
 }
 
-pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> Result<(),Box<dyn Error>> {
+pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     // presence of arguments should already be resolved
     let dest_path = String::from(cmd.value_of("file").expect(RCH));
     let typ = ItemType::from_str(&String::from(cmd.value_of("type").expect(RCH))).expect(RCH);

@@ -7,6 +7,7 @@ use tree_sitter_applesoft;
 use crate::lang;
 use crate::lang::Visit;
 use super::minify_guards;
+use crate::DYNERR;
 
 /// Handles minification of Applesoft BASIC
 pub struct Minifier
@@ -143,7 +144,7 @@ impl Minifier
 		return false;
 	}
 	/// try to reduce the size of a program using simple transformations
-	pub fn minify(&mut self,program: &str) -> String {
+	pub fn minify(&mut self,program: &str) -> Result<String,DYNERR> {
 		self.minified_program = String::new();
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
@@ -164,7 +165,7 @@ impl Minifier
 			}
 			self.minified_program += &self.minified_line;
 		}
-		return self.minified_program.clone();
+		Ok(self.minified_program.clone())
 	}
 
 }

@@ -8,6 +8,8 @@ use tree_sitter;
 use tree_sitter_merlin6502;
 use crate::lang;
 use crate::lang::Visit;
+use log::error;
+use crate::{STDRESULT,DYNERR};
 
 /// Handles transformations between source encodings used by Merlin and ordinary text editors.
 /// Merlin uses negative ASCII for all except spaces.  New line is 0x8d.
@@ -80,13 +82,14 @@ impl Tokenizer
 		let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
 		String::from(&self.line[rng])
 	}
-	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
+	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.columns = 1;
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
 		self.walk(&tree);
 		if self.tokenized_line.len()>126 {
-			panic!("Merlin line too long");
+			error!("Merlin line too long");
+			return Err(Box::new(lang::Error::Syntax));
 		}
 		for curr in &mut self.tokenized_line {
 			if *curr<128 && *curr!=32 {
@@ -94,9 +97,10 @@ impl Tokenizer
 			}
 		}
 		self.tokenized_line.push(0x8d);
+		Ok(())
 	}
 	/// Tokenize a program contained in a UTF8 string, result is an array of bytes
-	pub fn tokenize(&mut self,program: String) -> Vec<u8> {
+	pub fn tokenize(&mut self,program: String) -> Result<Vec<u8>,DYNERR> {
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_merlin6502::language()).expect("error loading merlin grammar");
@@ -106,19 +110,20 @@ impl Tokenizer
 				continue;
 			}
 			self.line = String::from(line) + "\n";
-			self.tokenize_line(&mut parser);
+			self.tokenize_line(&mut parser)?;
 			self.tokenized_program.append(&mut self.tokenized_line);
 		}
-		return self.tokenized_program.clone();
+		Ok(self.tokenized_program.clone())
 	}
 	/// Detokenize from byte array into a UTF8 string
-	pub fn detokenize(&self,img: &Vec<u8>) -> String {
+	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
 		let mut addr = 0;
 		let mut code = String::new();
 		while addr < 65536 && addr<img.len() {
 			for rep in 0..256 {
 				if rep==255 {
-					panic!("Merlin encoding appears to be broken");
+					error!("Merlin encoding appears to be broken");
+					return Err(Box::new(lang::Error::Syntax));
 				}
 				if img[addr]==0x8d {
 					code += "\n";
@@ -135,13 +140,14 @@ impl Tokenizer
 					addr += 1;
 				}
 				if img[addr]<128 {
-					panic!("unexpected positive ASCII encountered");
+					error!("unexpected positive ASCII encountered");
+					return Err(Box::new(lang::Error::Syntax));
 				} else {
 					code += &String::from_utf8(vec![img[addr]-128]).expect("expected negative ASCII was not found");
 					addr += 1;
 				}
 			}
 		}
-		return code;
+		return Ok(code);
 	}
 }

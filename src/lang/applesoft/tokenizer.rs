@@ -7,6 +7,8 @@ use tree_sitter_applesoft;
 use crate::lang;
 use crate::lang::Visit;
 use super::token_maps;
+use crate::{STDRESULT,DYNERR};
+use log::error;
 
 /// Handles tokenization of Applesoft BASIC
 pub struct Tokenizer
@@ -112,7 +114,7 @@ impl Tokenizer
 			detok_map: HashMap::from(token_maps::DETOK_MAP)
          }
     }
-	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
+	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
 		self.walk(&tree);
@@ -122,9 +124,10 @@ impl Tokenizer
 		self.tokenized_line.insert(1,by[1]);
 		self.tokenized_line.push(0);
 		self.curr_addr = next_addr;
+		Ok(())
 	}
 	/// Tokenize a program contained in a UTF8 string, result is an array of bytes
-	pub fn tokenize(&mut self,program: &str,start_addr: u16) -> Vec<u8> {
+	pub fn tokenize(&mut self,program: &str,start_addr: u16) -> Result<Vec<u8>,DYNERR> {
 		self.curr_addr = start_addr;
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
@@ -134,28 +137,33 @@ impl Tokenizer
 				continue;
 			}
 			self.line = String::from(line) + "\n";
-			self.tokenize_line(&mut parser);
+			self.tokenize_line(&mut parser)?;
 			self.tokenized_program.append(&mut self.tokenized_line);
 		}
 		self.tokenized_program.push(0);
 		self.tokenized_program.push(0);
-		return self.tokenized_program.clone();
+		Ok(self.tokenized_program.clone())
 	}
 	/// Detokenize from byte array into a UTF8 string
-	pub fn detokenize(&self,img: &Vec<u8>) -> String {
+	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
 		let mut addr = 0;
 		let mut code = String::new();
-		while addr < 65536 && addr<img.len() && (img[addr]!=0 || img[addr+1]!=0) {
+		while addr < 65536 && addr+1<img.len() && (img[addr]!=0 || img[addr+1]!=0) {
 			addr += 2; //skip link address
+			if addr+1 >= img.len() {
+				error!("program ended before end of program marker");
+				return Err(Box::new(lang::Error::Detokenization));
+			}
 			let line_num: u16 = img[addr] as u16 + img[addr+1] as u16*256;
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
-			while img[addr]!=0 {
+			while addr < img.len() && img[addr]!=0 {
 				if img[addr]>127 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
 						code += &(String::from(" ") + &tok.to_uppercase() + " ");
 					} else {
-						panic!("unrecognized Applesoft token encountered");
+						error!("unrecognized Applesoft token encountered");
+						return Err(Box::new(lang::Error::Detokenization));
 					}
 				} else {
 					code += &String::from_utf8(img[addr..addr+1].to_vec()).expect("expected ASCII was not found");
@@ -165,6 +173,6 @@ impl Tokenizer
 			code += "\n";
 			addr += 1;
 		}
-		return code;
+		return Ok(code);
 	}
 }

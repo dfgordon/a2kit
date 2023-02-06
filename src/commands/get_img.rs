@@ -6,14 +6,14 @@
 use clap;
 use std::io::Write;
 use std::str::FromStr;
-use std::error::Error;
 use log::{debug,error};
 use super::{ItemType,CommandError};
 use crate::img::DiskImage;
+use crate::{STDRESULT,DYNERR};
 
 const RCH: &str = "unreachable was reached";
 
-fn parse_sector(farg: &str) -> Result<[usize;3],Box<dyn Error>> {
+fn parse_sector(farg: &str) -> Result<[usize;3],DYNERR> {
     let fcopy = String::from(farg);
     let it: Vec<&str> = fcopy.split(',').collect();
     if it.len()!=3 {
@@ -27,7 +27,7 @@ fn parse_sector(farg: &str) -> Result<[usize;3],Box<dyn Error>> {
     Ok([cyl,head,sec])
 }
 
-fn parse_track(farg: &str) -> Result<[usize;2],Box<dyn Error>> {
+fn parse_track(farg: &str) -> Result<[usize;2],DYNERR> {
     let fcopy = String::from(farg);
     let it: Vec<&str> = fcopy.split(',').collect();
     if it.len()!=2 {
@@ -51,7 +51,7 @@ fn output_get(dat: Vec<u8>,typ: ItemType,img: Box<dyn DiskImage>) {
     }
 }
 
-pub fn get(cmd: &clap::ArgMatches) -> Result<(),Box<dyn Error>> {
+pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     // presence of arguments should already be resolved
     let src_path = String::from(cmd.value_of("file").expect(RCH));
     let typ = ItemType::from_str(&String::from(cmd.value_of("type").expect(RCH))).expect(RCH);

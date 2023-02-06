@@ -93,9 +93,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                         Ok(ItemType::Text) => disk.read_text(&src_path),
                         Ok(ItemType::Raw) => disk.read_text(&src_path),
                         Ok(ItemType::Block) => disk.read_block(&src_path),
-                        _ => {
-                            return Err(Box::new(CommandError::UnsupportedItemType));
-                        }
+                        _ => Err::<(u16,Vec<u8>),DYNERR>(Box::new(CommandError::UnsupportedItemType))
                     };
                     return output_get(maybe_object,typ,Some(disk));
                 },

@@ -44,7 +44,7 @@ fn unpack_date(pascal_date: [u8;2]) -> chrono::NaiveDateTime {
 fn is_name_valid(s: &str,is_vol: bool) -> bool {
     for char in s.chars() {
         if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            info!("bad file name character `{}` (codepoint {})",char,char as u32);
+            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
@@ -198,24 +198,24 @@ impl Disk
                         return false;
                     }
                 }
-                // test every directory entry
+                // test every directory entry that is used
                 for i in 0..u16::from_le_bytes(directory.header.num_files) {
                     let entry = directory.entries[i as usize];
                     let ebeg = u16::from_le_bytes(entry.begin_block);
                     let eend = u16::from_le_bytes(entry.end_block);
                     if ebeg>0 {
                         if ebeg<end || eend<=ebeg || (eend as u16) > tot {
-                            debug!("entry begin {} end {}",ebeg,eend);
+                            debug!("entry {} begin {} end {}",i,ebeg,eend);
                             return false;
                         }
                         if entry.name_len>15 || entry.name_len==0 {
-                            debug!("entry name length {}",entry.name_len);
+                            debug!("entry {} name length {}",i,entry.name_len);
                             return false;
                         }
-                        for i in 0..entry.name_len {
+                        for _j in 0..entry.name_len {
                             let c = entry.name[i as usize];
                             if c<32 || c>126 {
-                                debug!("entry name char {}",c);
+                                debug!("entry {} name char {}",i,c);
                                 return false;
                             }
                         }
@@ -334,6 +334,7 @@ impl Disk
     /// Format disk for the Pascal file system
     pub fn format(&mut self, vol_name: &str, fill: u8, time: Option<chrono::NaiveDateTime>) -> STDRESULT {
         if !is_name_valid(vol_name, true) {
+            error!("invalid pascal volume name");
             return Err(Box::new(Error::BadTitle));
         }
         let num_blocks = self.img.byte_capacity()/512;
@@ -378,13 +379,12 @@ impl Disk
     /// N.b. Pascal FS always keeps files in contiguous blocks.
     fn get_file_entry(&mut self,name: &str) -> Result<(Option<usize>,Directory),DYNERR> {
         let directory = self.get_directory()?;
-        let fname = string_to_file_name(name);
         for i in 0..u16::from_le_bytes(directory.header.num_files) {
             let entry = &directory.entries[i as usize];
             let beg = u16::from_le_bytes(entry.begin_block);
             let end = u16::from_le_bytes(entry.end_block);
             if beg>0 && end>beg && (end as usize)<directory.total_blocks() {
-                if fname[0..entry.name_len as usize]==entry.name[0..entry.name_len as usize] {
+                if name.to_uppercase() == file_name_to_string(entry.name, entry.name_len) {
                     return Ok((Some(i as usize),directory));
                 }
             }
@@ -395,6 +395,10 @@ impl Disk
     /// have sparse files presents no difficulty, since `FileImage` is quite general.
     /// As usual we can use `FileImage::sequence` to make the result sequential.
     fn read_file(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
+        if !is_name_valid(name,false) {
+            error!("invalid pascal filename");
+            return Err(Box::new(Error::BadFormat));
+        }
         if let (Some(idx),dir) = self.get_file_entry(name)? {
             let entry = &dir.entries[idx];
             let mut ans = Disk::new_fimg(BLOCK_SIZE);
@@ -425,6 +429,7 @@ impl Disk
             return Err(Box::new(Error::NoFile));
         }
         if !is_name_valid(name,false) {
+            error!("invalid pascal filename");
             return Err(Box::new(Error::BadFormat));
         }
         let (maybe_idx,mut dir) = self.get_file_entry(name)?;
@@ -436,29 +441,28 @@ impl Disk
             let eof_usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
             if let Some(fs_type) = FileType::from_usize(fs_type_usize) {
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16)? {
-                    for i in 0..dir.entries.len() {
-                        if dir.entries[i].begin_block==[0,0] {
-                            debug!("using entry {}, {}",i,file_name_to_string(dir.entries[i].name,dir.entries[i].name_len));
-                            dir.entries[i].begin_block = u16::to_le_bytes(beg);
-                            dir.entries[i].end_block = u16::to_le_bytes(beg+data_blocks as u16);
-                            dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
-                            dir.entries[i].name_len = name.len() as u8;
-                            dir.entries[i].name = string_to_file_name(name);
-                            dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - eof_usize) as u16);
-                            dir.entries[i].mod_date = pack_date(None); // None means use system clock
-                            dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)+1);
-                            dir.header.last_access_date = pack_date(None);
-                            self.save_directory(&dir)?;
-                            for b in 0..data_blocks {
-                                if fimg.chunks.contains_key(&b) {
-                                    self.write_block(&fimg.chunks[&b],beg as usize+b,0)?;
-                                } else {
-                                    error!("pascal file image had a hole which is not allowed");
-                                    return Err(Box::new(Error::BadFormat));
-                                }
+                    let i = u16::from_le_bytes(dir.header.num_files) as usize;
+                    if i < dir.entries.len() {
+                        debug!("using entry {}",i);
+                        dir.entries[i].begin_block = u16::to_le_bytes(beg);
+                        dir.entries[i].end_block = u16::to_le_bytes(beg+data_blocks as u16);
+                        dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
+                        dir.entries[i].name_len = name.len() as u8;
+                        dir.entries[i].name = string_to_file_name(name);
+                        dir.entries[i].bytes_remaining = u16::to_le_bytes((BLOCK_SIZE*data_blocks - eof_usize) as u16);
+                        dir.entries[i].mod_date = pack_date(None); // None means use system clock
+                        dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)+1);
+                        dir.header.last_access_date = pack_date(None);
+                        self.save_directory(&dir)?;
+                        for b in 0..data_blocks {
+                            if fimg.chunks.contains_key(&b) {
+                                self.write_block(&fimg.chunks[&b],beg as usize+b,0)?;
+                            } else {
+                                error!("pascal file image had a hole which is not allowed");
+                                return Err(Box::new(Error::BadFormat));
                             }
-                            return Ok(data_blocks);
                         }
+                        return Ok(data_blocks);
                     }
                     error!("directory is full");
                     return Err(Box::new(Error::NoRoom));
@@ -476,7 +480,7 @@ impl Disk
         }
     }
     /// modify a file entry, optionally rename, retype.
-    fn modify(&mut self,name: &str,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> Result<(),DYNERR> {
+    fn modify(&mut self,name: &str,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
         if !is_name_valid(name, false) {
             return Err(Box::new(Error::BadFormat));
         }
@@ -506,7 +510,7 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
-    fn catalog_to_stdout(&mut self, _path: &str) -> Result<(),DYNERR> {
+    fn catalog_to_stdout(&mut self, _path: &str) -> STDRESULT {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let dir = self.get_directory()?;
         let total = dir.total_blocks();
@@ -539,16 +543,17 @@ impl super::DiskFS for Disk {
         println!();
         Ok(())
     }
-    fn create(&mut self,_path: &str) -> Result<(),DYNERR> {
+    fn create(&mut self,_path: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
-    fn delete(&mut self,name: &str) -> Result<(),DYNERR> {
+    fn delete(&mut self,name: &str) -> STDRESULT {
         if let (Some(idx),mut dir) = self.get_file_entry(name)? {
             for i in idx..dir.entries.len() {
                 if i+1 < dir.entries.len() {
                     dir.entries[i] = dir.entries[i+1];
                 } else {
+                    // probably unnecessary
                     dir.entries[i].begin_block = [0,0];
                     dir.entries[i].end_block = [0,0];
                 }
@@ -560,18 +565,18 @@ impl super::DiskFS for Disk {
             return Err(Box::new(Error::NoFile));
         }
     }
-    fn lock(&mut self,_name: &str) -> Result<(),DYNERR> {
+    fn lock(&mut self,_name: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
-    fn unlock(&mut self,_name: &str) -> Result<(),DYNERR> {
+    fn unlock(&mut self,_name: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
-    fn rename(&mut self,old_name: &str,new_name: &str) -> Result<(),DYNERR> {
+    fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {
         self.modify(old_name,Some(new_name),None)
     }
-    fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> Result<(),DYNERR> {
+    fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> STDRESULT {
         self.modify(name, None, Some(new_type))
     }
     fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
@@ -694,14 +699,14 @@ impl super::DiskFS for Disk {
         super::add_ignorable_offsets(&mut ans,Block::PO(beg),(7+vol_name_len..14).collect());
         // header is done, now do entries
         let mut aeoffset = dir.header.len();
-        let mut entry_iter = dir.entries.iter();
-        while let Some(entry) = entry_iter.next() {
+        let num_files = u16::from_le_bytes(dir.header.num_files) as usize;
+        for idx in 0..dir.entries.len() {
             // form vector of absolute offsets into the directory
-            let aoffsets = match entry.begin_block {
-                [0,0] => (aeoffset..aeoffset+ENTRY_SIZE).collect(),
+            let aoffsets = match idx {
+                _i if _i >= num_files => (aeoffset..aeoffset+ENTRY_SIZE).collect(),
                 _ => {
                     let datestamp = vec![aeoffset+24, aeoffset+25];
-                    let mut nlen = entry.name_len as usize;
+                    let mut nlen = dir.entries[idx].name_len as usize;
                     if nlen > 15 {
                         nlen = 15;
                     }

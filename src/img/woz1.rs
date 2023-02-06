@@ -365,7 +365,7 @@ impl img::DiskImage for Woz1 {
     fn read_block(&mut self,addr: crate::fs::Block) -> Result<Vec<u8>,DYNERR> {
         super::woz::read_block(self, addr)
     }
-    fn write_block(&mut self, addr: crate::fs::Block, dat: &[u8]) -> Result<(),DYNERR> {
+    fn write_block(&mut self, addr: crate::fs::Block, dat: &[u8]) -> STDRESULT {
         super::woz::write_block(self, addr, dat)
     }
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {

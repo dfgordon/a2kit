@@ -7,6 +7,8 @@ use tree_sitter_integerbasic;
 use crate::lang;
 use crate::lang::Visit;
 use super::token_maps;
+use log::error;
+use crate::{STDRESULT,DYNERR};
 
 /// Handles tokenization of Integer BASIC
 pub struct Tokenizer
@@ -104,18 +106,20 @@ impl Tokenizer
 		let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
 		String::from(&self.line[rng])
 	}
-	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) {
+	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
 		self.walk(&tree);
 		if self.tokenized_line.len()>126 {
-			panic!("integer BASIC line too long");
+			error!("integer BASIC line too long");
+			return Err(Box::new(lang::Error::Syntax));
 		}
 		self.tokenized_line.insert(0,self.tokenized_line.len() as u8 +2);
 		self.tokenized_line.push(1);
+		Ok(())
 	}
 	/// Tokenize a program contained in a UTF8 string, result is an array of bytes
-	pub fn tokenize(&mut self,program: String) -> Vec<u8> {
+	pub fn tokenize(&mut self,program: String) -> Result<Vec<u8>,DYNERR> {
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_integerbasic::language()).expect("error loading integer grammar");
@@ -124,23 +128,28 @@ impl Tokenizer
 				continue;
 			}
 			self.line = String::from(line) + "\n";
-			self.tokenize_line(&mut parser);
+			self.tokenize_line(&mut parser)?;
 			self.tokenized_program.append(&mut self.tokenized_line);
 		}
-		return self.tokenized_program.clone();
+		Ok(self.tokenized_program.clone())
 	}
 	/// Detokenize from byte array into a UTF8 string
-	pub fn detokenize(&self,img: &Vec<u8>) -> String {
+	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
 		let mut addr = 0;
 		let mut code = String::new();
-		while addr < 65536 && addr<img.len() {
+		while addr < 65536 && addr+2<img.len() {
 			addr += 1; //skip record length
 			let line_num: u16 = img[addr] as u16 + img[addr+1] as u16*256;
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
 			for rep in 0..256 {
 				if rep==255 {
-					panic!("integer BASIC tokens appear to be broken");
+					error!("integer BASIC line is too long");
+					return Err(Box::new(lang::Error::Syntax));
+				}
+				if addr >= img.len() {
+					error!("program ended while processing line");
+					return Err(Box::new(lang::Error::Detokenization));
 				}
 				if img[addr]==1 {
 					code += "\n";
@@ -156,11 +165,16 @@ impl Tokenizer
 						}
 						addr += 1;
 					} else {
-						panic!("unrecognized integer BASIC token encountered");
+						error!("unrecognized integer BASIC token encountered");
+						return Err(Box::new(lang::Error::Syntax));
 					}
 				} else {
 					if img[addr]>=176 && img[addr]<=185 {
 						// next 2 bytes are a binary number
+						if addr+2 >= img.len() {
+							error!("program ended while processing integer");
+							return Err(Box::new(lang::Error::Detokenization));
+						}
 						code += &u16::to_string(&u16::from_le_bytes([img[addr+1],img[addr+2]]));
 						addr += 3;
 					} else {
@@ -168,11 +182,15 @@ impl Tokenizer
 						while img[addr]>=128 {
 							code += &String::from_utf8(vec![img[addr]-128]).expect("expected negative ASCII was not found");
 							addr += 1;
+							if addr >= img.len() {
+								error!("program ended while processing variable name");
+								return Err(Box::new(lang::Error::Detokenization));
+							}
 						}
 					}
 				}
 			}
 		}
-		return code;
+		return Ok(code);
 	}
 }

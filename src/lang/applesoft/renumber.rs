@@ -6,7 +6,7 @@ use crate::lang;
 use crate::lang::Visit;
 use std::collections::HashMap;
 use log::{trace,error};
-use crate::DYNERR;
+use crate::{STDRESULT,DYNERR};
 
 struct Primaries {
     line: String,
@@ -36,14 +36,14 @@ impl Primaries {
             nums: Vec::new()
         }
     }
-    fn push_linenum(&mut self,curs: &tree_sitter::TreeCursor) -> Result<(),lang::LanguageError> {
+    fn push_linenum(&mut self,curs: &tree_sitter::TreeCursor) -> STDRESULT {
         let txt = lang::node_text(curs.node(), &self.line).replace(" ","");
         trace!("found primary line number {}",txt);
         if let Ok(num) = usize::from_str_radix(&txt, 10) {
             self.nums.push(num);
             return Ok(());
         }
-        Err(lang::LanguageError::Syntax)
+        Err(Box::new(lang::Error::Syntax))
     }
     fn get_primary_nums(&mut self,source: &str, parser: &mut tree_sitter::Parser) -> Vec<usize> {
         self.nums = Vec::new();
@@ -130,15 +130,15 @@ impl Renumberer {
             if primaries[i]>=beg && primaries[i]<end {
                 if curr > 63999 {
                     error!("attempt to create line {}, max is 63999",curr);
-                    return Err(Box::new(lang::LanguageError::LineNumber));
+                    return Err(Box::new(lang::Error::LineNumber));
                 }
                 if i > 0 && primaries[i-1] < beg && curr <= primaries[i-1] {
                     error!("mapping {} to {} violates lower bound",primaries[i],curr);
-                    return Err(Box::new(lang::LanguageError::LineNumber));
+                    return Err(Box::new(lang::Error::LineNumber));
                 }
                 if i < primaries.len()-1 && primaries[i+1] >= end && curr >= primaries[i+1] {
                     error!("mapping {} to {} violates upper bound",primaries[i],curr);
-                    return Err(Box::new(lang::LanguageError::LineNumber));
+                    return Err(Box::new(lang::Error::LineNumber));
                 }
                 trace!("mapping {} to {}",primaries[i],curr);
 			    self.map.insert(primaries[i],curr);

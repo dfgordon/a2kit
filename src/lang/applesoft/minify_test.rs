@@ -5,7 +5,7 @@ use super::minifier::Minifier;
 #[cfg(test)]
 fn test_minify(test_code: &str,expected: &str) {
 	let mut minifier = Minifier::new();
-	let actual = minifier.minify(test_code);
+	let actual = minifier.minify(test_code).expect("minify failed");
 	assert_eq!(actual,String::from(expected)+"\n");
 }
 

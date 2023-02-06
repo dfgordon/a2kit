@@ -9,13 +9,14 @@
 
 use chrono::{Datelike,Timelike};
 use std::fmt;
-use log::error;
+use log::{warn,error};
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use regex::Regex;
 use colored::*;
 use super::types::*;
 use super::super::FileImage;
+use crate::DYNERR;
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -49,23 +50,33 @@ fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
         and_hms(hour as u32,minute as u32,0);
 }
 
-/// Convert filename bytes to a string.
+/// Test the string for validity as a ProDOS name.
+/// This can be used to check names before passing to functions that may panic.
+pub fn is_name_valid(s: &str) -> bool {
+    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
+    if !fname_patt.is_match(&s.to_uppercase()) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
+/// Convert filename bytes to a string.  Will not panic, will escape the string if necessary.
 /// Must pass the stor_len_nibs field into nibs.
 fn file_name_to_string(nibs: u8, fname: [u8;15]) -> String {
     let name_len = nibs & 0x0f;
-    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
     if let Ok(result) = String::from_utf8(fname[0..name_len as usize].to_vec()) {
-        if fname_patt.is_match(&result) {
-            return result;
-        }
+        return result;
     }
-    panic!("encountered a bad file name on disk");
+    warn!("continuing with invalid filename");
+    crate::escaped_ascii_from_bytes(&fname[0..name_len as usize].to_vec(), true, false)
 }
+
 /// Convert storage type and String to (stor_len_nibs,fname).
+/// Panics if the string is not a valid ProDOS name.
 fn string_to_file_name(stype: &StorageType, s: &str) -> (u8,[u8;15]) {
-    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
-    if !fname_patt.is_match(&s.to_uppercase()) {
-        panic!("attempt to create a bad file name");
+    if !is_name_valid(s) {
+        panic!("attempt to create a bad file name {}",s);
     }
     let new_nibs = ((*stype as u8) << 4) + s.len() as u8;
     let mut ans: [u8;15] = [0;15];
@@ -74,9 +85,11 @@ fn string_to_file_name(stype: &StorageType, s: &str) -> (u8,[u8;15]) {
         char.encode_utf8(&mut ans[i..]);
         i += 1;
     }
-    return (new_nibs,ans);
+    (new_nibs,ans)
 }
 
+/// Test a generic trait object with a name against the given string.
+/// If the string is not a valid ProDOS name this will panic.
 pub fn is_file_match<T: HasName>(valid_types: &Vec<StorageType>,name: &String,obj: &T) -> bool {
     let (nibs_disk,fname_disk) = obj.fname();
     for typ in valid_types {
@@ -221,6 +234,7 @@ impl VolDirHeader {
 }
 
 impl SubDirHeader {
+    /// Panics if `name` is invalid
     pub fn create(&mut self, name: &String, parent_ptr: u16, parent_entry_num: u8, create_time: Option<chrono::NaiveDateTime>) {
         let (nibs,fname) = string_to_file_name(&StorageType::SubDirHeader, name);
         self.stor_len_nibs = nibs;
@@ -288,6 +302,7 @@ impl Entry {
         fimg.version = vec![self.vers];
         fimg.min_version = vec![self.min_vers];
     }
+    /// Panics if `name` is invalid
     pub fn create_subdir(name: &str,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Entry {
         let mut ans = Self::new();
         let (nibs,fname) = string_to_file_name(&StorageType::SubDirEntry, name);
@@ -306,10 +321,11 @@ impl Entry {
         ans.header_ptr = u16::to_le_bytes(header_ptr);
         return ans;
     }
-    pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,Error> {
+    /// Panics if `name` is invalid
+    pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,DYNERR> {
         if fimg.fs_type.len()<1 || fimg.version.len()<1 || fimg.min_version.len()<1 || fimg.aux.len()<2 {
             error!("one or more ProDOS file image fields were too short");
-            return Err(Error::Range);
+            return Err(Box::new(Error::Range));
         }
         let mut ans = Self::new();
         let (nibs,fname) = string_to_file_name(&StorageType::Seedling, name);
@@ -344,6 +360,7 @@ impl Entry {
     pub fn set_all_access(&mut self,what: u8) {
         self.access = what;
     }
+    /// Panics if `name` is invalid
     pub fn rename(&mut self,name: &str) {
         let stor = self.storage_type();
         let (nibs,fname) = string_to_file_name(&stor, name);

@@ -32,6 +32,9 @@ fn file_name_to_string(fname: [u8;30]) -> String {
 }
 
 fn string_to_file_name(s: &str) -> [u8;30] {
+    if s.len()> 30 {
+        panic!("DOS filename was loo long");
+    }
     let mut ans: [u8;30] = [0xa0;30]; // fill with negative spaces
     let unescaped = crate::escaped_ascii_to_bytes(s, true);
     for i in 0..30 {
@@ -600,7 +603,7 @@ impl Disk
         return Ok(data_sectors + tslist_sectors);
     }
     /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
-    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> Result<(),DYNERR> {
+    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
         let vconst = self.get_vtoc_constants()?;
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
@@ -716,7 +719,8 @@ impl super::DiskFS for Disk {
                             return self.write_sector(&dir.to_bytes(),dir_ts,0)
                         }
                     }
-                    panic!("the disk image track sector list seems to be damaged");
+                    error!("number of track-sector list sectors is not plausible, aborting");
+                    return Err(Box::new(Error::EndOfData));
                 }
             }
             dir_ts = [dir.next_track,dir.next_sector];
@@ -724,7 +728,8 @@ impl super::DiskFS for Disk {
                 return Err(Box::new(Error::FileNotFound));
             }
         }
-        panic!("the disk image directory seems to be damaged");
+        error!("number of directory sectors is not plausible, aborting");
+        Err(Box::new(Error::EndOfData))
     }
     fn lock(&mut self,name: &str) -> STDRESULT {
         return self.modify(name,Some(true),None,None);
