@@ -5,7 +5,7 @@ edition = "2021"
 readme = "README.md"
 license = "MIT"
 description = "Apple II disk image and language utility"
-keywords = ["disk","image","retro","apple","cpm","dos","prodos"]
+keywords = ["disk","image","retro","apple","cpm"]
 repository = "https://github.com/dfgordon/a2kit"
 homepage = "https://github.com/dfgordon/a2kit"
 

@@ -1,6 +1,6 @@
-# Apple ][ Kit (a2kit)
+# a2kit
 
-Command line interface and library for manipulating Apple ][ language files and disk images.
+Command line interface and library for manipulating retro disk images, file systems, and languages, with emphasis on Apple II.
 
 * Designed to be scriptable
 * Languages - Applesoft, Integer BASIC, Merlin Assembly
