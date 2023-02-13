@@ -106,6 +106,12 @@ mod data_statement_tests {
 		let expected = "1C080A008320312E3520652034202C203130303030303ABA4124000000";
 		super::test_tokenizer(test_code, expected);
 	}
+	#[test]
+	fn negative_numbers() {
+		let test_code = "10 data - 1.0,-1.1,- 5\n";
+		let expected = "16080A0083202D20312E302C2D312E312C2D2035000000";
+		super::test_tokenizer(test_code, expected);
+	}
 }
 
 mod expression_tests {
@@ -125,6 +131,12 @@ mod expression_tests {
 	fn with_functions() {
 		let test_code = "10 x = 1e6*(fn cub(x0) + (atn(x1) + cos(x2))*5)\n";
 		let expected = "26080A0058D0314536CA28C243554228583029C828E128583129C8DE2858322929CA3529000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn negative_numbers() {
+		let test_code = "10 x = -1.0: y = - 2.35\n";
+		let expected = "14080A0058D0C9312E303A59D0C9322E3335000000";
 		super::test_tokenizer(test_code, expected);
 	}
 }

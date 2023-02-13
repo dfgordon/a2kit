@@ -4,6 +4,7 @@
 //! 
 //! * Single volume images only
 
+// TODO: verify length of path string
 mod boot;
 pub mod types;
 mod directory;
@@ -76,7 +77,7 @@ impl Disk {
             let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&buf);
             let (nibs,name) = vol_key.header.fname();
             let total_blocks = u16::from_le_bytes([buf[0x29],buf[0x2A]]);
-            if total_blocks<280 || total_blocks%8>0 {
+            if total_blocks<280 {
                 debug!("peculiar block count {}",total_blocks);
                 return false;
             }
@@ -108,10 +109,10 @@ impl Disk {
         if self.maybe_bitmap==None {
             self.bitmap_blocks = Vec::new();
             let bitmap_block_count = 1 + self.total_blocks / 4096;
-            let mut buf = [0;512].to_vec();
             let mut ans = Vec::new();
             let bptr = u16::from_le_bytes(self.get_vol_header()?.bitmap_ptr) as usize;
             for iblock in bptr..bptr+bitmap_block_count {
+                let mut buf = [0;512].to_vec();
                 self.read_block(&mut buf,iblock,0)?;
                 ans.append(&mut buf);
                 self.bitmap_blocks.push(iblock);
@@ -1007,7 +1008,7 @@ impl super::DiskFS for Disk {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
         fimg.desequence(&padded);
         fimg.fs_type = vec![FileType::Binary as u8];
-        fimg.access = vec![STD_ACCESS];
+        fimg.access = vec![STD_ACCESS | DIDCHANGE];
         fimg.aux = u16::to_le_bytes(start_addr).to_vec();
         return self.write_any(path,&fimg);
     }
@@ -1025,7 +1026,7 @@ impl super::DiskFS for Disk {
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
         fimg.desequence(dat);
-        fimg.access = vec![STD_ACCESS];
+        fimg.access = vec![STD_ACCESS | DIDCHANGE];
         match typ {
             ItemType::ApplesoftTokens => {
                 let addr = applesoft::deduce_address(dat);
@@ -1055,7 +1056,7 @@ impl super::DiskFS for Disk {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
         fimg.desequence(dat);
         fimg.fs_type = vec![FileType::Text as u8];
-        fimg.access = vec![STD_ACCESS];
+        fimg.access = vec![STD_ACCESS | DIDCHANGE];
         return self.write_any(path,&fimg);
     }
     fn read_records(&mut self,path: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
@@ -1077,7 +1078,7 @@ impl super::DiskFS for Disk {
         let mut fimg = self.new_fimg(BLOCK_SIZE);
         fimg.fs_type = vec![FileType::Text as u8];
         fimg.aux = super::FileImage::fix_le_vec(records.record_len,2);
-        fimg.access = vec![STD_ACCESS];
+        fimg.access = vec![STD_ACCESS | DIDCHANGE];
         match records.update_fimg(&mut fimg, true, encoder) {
             Ok(_) => self.write_any(path,&fimg),
             Err(e) => Err(e)

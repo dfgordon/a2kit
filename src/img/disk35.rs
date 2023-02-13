@@ -104,7 +104,6 @@ impl SectorDataFormat {
 /// N.b. the number of sides is stored within since it affects the address fields.
 /// Writing to the track is at the bit stream level, any bit pattern will be accepted.
 /// Reading can be done by direct bit stream consumption, or through a soft latch.
-/// The underlying `Vec<u8>` is exposed only upon construction, any padding is determined at this stage.
 /// This will also behave as a cyclic buffer to reflect a circular track.
 pub struct TrackBits {
     id: usize,
@@ -115,8 +114,8 @@ pub struct TrackBits {
     bit_ptr: usize
 }
 impl TrackBits {
-    /// Create an empty track with default formatting protocol (but no actual format).
-    /// Use `disk525::create_track`, or variants, to actually format the track.
+    /// Create the track R/W object with the given formatting protocol.
+    /// Use `disk35::create_track`, or variants, to actually format the track.
     pub fn create(id: usize,bit_count: usize,sides: usize) -> Self {
         Self {
             id,

@@ -246,8 +246,7 @@ pub fn read_sector<T: WozUnifier>(woz: &mut T,cyl: usize,head: usize,sector: usi
 	Ok(ans)
 }
 
-/// Write the given buffer to the file system allocation unit given by `addr`.
-/// Blocks are not allowed to cross track boundaries.
+/// Write the physical track and sector.
 /// This relies on the disk kind being correct to invoke the correct nibbles.
 /// For 3.5 inch disks, tag bytes should not be included.
 pub fn write_sector<T: WozUnifier>(woz: &mut T,cyl: usize,head: usize,sector: usize,dat: &[u8]) -> STDRESULT {

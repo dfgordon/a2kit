@@ -80,7 +80,7 @@ impl lang::Visit for Tokenizer
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
-		if curs.node().child_count()==0 {
+		if curs.node().named_child_count()==0 {
 			self.tokenized_line.append(&mut self.text(curs.node()).replace(" ","").as_bytes().to_vec());
 			return lang::WalkerChoice::GotoSibling;
 		}

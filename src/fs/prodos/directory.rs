@@ -221,7 +221,7 @@ impl VolDirHeader {
         self.create_time = pack_time(create_time);
         self.vers = 0;
         self.min_vers = 0;
-        self.access = 1+2+32+64+128; // enable all R W B RN D
+        self.access = STD_ACCESS;
         self.entry_len = 0x27;
         self.entries_per_block = 13;
         self.file_count = [0,0];
@@ -239,10 +239,11 @@ impl SubDirHeader {
         let (nibs,fname) = string_to_file_name(&StorageType::SubDirHeader, name);
         self.stor_len_nibs = nibs;
         self.name = fname;
+        self.pad1 = [0x75,0,0,0,0,0,0,0];
         self.create_time = pack_time(create_time);
         self.vers = 0;
         self.min_vers = 0;
-        self.access = 1+2+32+64+128; // enable R W B RN D
+        self.access = STD_ACCESS;
         self.entry_len = 0x27;
         self.entries_per_block = 13;
         self.file_count = [0,0];
@@ -315,7 +316,7 @@ impl Entry {
         ans.create_time = pack_time(create_time);
         ans.vers = 0;
         ans.min_vers = 0;
-        ans.access = STD_ACCESS;
+        ans.access = STD_ACCESS | DIDCHANGE;
         ans.aux_type = u16::to_le_bytes(0);
         ans.last_mod = pack_time(create_time);
         ans.header_ptr = u16::to_le_bytes(header_ptr);
@@ -369,7 +370,8 @@ impl Entry {
     }
     pub fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // relative to the entry start
-        let mut ans = vec![0x18,0x19,0x1a,0x1b,0x01c,0x1d,0x1e,0x21,0x22,0x23,0x24];
+        // creation, version, min version, last mod
+        let mut ans = vec![0x18,0x19,0x1a,0x1b,0x01c,0x1d,0x21,0x22,0x23,0x24];
         // ignore trailing characters in the name
         let name_start = match self.is_active() {
             true => 1 + file_name_to_string(self.stor_len_nibs,self.name).len(),
@@ -437,7 +439,8 @@ impl Header for VolDirHeader {
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start
         let mut ans: Vec<usize> = Vec::new();
-        for i in 0x14..0x23 {
+        // padding, creation, version, min version
+        for i in 0x14..0x22 {
             ans.push(i);
         }
         // ignore trailing characters in the name
@@ -472,7 +475,8 @@ impl Header for SubDirHeader {
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start
         let mut ans: Vec<usize> = Vec::new();
-        for i in 0x14..0x23 {
+        // pad1 (except first byte), creation, version, min version 
+        for i in 0x15..0x22 {
             ans.push(i);
         }
         // ignore trailing characters in the name

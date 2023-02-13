@@ -90,7 +90,7 @@ impl lang::Visit for Tokenizer
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
-		if curs.node().child_count()==0 {
+		if curs.node().named_child_count()==0 {
 			let mut cleaned = node_str.replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
 			return lang::WalkerChoice::GotoSibling;

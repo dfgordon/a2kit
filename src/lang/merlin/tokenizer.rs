@@ -8,7 +8,7 @@ use tree_sitter;
 use tree_sitter_merlin6502;
 use crate::lang;
 use crate::lang::Visit;
-use log::error;
+use log::{trace,error};
 use crate::{STDRESULT,DYNERR};
 
 /// Handles transformations between source encodings used by Merlin and ordinary text editors.
@@ -50,15 +50,19 @@ impl lang::Visit for Tokenizer
 		}
 		match curs.field_name() {
 			Some("c3") | Some("mac") => {
-				self.tokenized_line.push(0xa0);
+				if self.columns<3 {
+					self.tokenized_line.push(0xa0);
+				}
 				self.columns = 3;
 			},
 			_ => {}
 		};
 
-		// If none of the above, look for terminal nodes
-		if curs.node().child_count()==0 {
-			self.tokenized_line.append(&mut self.text(curs.node()).as_bytes().to_vec());
+		// append terminal nodes
+		if curs.node().named_child_count()==0 {
+			let txt = lang::node_text(curs.node(), &self.line);
+			trace!("visit: {}",txt);
+			self.tokenized_line.append(&mut txt.as_bytes().to_vec());
 			return lang::WalkerChoice::GotoSibling;
 		}
 
@@ -78,10 +82,6 @@ impl Tokenizer
 			columns: 0
          }
     }
-	fn text(&self,node: tree_sitter::Node) -> String {
-		let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
-		String::from(&self.line[rng])
-	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.columns = 1;
 		self.tokenized_line = Vec::new();
@@ -138,6 +138,7 @@ impl Tokenizer
 				if img[addr]==32 || img[addr]==9 {
 					code += &String::from_utf8(vec![img[addr]]).expect("expected ASCII was not found");
 					addr += 1;
+					break;
 				}
 				if img[addr]<128 {
 					error!("unexpected positive ASCII encountered");

@@ -124,7 +124,7 @@ pub struct TrackBits {
     bit_ptr: usize,
 }
 impl TrackBits {
-    /// Create a track  with formatting protocol (but no actual format).
+    /// Create the track R/W object with the given formatting protocol.
     /// Use `disk525::create_track`, or variants, to actually format the track.
     pub fn create(id: usize,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
         Self {

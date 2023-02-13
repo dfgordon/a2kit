@@ -106,7 +106,7 @@ impl lang::Visit for Minifier
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
-		if curs.node().child_count()==0 {
+		if curs.node().named_child_count()==0 {
 			self.minified_line += &node_str.replace(" ","");
 			return lang::WalkerChoice::GotoSibling;
 		}

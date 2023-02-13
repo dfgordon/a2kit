@@ -49,3 +49,18 @@ mod column4 {
 		super::test_tokenizer(test_code,expected);
 	}
 }
+
+mod strings {
+	#[test]
+	fn asc_string() {
+		let test_code = "  \t ASC  \"123\"\n";
+		let expected = "A0C1D3C3A0A2B1B2B3A28D";
+		super::test_tokenizer(test_code,expected);
+	}
+	#[test]
+	fn lda_char() {
+		let test_code = "\tLDA\t'a'\n";
+		let expected = "A0CCC4C1A0A7E1A78D";
+		super::test_tokenizer(test_code,expected);
+	}
+}

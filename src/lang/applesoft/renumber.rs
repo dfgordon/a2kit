@@ -85,9 +85,10 @@ impl Visit for Renumberer {
                     }
                 }
             },
-            _ => if curs.node().child_count()==0 {
+            _ => if curs.node().named_child_count()==0 {
                 let txt = lang::node_text(curs.node(),&self.line);
                 self.concat(&txt,&curs.node());
+                return lang::WalkerChoice::GotoSibling;
             }
         };
         lang::WalkerChoice::GotoChild
