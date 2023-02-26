@@ -11,6 +11,27 @@ fn test_detokenizer(hex_tokens: &str, expected: &str) {
     assert_eq!(actual,expected);
 }
 
+mod input_statements {
+	#[test]
+	fn quote_parity() {
+		let expected = "10  PRINT  CHR$ (4);\"PREFIX\": INPUT PR$\n";
+		let tokens = "19080A00BAE72834293B22505245464958223A84505224000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn input_null_prompt() {
+		let expected = "10  INPUT \"\";A$\n";
+		let tokens = "0C080A008422223B4124000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn get_multi() {
+		let expected = "10  GET A$,B$,C$\n";
+		let tokens = "0F080A00BE41242C42242C4324000000";
+		super::test_detokenizer(tokens, expected);
+	}
+}
+
 mod output_statements {
 	//vscode.window.showInformationMessage("Start output statements");
     #[test]
@@ -166,14 +187,14 @@ mod escapes {
 	}
     #[test]
 	fn terminal_string_escapes () {
-		let expected = "10  PRINT \"\\x0d1\\x0d2\\x0a\\x0a\n";
-		let tokens = "0E080A00BA220D310D320A0A000000";
+		let expected = "10  PRINT \"\\x0d1\\x0d2\\x0a\\x0a:rem\n";
+		let tokens = "12080A00BA220D310D320A0A3A72656D000000";
 		super::test_detokenizer(tokens, expected);
 	}
     #[test]
 	fn data_escapes () {
-		let expected = "10  DATA  1\\x092\\x09 \\\\ \n";
-		let tokens = "0F080A00832031093209205C20000000";
+		let expected = "10  DATA  1\\x092\\x09 \\\\ : REM \n";
+		let tokens = "11080A00832031093209205C203AB2000000";
 		super::test_detokenizer(tokens, expected);
 	}
     #[test]

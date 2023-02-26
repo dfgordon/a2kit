@@ -46,17 +46,32 @@ pub fn node_text(node: tree_sitter::Node,source: &str) -> String {
     return String::from(&source[rng.start_point.column..rng.end_point.column]);
 }
 
+/// Starting in some stringlike context defined by `ctx`, where the trigger byte
+/// has already been consumed, escape the remaining bytes within that context.
+/// Return the escaped string and the index to the terminator.
+/// The terminator is not part of the returned string.
 pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], ctx: &str) -> (String,usize)
 {
+    assert!(ctx=="str" || ctx=="tok_data" || ctx=="tok_rem");
+    const QUOTE: u8 = 34;
+    const BACKSLASH: u8 = 92;
 	let escaping_ascii = [9, 10, 13];
 	let mut ans = String::new();
 	let mut idx = offset;
 	let mut quotes = 0;
+    if ctx=="str" {
+        quotes += 1;
+    }
 	while idx < bytes.len() {
-		if bytes[idx] == 34 {
+		if ctx=="tok_data" && (quotes % 2 == 1) && bytes[idx] == 0 {
+			break;
+        } else if terminator.contains(&bytes[idx]) {
+			break;
+        }
+		if bytes[idx] == QUOTE {
 			quotes += 1;
         }
-		if bytes[idx] == 92 {
+		if bytes[idx] == BACKSLASH {
 			ans += "\\\\";
         } else if escaping_ascii.contains(&bytes[idx]) || bytes[idx] > 127 {
             let mut temp = String::new();
@@ -66,11 +81,6 @@ pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], c
 			ans += std::str::from_utf8(&[bytes[idx]]).expect("unreachable");
         }
 		idx += 1;
-		if ctx=="tok_data" && (quotes % 2 == 1) && bytes[idx] == 0 {
-			break;
-        } else if terminator.contains(&bytes[idx]) {
-			break;
-        }
 	}
 	return (ans,idx);
 }

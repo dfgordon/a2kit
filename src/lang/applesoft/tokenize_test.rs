@@ -60,7 +60,27 @@ fn test_tokenizer(test_code: &str,expected: &str) {
 	assert_eq!(actual,expected);
 }
 
-// OUTPUT
+mod input_tests {
+	#[test]
+	fn quote_parity() {
+		let test_code = "10 PRINT CHR$(4);\"PREFIX\": INPUT PR$\n";
+		let expected = "19080A00BAE72834293B22505245464958223A84505224000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn input_null_prompt() {
+		let test_code = "10 input \"\"; a$\n";
+		let expected = "0C080A008422223B4124000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn get_multi() {
+		let test_code = "10 GET A$,B$,C$\n";
+		let expected = "0F080A00BE41242C42242C4324000000";
+		super::test_tokenizer(test_code, expected);
+	}
+}
+
 mod output_tests {
 	#[test]
 	fn single_line() {
@@ -222,14 +242,14 @@ mod escapes {
 	}
 	#[test]
 	fn terminal_string_escapes() {
-		let test_code = "10 print \"\\x0d1\\x0d2\\x0a\\x0a";
-		let expected = "0E080A00BA220D310D320A0A000000";
+		let test_code = "10 print \"\\x0d1\\x0d2\\x0a\\x0a:rem";
+		let expected = "12080A00BA220D310D320A0A3A72656D000000";
 		super::test_tokenizer(test_code, expected);
 	}
 	#[test]
 	fn data_escapes() {
-		let test_code = "10 data 1\\x092\\x09 \\\\ ";
-		let expected = "0F080A00832031093209205C20000000";
+		let test_code = "10 data 1\\x092\\x09 \\\\ : rem";
+		let expected = "11080A00832031093209205C203AB2000000";
 		super::test_tokenizer(test_code, expected);
 	}
 	#[test]

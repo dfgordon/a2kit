@@ -160,9 +160,14 @@ impl Tokenizer
 			addr += 2;
 			while addr < img.len() && img[addr]!=0 {
 				if img[addr]==QUOTE {
-					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr, &[34,0], "str");
+					code += "\"";
+					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[34,0], "str");
 					code += &escaped;
 					addr = naddr;
+					if img[addr]==QUOTE {
+						code += "\"";
+						addr += 1;
+					}
 				} else if img[addr]==REM_TOK {
 					code += " REM ";
 					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[0], "tok_rem");
