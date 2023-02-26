@@ -152,6 +152,12 @@ mod minify_separators {
 		super::test_minify(test_code, expected);
 	}
     #[test]
+	fn unnecessary_unquote_sexpr() {
+		let test_code = "10 HOME\n20 A$ = A$ + B$ + \"HELLO\"";
+		let expected = "10HOME\n20A$=A$+B$+\"HELLO";
+		super::test_minify(test_code, expected);
+	}
+    #[test]
 	fn print_with_nulls() {
 		let test_code = "10 print a,b, ,c;d$;;;e$";
 		let expected = "10printa,b,,c;d$;;;e$";

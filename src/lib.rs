@@ -1,6 +1,6 @@
 //! # `a2kit` main library
 //! 
-//! This library manipulates disk images that can be used with Apple II emulators.
+//! This library manipulates disk images suitable for emulators, with emphasis on Apple II.
 //! Manipulations can be done at a level as low as track bits, or as high as language files.
 //! 
 //! ## Architecture
@@ -37,7 +37,7 @@
 //! In order to manipulate tracks and sectors, `a2kit` must understand the way the track data is packed
 //! into a disk image.  As of this writing `a2kit` supports
 //! * DSK, D13, DO, PO
-//! * WOZ1, WOZ2
+//! * WOZ (1 and 2)
 //! * IMD
 //! 
 //! ## Disk Kinds
@@ -308,6 +308,7 @@ pub fn display_block(start_addr: u16,block: &Vec<u8>) {
 /// by using hex escapes, e.g., `\xFF`.
 /// if `escape_cc` is true, ascii control characters are also escaped.
 /// if `inverted` is true, assume we have negative ascii bytes.
+/// This is intended for directory strings, for language files use `lang::bytes_to_escaped_string`
 pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) -> String {
     let mut result = String::new();
     let (lb,ub) = match (escape_cc,inverted) {
@@ -335,12 +336,18 @@ pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) 
 /// Interpret a UTF8 string as pure ascii and put into bytes.
 /// Non-ascii characters are omitted from the result, but arbitrary
 /// bytes can be introduced using escapes, e.g., `\xFF`.
+/// Escaped backslash is also transformed.
 /// if `inverted` is true the sign of the non-escaped bytes is flipped.
-pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
+/// if `caps` is true the ascii is put in upper case.
+/// This is suitable for either languages or directory strings.
+pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
     let mut ans: Vec<u8> = Vec::new();
-    let patt = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
-    let mut hexes = patt.find_iter(s);
+    let patt1 = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
+    let patt2 = Regex::new(r"\\\\").expect("unreachable");
+    let mut hexes = patt1.find_iter(s);
+    let mut slashes = patt2.find_iter(s);
     let mut maybe_hex = hexes.next();
+    let mut maybe_slash = slashes.next();
     let mut curs = 0;
     let mut skip = 0;
     for c in s.chars() {
@@ -358,13 +365,31 @@ pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
                 continue;
             }
         }
+        if let Some(slash) = maybe_slash {
+            if curs==slash.start() {
+                ans.push(92);
+                curs += 2;
+                maybe_slash = slashes.next();
+                skip = 1;
+                continue;
+            }
+        }
         
         if c.is_ascii() {
             let mut buf: [u8;1] = [0;1];
-            c.to_uppercase().next().unwrap().encode_utf8(&mut buf);
+            if caps {
+                c.to_uppercase().next().unwrap().encode_utf8(&mut buf);
+            } else {
+                c.encode_utf8(&mut buf);
+            }
             ans.push(buf[0] + match inverted { true => 128, false => 0 });
         }
         curs += 1;
     }
     return ans;
+}
+
+/// Calls `parse_escaped_ascii` with `caps=true`
+pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
+    parse_escaped_ascii(s,inverted,true)
 }

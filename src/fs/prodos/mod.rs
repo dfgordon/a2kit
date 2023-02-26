@@ -81,7 +81,7 @@ impl Disk {
                 debug!("peculiar block count {}",total_blocks);
                 return false;
             }
-            if buf[0x23]!=0x27 || buf[0x24]!=0x0D {
+            if buf[0x23]!=0x27 || (buf[0x24]!=0x0D && buf[0x24]!=0x0C) {
                 debug!("unexpected header bytes {}, {}",buf[0x23],buf[0x24]);
                 return false;
             }

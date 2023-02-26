@@ -13,10 +13,10 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
         error!("cannot use `put` with console input, please pipe something in");
         return Err(Box::new(CommandError::InvalidCommand));
     }
-    if !atty::is(atty::Stream::Stdout) {
-        error!("output is redirected, but `put` must end the pipeline");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
+    // if !atty::is(atty::Stream::Stdout) {
+    //     error!("output is redirected, but `put` must end the pipeline");
+    //     return Err(Box::new(CommandError::InvalidCommand));
+    // }
     let dest_path = String::from(cmd.value_of("file").expect(RCH));
     let maybe_typ = cmd.value_of("type");
     let maybe_img = cmd.value_of("dimg");

@@ -73,16 +73,12 @@ impl lang::Visit for Minifier
 		}
 
 		// Strings
-		if curs.node().kind()=="terminal_str" {
-			self.minified_line += &node_str.trim_start();
-			return lang::WalkerChoice::GotoSibling;
-		}
 		if curs.node().kind()=="str" {
 			// if trailing nodes at this or any level up to line, keep the unquote
 			let mut curr = curs.node();
 			while curr.kind()!="line" {
 				if curr.next_sibling()!=None {
-					self.minified_line += &node_str.trim_start();
+					self.minified_line += node_str.trim_start();
 					return lang::WalkerChoice::GotoSibling;
 				}
 				if curr.parent()==None {
@@ -90,7 +86,11 @@ impl lang::Visit for Minifier
 				};
 				curr = curr.parent().unwrap();
 			}
-			self.minified_line += &node_str[0..node_str.len()-1].trim_start();
+			if node_str.ends_with("\"") {
+				self.minified_line += &node_str[0..node_str.len()-1].trim_start();
+			} else {
+				self.minified_line += node_str.trim_start();
+			}
 			return lang::WalkerChoice::GotoSibling;
 		}
 

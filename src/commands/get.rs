@@ -34,10 +34,10 @@ fn output_get(
 }
 
 pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
-    if !atty::is(atty::Stream::Stdin) {
-        error!("input is redirected, but `get` must start the pipeline");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
+    // if !atty::is(atty::Stream::Stdin) {
+    //     error!("input is redirected, but `get` must start the pipeline");
+    //     return Err(Box::new(CommandError::InvalidCommand));
+    // }
     let src_path = String::from(cmd.value_of("file").expect(RCH));
     let maybe_typ = cmd.value_of("type");
     let maybe_img = cmd.value_of("dimg");

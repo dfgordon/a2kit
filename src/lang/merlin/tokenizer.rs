@@ -31,6 +31,11 @@ impl lang::Visit for Tokenizer
 		// 2. insert column separators
 
 		// Column separator strategy is put before c2, before c3, and before c4
+		// TODO: the way PMC is being parsed may need review - the macro label is coming
+		// before the `c3` field, but the c2-c3 separator should go before the label.
+		// This can only be changed at the parser level.
+		// TODO: this does not handle macro calls that collide with opcode mnemonics,
+		// e.g., COPYW would fail due to collision with COP.
 		if curs.node().kind().len()>3 {
 			if &curs.node().kind()[0..3]=="op_" {
 				self.tokenized_line.push(0xa0);
@@ -49,7 +54,13 @@ impl lang::Visit for Tokenizer
 			}
 		}
 		match curs.field_name() {
-			Some("c3") | Some("mac") => {
+			Some("mac") => {
+				if curs.node().kind()=="label_ref" {
+					self.tokenized_line.push(0xa0);
+					self.columns += 1;
+				}
+			}
+			Some("c3") => {
 				if self.columns<3 {
 					self.tokenized_line.push(0xa0);
 				}

@@ -60,7 +60,7 @@ impl lang::Visit for Tokenizer
 			self.tokenized_line.append(&mut cleaned);
 			return lang::WalkerChoice::GotoSibling;
 		}
-		// Persistent spaces
+		// Persistent spaces and escapes
 		if curs.node().kind()=="statement" {
 			if let Some(tok) = curs.node().named_child(0) {
 				// Text in the DATA statement is preserved unconditionally, so handle all at once and go out.
@@ -69,23 +69,17 @@ impl lang::Visit for Tokenizer
 				if tok.kind()=="tok_data" {
 					let items: String = String::from(&self.line[std::ops::Range {start: tok.end_byte(),end: curs.node().end_byte()}]);
 					self.tokenized_line.push(*self.tok_map.get("tok_data").unwrap());
-					self.tokenized_line.append(&mut items.as_bytes().to_vec());
+					self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&items,false));
 					return lang::WalkerChoice::GotoSibling;
 				}
 			}
 		}
 		if curs.node().kind()=="str" {
-			let mut cleaned = node_str.trim().as_bytes().to_vec();
-			self.tokenized_line.append(&mut cleaned);
-			return lang::WalkerChoice::GotoSibling;
-		}
-		if curs.node().kind()=="terminal_str" {
-			let mut cleaned = node_str.trim_start().as_bytes().to_vec();
-			self.tokenized_line.append(&mut cleaned);
+			self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&node_str, true));
 			return lang::WalkerChoice::GotoSibling;
 		}
 		if curs.node().kind()=="comment_text" {
-			self.tokenized_line.append(&mut node_str.as_bytes().to_vec());
+			self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&node_str, false));
 			return lang::WalkerChoice::GotoSibling;
 		}
 
@@ -114,6 +108,10 @@ impl Tokenizer
 			detok_map: HashMap::from(token_maps::DETOK_MAP)
          }
     }
+	fn stringlike_node_to_bytes(txt: &str,trim: bool) -> Vec<u8> {
+		let ans = match trim { true => txt.trim_start().to_string(), false => txt.to_string() };
+		return crate::parse_escaped_ascii(&ans, false, false);
+	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
@@ -146,6 +144,9 @@ impl Tokenizer
 	}
 	/// Detokenize from byte array into a UTF8 string
 	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
+		const DATA_TOK: u8 = 131;
+		const REM_TOK: u8 = 178;
+		const QUOTE: u8 = 34;
 		let mut addr = 0;
 		let mut code = String::new();
 		while addr < 65536 && addr+1<img.len() && (img[addr]!=0 || img[addr+1]!=0) {
@@ -158,17 +159,32 @@ impl Tokenizer
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
 			while addr < img.len() && img[addr]!=0 {
-				if img[addr]>127 {
+				if img[addr]==QUOTE {
+					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr, &[34,0], "str");
+					code += &escaped;
+					addr = naddr;
+				} else if img[addr]==REM_TOK {
+					code += " REM ";
+					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[0], "tok_rem");
+					code += &escaped;
+					addr = naddr;
+				} else if img[addr]==DATA_TOK {
+					code += " DATA ";
+					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[58,0], "tok_data");
+					code += &escaped;
+					addr = naddr;
+				} else if img[addr]>127 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
 						code += &(String::from(" ") + &tok.to_uppercase() + " ");
+						addr += 1;
 					} else {
 						error!("unrecognized Applesoft token encountered");
 						return Err(Box::new(lang::Error::Detokenization));
 					}
 				} else {
 					code += &String::from_utf8(img[addr..addr+1].to_vec()).expect("expected ASCII was not found");
+					addr += 1;
 				}
-				addr += 1;
 			}
 			code += "\n";
 			addr += 1;

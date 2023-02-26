@@ -43,10 +43,13 @@ use std::fmt::Write;
 use regex::Regex;
 #[cfg(test)]
 use super::tokenizer::Tokenizer;
-
+#[cfg(test)]
+use tree_sitter_applesoft;
 
 #[cfg(test)]
 fn test_tokenizer(test_code: &str,expected: &str) {
+	// we need to test explicitly for syntax errors, sometimes tokenizer can succeed despite them
+	super::super::verify_str(tree_sitter_applesoft::language(),test_code).expect("syntax error while tokenizing");
 	let mut tokenizer = Tokenizer::new();
 	// get actual into hex string
 	let bytes = tokenizer.tokenize(test_code,2049).expect("tokenizer failed");
@@ -139,6 +142,12 @@ mod expression_tests {
 		let expected = "14080A0058D0C9312E303A59D0C9322E3335000000";
 		super::test_tokenizer(test_code, expected);
 	}
+	#[test]
+	fn terminal_sexpr() {
+		let test_code = "10 if x then a$ = a$ + \"hello\n";
+		let expected = "15080A00AD58C44124D04124C82268656C6C6F000000";
+		super::test_tokenizer(test_code, expected);
+	}
 }
 
 mod graphics_tests {
@@ -201,5 +210,32 @@ mod control_tests {
 		test_string += "40 if x = y then 1030\n";
 		let expected = "0F080A00AD58CF59C431303030001D081400AD58D159C431303130002C081E00AD58D1CF59C431303230003A082800AD58D059C431303330000000";
 		super::test_tokenizer(&test_string, expected);
+	}
+}
+
+mod escapes {
+	#[test]
+	fn string_escapes() {
+		let test_code = "10 print \"\\x0d1\\x0d2\\x0a\\x0a\"";
+		let expected = "0F080A00BA220D310D320A0A22000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn terminal_string_escapes() {
+		let test_code = "10 print \"\\x0d1\\x0d2\\x0a\\x0a";
+		let expected = "0E080A00BA220D310D320A0A000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn data_escapes() {
+		let test_code = "10 data 1\\x092\\x09 \\\\ ";
+		let expected = "0F080A00832031093209205C20000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn rem_escapes() {
+		let test_code = "10 rem \\x0a\\x0aAAA\\x0a\\x0a";
+		let expected = "0F080A00B2200A0A4141410A0A000000";
+		super::test_tokenizer(test_code, expected);
 	}
 }

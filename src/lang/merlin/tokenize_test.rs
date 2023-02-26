@@ -64,3 +64,24 @@ mod strings {
 		super::test_tokenizer(test_code,expected);
 	}
 }
+
+mod macros {
+	#[test]
+	fn def() {
+		let test_code = "MLI  MAC\n";
+		let expected = "CDCCC9A0CDC1C38D";
+		super::test_tokenizer(test_code,expected);
+	}
+	#[test]
+	fn implicit_call() {
+		let test_code = "\tMLI\tREAD;PARMS\n";
+		let expected = "A0CDCCC9A0D2C5C1C4BBD0C1D2CDD38D";
+		super::test_tokenizer(test_code,expected);
+	}
+	#[test]
+	fn explicit_call() {
+		let test_code = "\tPMC  MLI,READ;PARMS\n";
+		let expected = "A0D0CDC3A0CDCCC9ACD2C5C1C4BBD0C1D2CDD38D";
+		super::test_tokenizer(test_code,expected);
+	}
+}
