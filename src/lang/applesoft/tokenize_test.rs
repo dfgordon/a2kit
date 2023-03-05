@@ -248,14 +248,26 @@ mod escapes {
 	}
 	#[test]
 	fn data_escapes() {
-		let test_code = "10 data 1\\x092\\x09 \\\\ : rem";
-		let expected = "11080A00832031093209205C203AB2000000";
+		let test_code = "10 data \":\",\\x5Cxff : rem \\\\\\\\";
+		let expected = "18080A008320223A222C5C786666203AB2205C5C5C5C000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn data_literal_escapes() {
+		let test_code = "10 data literal\\\\x0awith stuff\n";
+		let expected = "1B080A0083206C69746572616C5C0A77697468207374756666000000";
 		super::test_tokenizer(test_code, expected);
 	}
 	#[test]
 	fn rem_escapes() {
 		let test_code = "10 rem \\x0a\\x0aAAA\\x0a\\x0a";
 		let expected = "0F080A00B2200A0A4141410A0A000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn dos_escapes() {
+		let test_code = "0 PR# 0\n1 PRINT:PRINT \"\\x04BLOAD DATA1,A$4000\":END\n";
+		let expected = "080800008A300027080100BA3ABA2204424C4F41442044415441312C412434303030223A80000000";
 		super::test_tokenizer(test_code, expected);
 	}
 }

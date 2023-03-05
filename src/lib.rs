@@ -336,18 +336,15 @@ pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) 
 /// Interpret a UTF8 string as pure ascii and put into bytes.
 /// Non-ascii characters are omitted from the result, but arbitrary
 /// bytes can be introduced using escapes, e.g., `\xFF`.
-/// Escaped backslash is also transformed.
+/// Literal hex escapes are created by coding the backslash, e.g., `\x5CxFF`.
 /// if `inverted` is true the sign of the non-escaped bytes is flipped.
 /// if `caps` is true the ascii is put in upper case.
 /// This is suitable for either languages or directory strings.
 pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
     let mut ans: Vec<u8> = Vec::new();
-    let patt1 = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
-    let patt2 = Regex::new(r"\\\\").expect("unreachable");
-    let mut hexes = patt1.find_iter(s);
-    let mut slashes = patt2.find_iter(s);
+    let hex_patt = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
+    let mut hexes = hex_patt.find_iter(s);
     let mut maybe_hex = hexes.next();
-    let mut maybe_slash = slashes.next();
     let mut curs = 0;
     let mut skip = 0;
     for c in s.chars() {
@@ -362,15 +359,6 @@ pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
                 curs += 4;
                 maybe_hex = hexes.next();
                 skip = 3;
-                continue;
-            }
-        }
-        if let Some(slash) = maybe_slash {
-            if curs==slash.start() {
-                ans.push(92);
-                curs += 2;
-                maybe_slash = slashes.next();
-                skip = 1;
                 continue;
             }
         }

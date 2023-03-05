@@ -193,14 +193,26 @@ mod escapes {
 	}
     #[test]
 	fn data_escapes () {
-		let expected = "10  DATA  1\\x092\\x09 \\\\ : REM \n";
-		let tokens = "11080A00832031093209205C203AB2000000";
+		let expected = "10  DATA  \":\",\\x5cxff : REM  \\\\\\\\\n";
+		let tokens = "18080A008320223A222C5C786666203AB2205C5C5C5C000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn data_literal_escapes() {
+		let expected = "10  DATA  literal\\\\x0awith stuff\n";
+		let tokens = "1B080A0083206C69746572616C5C0A77697468207374756666000000";
 		super::test_detokenizer(tokens, expected);
 	}
     #[test]
 	fn rem_escapes () {
 		let expected = "10  REM \\x0a\\x0aAAA\\x0a\\x0a\n";
 		let tokens = "0E080A00B20A0A4141410A0A000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn dos_non_escapes() {
+		let expected = "0  PR# 0\n1  PRINT : PRINT \"\x04BLOAD DATA1,A$4000\": END \n";
+		let tokens = "080800008A300027080100BA3ABA2204424C4F41442044415441312C412434303030223A80000000";
 		super::test_detokenizer(tokens, expected);
 	}
 }

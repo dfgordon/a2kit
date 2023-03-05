@@ -48,6 +48,7 @@ pub fn node_text(node: tree_sitter::Node,source: &str) -> String {
 
 /// Starting in some stringlike context defined by `ctx`, where the trigger byte
 /// has already been consumed, escape the remaining bytes within that context.
+/// If there is a literal hex escape it is put as `\x5CxHH` where H is the hex.
 /// Return the escaped string and the index to the terminator.
 /// The terminator is not part of the returned string.
 pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], ctx: &str) -> (String,usize)
@@ -55,7 +56,7 @@ pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], c
     assert!(ctx=="str" || ctx=="tok_data" || ctx=="tok_rem");
     const QUOTE: u8 = 34;
     const BACKSLASH: u8 = 92;
-	let escaping_ascii = [9, 10, 13];
+	let escaping_ascii = [10, 13];
 	let mut ans = String::new();
 	let mut idx = offset;
 	let mut quotes = 0;
@@ -63,17 +64,28 @@ pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], c
         quotes += 1;
     }
 	while idx < bytes.len() {
-		if ctx=="tok_data" && (quotes % 2 == 1) && bytes[idx] == 0 {
+		if ctx == "tok_data" && bytes[idx] == 0 {
 			break;
-        } else if terminator.contains(&bytes[idx]) {
+        }
+		if ctx == "tok_data" && quotes % 2 == 0 && terminator.contains(&bytes[idx]) {
+			break;
+        }
+		if ctx != "tok_data" && terminator.contains(&bytes[idx]) {
 			break;
         }
 		if bytes[idx] == QUOTE {
 			quotes += 1;
         }
-		if bytes[idx] == BACKSLASH {
-			ans += "\\\\";
-        } else if escaping_ascii.contains(&bytes[idx]) || bytes[idx] > 127 {
+		if bytes[idx] == BACKSLASH && idx + 3 < bytes.len() {
+            let is_hex = |x: u8| -> bool {
+                x>=48 && x<=57 || x>=65 && x<=70 || x>=97 && x<=102
+            };
+            if bytes[idx+1]==120 && is_hex(bytes[idx+2]) && is_hex(bytes[idx+3]) {
+                ans += "\\x5c";
+            } else {
+                ans += "\\";
+            }
+        } else if escaping_ascii.contains(&bytes[idx]) || bytes[idx] > 126 {
             let mut temp = String::new();
             write!(&mut temp,"\\x{:02x}",bytes[idx]).expect("unreachable");
             ans += &temp;

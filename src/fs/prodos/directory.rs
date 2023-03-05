@@ -403,10 +403,11 @@ impl fmt::Display for Entry {
             write_protect = " ".to_string();
         }
         //"NAME","TYPE","BLOCKS","MODIFIED","CREATED","ENDFILE","SUBTYPE"
+        let type_as_hex = "$".to_string()+ &hex::encode_upper(vec![self.file_type]);
         write!(f,"{}{:15} {:4} {:6} {:16} {:16} {:7} {:7}",
             write_protect,
             match self.file_type { 0x0f => self.name().blue().bold(), _ => self.name().normal() },
-            typ_map.get(&self.file_type).expect("unexpected file type"),
+            match typ_map.get(&self.file_type) { Some(s) => *s, _ => &type_as_hex },
             u16::from_le_bytes(self.blocks_used),
             mod_time,
             create_time,
