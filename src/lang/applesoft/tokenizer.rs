@@ -131,7 +131,7 @@ impl Tokenizer
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
 		for line in program.lines() {
-			if line.len()==0 {
+			if line.trim_start().len()==0 {
 				continue;
 			}
 			self.line = String::from(line) + "\n";

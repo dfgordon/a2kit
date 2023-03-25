@@ -11,6 +11,36 @@ use crate::lang::Visit;
 use log::{trace,error};
 use crate::{STDRESULT,DYNERR};
 
+fn format_tokens(line:&str, sep:char) -> String {
+	let widths = [9,6,11];
+	let cols = line.split(sep);
+	let mut ans = String::new();
+	let mut col_idx = 0;
+	for col in cols {
+		let mut prepadding = 0;
+		if let Some(c) = col.chars().next() {
+			if c==';' {
+				for j in col_idx..3 {
+					prepadding += widths[j];
+				}
+			}
+		}
+		let w = match col_idx {
+			i if i<3 => widths[i],
+			_ => 1
+		};
+		let padding = match w as i32 - col.len() as i32 {
+			x if x<1 => 1,
+			x => x as usize
+		};
+		ans += &" ".repeat(prepadding);
+		ans += col;
+		ans += &" ".repeat(padding);
+		col_idx += 1;
+	}
+	return ans.trim_end().to_string();
+}
+
 /// Handles transformations between source encodings used by Merlin and ordinary text editors.
 /// Merlin uses negative ASCII for all except spaces.  New line is 0x8d.
 /// Spaces in strings or comments are positive ASCII, column separators are a single negative ASCII space.
@@ -29,45 +59,49 @@ impl lang::Visit for Tokenizer
 		// Two tasks here:
 		// 1. convert string to ASCII bytes (to be inverted later)
 		// 2. insert column separators
-
-		// Column separator strategy is put before c2, before c3, and before c4
-		// TODO: the way PMC is being parsed may need review - the macro label is coming
-		// before the `c3` field, but the c2-c3 separator should go before the label.
-		// This can only be changed at the parser level.
-		// TODO: this does not handle macro calls that collide with opcode mnemonics,
-		// e.g., COPYW would fail due to collision with COP.
-		if curs.node().kind().len()>3 {
-			if &curs.node().kind()[0..3]=="op_" {
-				self.tokenized_line.push(0xa0);
-				self.columns = 2;
-			}
-		}
-		if curs.node().kind().len()>5 {
-			if &curs.node().kind()[0..5]=="psop_" {
-				self.tokenized_line.push(0xa0);
-				self.columns = 2;
-			}
-		}
-		if curs.node().kind()=="comment" {
-			for _rep in self.columns..4 {
-				self.tokenized_line.push(0xa0);
-			}
-		}
-		match curs.field_name() {
-			Some("mac") => {
-				if curs.node().kind()=="label_ref" {
-					self.tokenized_line.push(0xa0);
-					self.columns += 1;
-				}
-			}
-			Some("c3") => {
-				if self.columns<3 {
-					self.tokenized_line.push(0xa0);
-				}
-				self.columns = 3;
-			},
-			_ => {}
+		let parent = match curs.node().parent() {
+			Some(p) => p,
+			None => return lang::WalkerChoice::GotoChild
 		};
+
+		// root level comment needs no separator, Merlin will indent it automatically
+		if curs.node().kind()=="comment" && parent.kind()=="source_file" {
+			let txt = lang::node_text(curs.node(), &self.line);
+			self.tokenized_line.append(&mut txt.as_bytes().to_vec());
+			return lang::WalkerChoice::GotoSibling;
+		}
+
+		if let Some(grandparent) = parent.parent() {
+			if grandparent.kind()=="source_file" {
+				if curs.node().kind().len()>3 {
+					if &curs.node().kind()[0..3]=="op_" {
+						self.tokenized_line.push(0xa0);
+						self.columns = 2;
+					}
+				}
+				if curs.node().kind().len()>5 {
+					if &curs.node().kind()[0..5]=="psop_" {
+						self.tokenized_line.push(0xa0);
+						self.columns = 2;
+					}
+				}
+				if curs.node().kind()=="macro_ref" {
+					self.tokenized_line.push(0xa0);
+					self.columns = 2;
+				}
+				if curs.node().kind().len()>4 {
+					if &curs.node().kind()[0..4]=="arg_" {
+						self.tokenized_line.push(0xa0);
+						self.columns = 3;
+					}
+				}
+				if curs.node().kind()=="comment" {
+					for _rep in self.columns..4 {
+						self.tokenized_line.push(0xa0);
+					}
+				}
+			}
+		}
 
 		// append terminal nodes
 		if curs.node().named_child_count()==0 {
@@ -129,36 +163,33 @@ impl Tokenizer
 	/// Detokenize from byte array into a UTF8 string
 	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
 		let mut addr = 0;
+		let mut line = String::new();
 		let mut code = String::new();
-		while addr < 65536 && addr<img.len() {
-			for rep in 0..256 {
-				if rep==255 {
-					error!("Merlin encoding appears to be broken");
-					return Err(Box::new(lang::Error::Syntax));
-				}
-				if img[addr]==0x8d {
-					code += "\n";
-					addr += 1;
-					break;
-				}
-				if img[addr]==0xa0 {
-					code += "\t";
-					addr += 1;
-					break;
-				}
-				if img[addr]==32 || img[addr]==9 {
-					code += &String::from_utf8(vec![img[addr]]).expect("expected ASCII was not found");
-					addr += 1;
-					break;
-				}
-				if img[addr]<128 {
-					error!("unexpected positive ASCII encountered");
-					return Err(Box::new(lang::Error::Syntax));
-				} else {
-					code += &String::from_utf8(vec![img[addr]-128]).expect("expected negative ASCII was not found");
-					addr += 1;
-				}
+		while addr < img.len() {
+			if img[addr] == 0x8d {
+				line = format_tokens(&line, char::from_u32(256).unwrap());
+				code += &line;
+				code += "\n";
+				addr += 1;
+				line = String::new();
+			} else if img[addr]==0xa0 {
+				line += &char::from_u32(256).unwrap().to_string();
+				addr += 1;
+			} else if img[addr]==32 || img[addr]==9 {
+				line += &char::from_u32(img[addr] as u32).unwrap().to_string();
+				addr += 1;
+			} else if img[addr]<128 {
+				error!("unexpected positive ASCII encountered");
+				return Err(Box::new(lang::Error::Syntax));
+			} else {
+				line += &char::from_u32(img[addr] as u32 - 128).unwrap().to_string();
+				addr += 1;
 			}
+		}
+		if line.len() > 0 {
+			line = format_tokens(&line,char::from_u32(256).unwrap());
+			code += &line;
+			code += "\n";
 		}
 		return Ok(code);
 	}

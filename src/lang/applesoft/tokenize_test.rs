@@ -233,6 +233,21 @@ mod control_tests {
 	}
 }
 
+mod formatting {
+	#[test]
+	fn leading_space() {
+		let test_code = "  10 home\n";
+		let expected = "07080A0097000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn leading_space_blank_line() {
+		let test_code = "  10 home\n  \n";
+		let expected = "07080A0097000000";
+		super::test_tokenizer(test_code, expected);
+	}
+}
+
 mod escapes {
 	#[test]
 	fn string_escapes() {

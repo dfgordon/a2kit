@@ -86,7 +86,7 @@ impl lang::Visit for Minifier
 				};
 				curr = curr.parent().unwrap();
 			}
-			if node_str.ends_with("\"") {
+			if node_str.ends_with("\"") && node_str.len()>1 {
 				self.minified_line += &node_str[0..node_str.len()-1].trim_start();
 			} else {
 				self.minified_line += node_str.trim_start();
@@ -117,7 +117,7 @@ impl lang::Visit for Minifier
 
 impl Minifier
 {
-	/// Create a new `Tokenizer` structure
+	/// Create a new `Minifier` structure
     pub fn new() -> Self
     {
         Self {
