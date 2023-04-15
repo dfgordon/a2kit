@@ -12,7 +12,7 @@ fn test_minify(test_code: &str,expected: &str) {
 mod minify_vars {
     #[test]
 	fn lower_case_long_var() {
-		let test_code = "10 HOME\n20 PRINT hello";
+		let test_code = "10 HOME\r\n20 PRINT hello";
 		let expected = "10HOME\n20PRINThe";
 		super::test_minify(test_code, expected);
 	}

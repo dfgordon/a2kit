@@ -146,7 +146,7 @@ mod expression_tests {
 	}
 	#[test]
 	fn nested() {
-		let test_code = "10 x = 1e6*(1 + (x1 + x2)*5)\n";
+		let test_code = "10 x = 1e6*(1 + (x1 + x2)*5)\r\n";
 		let expected = "19080A0058D0314536CA2831C8285831C8583229CA3529000000";
 		super::test_tokenizer(test_code, expected);
 	}
@@ -173,13 +173,13 @@ mod expression_tests {
 mod graphics_tests {
 	#[test]
 	fn low_res() {
-		let test_code = "10 gr: color=4\n20 x=5:y=5\n30 plot x,y\n40 hlin x+1,x+10 at y\n50 vlin y+1,y+10 at x";
+		let test_code = "10 gr: color=4\r\n20 x=5:y=5\r\n30 plot x,y\n40 hlin x+1,x+10 at y\n50 vlin y+1,y+10 at x";
 		let expected = "0A080A00883AA034001608140058D0353A59D035001F081E008D582C59002F0828008E58C8312C58C83130C559003F0832008F59C8312C59C83130C558000000";
 		super::test_tokenizer(test_code, expected);
 	}
 	#[test]
 	fn high_res() {
-		let test_code = "10 hgr: hcolor=2\n20 x=5:y=5\n30 plot x,y\n40 hplot to x+5,y+5";
+		let test_code = "10 hgr: hcolor=2\n20 x=5:y=5\n30 plot x,y\r\n40 hplot to x+5,y+5";
 		let expected = "0A080A00913A9232001608140058D0353A59D035001F081E008D582C59002D08280093C158C8352C59C835000000";
 		super::test_tokenizer(test_code, expected);
 	}

@@ -3,7 +3,7 @@
 //! Simple subcommands are directly in `main.rs`.
 //! More elaborate subcommands are in the `commands` module.
 
-use clap::{arg,Command,ArgAction};
+use clap::{arg,crate_version,Command,ArgAction};
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
@@ -64,7 +64,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     let mut main_cmd = Command::new("a2kit")
         .about("Manipulates Apple II files and disk images, with language comprehension.")
-        .after_long_help(long_help);
+        .after_long_help(long_help)
+        .version(crate_version!());
     main_cmd = main_cmd.subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
         .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(img_types))

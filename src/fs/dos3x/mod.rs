@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
-use log::{debug,error};
+use log::{info,debug,error};
 
 use types::*;
 use directory::*;
@@ -24,6 +24,22 @@ use crate::img;
 use crate::commands::ItemType;
 
 use crate::{STDRESULT,DYNERR};
+
+/// This will accept lower case; case will be automatically converted as appropriate
+fn is_name_valid(s: &str) -> bool {
+    for char in s.chars() {
+        if !char.is_ascii() {
+            debug!("non-ascii file name character `{}` (codepoint {})",char,char as u32);
+            info!("use hex escapes to introduce arbitrary bytes");
+            return false;
+        }
+    }
+    if s.len()>30 {
+        info!("file name too long, max 30");
+        return false;
+    }
+    true
+}
 
 fn file_name_to_string(fname: [u8;30]) -> String {
     // fname is negative ASCII padded to the end with spaces
@@ -524,6 +540,10 @@ impl Disk
     /// into the sparse file format, with no loss of generality.
     /// Unlike DOS, nothing is written unless there is enough space for all the data.
     fn write_file(&mut self,name: &str, fimg: &super::FileImage) -> Result<usize,DYNERR> {
+        if !is_name_valid(name) {
+            error!("invalid DOS filename");
+            return Err(Box::new(Error::SyntaxError));
+        }
         let vconst = self.get_vtoc_constants()?;
         if fimg.chunks.len()==0 {
             error!("empty data is not allowed for DOS 3.x file images");
@@ -602,8 +622,24 @@ impl Disk
         
         return Ok(data_sectors + tslist_sectors);
     }
+    /// Verify that the new name does not already exist
+    fn ok_to_rename(&mut self,new_name: &str) -> STDRESULT {
+        if !is_name_valid(&new_name) {
+            error!("invalid DOS filename");
+            return Err(Box::new(Error::SyntaxError));
+        }
+        match self.get_tslist_sector(new_name) {
+            Ok(None) => Ok(()),
+            Ok(_) => Err(Box::new(Error::FileLocked)),
+            Err(e) => Err(e)
+        }
+    }
     /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
     fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
+        if !is_name_valid(&name) {
+            error!("old name is invalid, perhaps use hex escapes");
+            return Err(Box::new(Error::SyntaxError));
+        }
         let vconst = self.get_vtoc_constants()?;
         let mut buf: Vec<u8> = vec![0;256];
         let fname = string_to_file_name(name);
@@ -615,7 +651,7 @@ impl Disk
             for entry in dir.entries.as_mut() {
                 if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
                     if entry.file_type > 127 && maybe_new_name!=None {
-                        return Err(Box::new(Error::WriteProtected));
+                        return Err(Box::new(Error::FileLocked));
                     }
                     entry.file_type = match maybe_lock {
                         Some(true) => entry.file_type | 0x80,
@@ -738,6 +774,7 @@ impl super::DiskFS for Disk {
         return self.modify(name,Some(false),None,None);
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {
+        self.ok_to_rename(new_name)?;
         return self.modify(old_name,None,Some(new_name),None);
     }
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> STDRESULT {

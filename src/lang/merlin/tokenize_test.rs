@@ -29,7 +29,7 @@ mod op_tests {
 	}
 	#[test]
 	fn with_label() {
-		let test_code = "lab   lda #$00  ; rem\n";
+		let test_code = "lab   lda #$00  ; rem\r\n";
 		let expected = "ECE1E2A0ECE4E1A0A3A4B0B0A0BB20F2E5ED8D";
 		super::test_tokenizer(test_code,expected);
 	}

@@ -479,6 +479,17 @@ impl Disk
             return Err(Box::new(Error::DuplicateFilename));
         }
     }
+    /// Verify that the new name does not already exist
+    fn ok_to_rename(&mut self,new_name: &str) -> STDRESULT {
+        if !is_name_valid(new_name,false) {
+            return Err(Box::new(Error::BadFormat));
+        }
+        match self.get_file_entry(new_name) {
+            Ok((None,_)) => Ok(()),
+            Ok(_) => Err(Box::new(Error::DuplicateFilename)),
+            Err(e) => Err(e)
+        }
+    }
     /// modify a file entry, optionally rename, retype.
     fn modify(&mut self,name: &str,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
         if !is_name_valid(name, false) {
@@ -491,6 +502,7 @@ impl Disk
                     return Err(Box::new(Error::BadFormat));
                 }
                 entry.name = string_to_file_name(new_name);
+                entry.name_len = new_name.len() as u8;
             }
             if let Some(ftype) = maybe_ftype {
                 match FileType::from_str(ftype) {
@@ -574,6 +586,7 @@ impl super::DiskFS for Disk {
         Err(Box::new(Error::DevErr))
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {
+        self.ok_to_rename(new_name)?;
         self.modify(old_name,Some(new_name),None)
     }
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> STDRESULT {
