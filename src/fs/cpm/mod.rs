@@ -114,11 +114,12 @@ fn file_name_to_string_escaped(name: [u8;8],typ: [u8;3]) -> String {
     // in CP/M high bits are explicitly not part of the name
     let base: Vec<u8> = name.iter().map(|x| x & 0x7f).collect();
     let ext: Vec<u8> = typ.iter().map(|x| x & 0x7f).collect();
-    [
-        crate::escaped_ascii_from_bytes(&base, true, false).trim_end(),
-        ".",
-        crate::escaped_ascii_from_bytes(&ext, true, false).trim_end()
-    ].concat()
+    let base_str = crate::escaped_ascii_from_bytes(&base, true, false);
+    let ext_str = crate::escaped_ascii_from_bytes(&ext, true, false);
+    match ext_str.trim_end().len() {
+        0 => base_str.trim_end().to_string(),
+        _ => [base_str.trim_end(),".",ext_str.trim_end()].concat()
+    }
 }
 
 fn fx_to_string_escaped(fx: &Extent) -> String {

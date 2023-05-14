@@ -14,7 +14,7 @@ const BOOT_MESS_CPM: &str = "omit boot flag; for this OS you will need to copy r
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&str>) -> Result<Box<dyn DiskImage>,DYNERR> {
+fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -49,7 +49,7 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&str>) -> R
     };
 }
 
-fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+fn mkdos3x(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if img.byte_capacity()!=35*13*256 && img.byte_capacity()!=35*16*256 {
         error!("disk image capacity {} not consistent with DOS 3.x",img.byte_capacity());
         return Err(Box::new(CommandError::OutOfRange));
@@ -97,7 +97,7 @@ fn mkdos3x(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u
     }
 }
 
-fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+fn mkprodos(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -118,7 +118,7 @@ fn mkprodos(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
     }
 }
 
-fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+fn mkpascal(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -135,7 +135,7 @@ fn mkpascal(vol: Option<&str>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
     }
 }
 
-fn mkcpm(vol: Option<&str>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS_CPM);
         return Err(Box::new(CommandError::UnsupportedItemType));
@@ -152,9 +152,9 @@ fn mkcpm(vol: Option<&str>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -
 }
 
 pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
-    let dest_path= cmd.value_of("dimg").expect(RCH);
-    let which_fs = cmd.value_of("os").expect(RCH);
-    if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs) {
+    let dest_path= cmd.get_one::<String>("dimg").expect(RCH);
+    let which_fs = cmd.get_one::<String>("os").expect(RCH);
+    if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs.as_str()) {
         return Err(Box::new(CommandError::UnknownItemType));
     }
     // First make sure destination is OK
@@ -186,9 +186,9 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
         }
     }
     // Destination is OK, proceed
-    let maybe_vol = cmd.value_of("volume");
-    let mut kind = DiskKind::from_str(cmd.value_of("kind").expect(RCH)).unwrap();
-    let img_typ = DiskImageType::from_str(cmd.value_of("type").expect(RCH)).unwrap();
+    let maybe_vol = cmd.get_one::<String>("volume");
+    let mut kind = DiskKind::from_str(cmd.get_one::<String>("kind").expect(RCH)).unwrap();
+    let img_typ = DiskImageType::from_str(cmd.get_one::<String>("type").expect(RCH)).unwrap();
     // Refine disk kind based on combined inputs
     if kind==names::A2_DOS33_KIND && which_fs=="dos32" {
         kind = names::A2_DOS32_KIND;
@@ -208,7 +208,7 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
             error!("Extension missing, should be {:?}",img.file_extensions());
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let result = match which_fs {
+        let result = match which_fs.as_str() {
             "cpm2" => mkcpm(maybe_vol,boot,&kind,img),
             "dos32" => mkdos3x(maybe_vol,boot,img),
             "dos33" => mkdos3x(maybe_vol,boot,img),

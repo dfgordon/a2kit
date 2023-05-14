@@ -68,10 +68,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .version(crate_version!());
     main_cmd = main_cmd.subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
-        .arg(arg!(-t --type <TYPE> "type of disk image to create").possible_values(img_types))
-        .arg(arg!(-o --os <OS> "operating system format").possible_values(os_names))
+        .arg(arg!(-t --type <TYPE> "type of disk image to create").value_parser(img_types))
+        .arg(arg!(-o --os <OS> "operating system format").value_parser(os_names))
         .arg(arg!(-b --bootable "make disk bootable").action(ArgAction::SetTrue))
-        .arg(arg!(-k --kind <SIZE> "kind of disk").possible_values(disk_kinds)
+        .arg(arg!(-k --kind <SIZE> "kind of disk").value_parser(disk_kinds)
             .required(false)
             .default_value("5.25in"))
         .arg(arg!(-d --dimg <PATH> "disk image path to create"))
@@ -104,13 +104,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
         .about("change file type inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("verify")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt","itxt","mtxt"]))
         .about("read from stdin and error check"));
     main_cmd = main_cmd.subcommand(Command::new("minify")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt"]))
         .about("reduce program size"));
     main_cmd = main_cmd.subcommand(Command::new("renumber")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt"]))
         .arg(arg!(-b --beg <NUM> "lowest number to renumber"))
         .arg(arg!(-e --end <NUM> "highest number to renumber plus 1"))
         .arg(arg!(-f --first <NUM> "first number"))
@@ -118,13 +118,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("renumber BASIC program lines"));
     main_cmd = main_cmd.subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "source path or address, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).value_parser(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .about("read from local or disk image, write to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "destination path or address, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).possible_values(get_put_types))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(false).value_parser(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"));
@@ -134,10 +134,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("write disk image catalog to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atxt","itxt","mtxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt","itxt","mtxt"]))
         .about("read from stdin, tokenize, write to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("detokenize")
-        .arg(arg!(-t --type <TYPE> "type of the file").possible_values(["atok","itok","mtok"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atok","itok","mtok"]))
         .about("read from stdin, detokenize, write to stdout"));
 
     let matches = main_cmd.get_matches();
@@ -150,11 +150,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Catalog a disk image
     if let Some(cmd) = matches.subcommand_matches("catalog") {
-        let path_in_img = match cmd.value_of("file") {
+        let path_in_img = match cmd.get_one::<String>("file") {
             Some(path) => path,
             _ => "/"
         };
-        if let Some(path_to_img) = cmd.value_of("dimg") {
+        if let Some(path_to_img) = cmd.get_one::<String>("dimg") {
             return match a2kit::create_fs_from_file(path_to_img) {
                 Ok(mut disk) => disk.catalog_to_stdout(&path_in_img),
                 Err(e) => Err(e)
@@ -166,7 +166,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     // Verify
 
     if let Some(cmd) = matches.subcommand_matches("verify") {
-        if let Ok(typ) = ItemType::from_str(cmd.value_of("type").expect(RCH)) {
+        if let Ok(typ) = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH)) {
             let res = match typ
             {
                 ItemType::ApplesoftText => lang::verify_stdin(tree_sitter_applesoft::language(),"]"),
@@ -194,7 +194,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             error!("line entry is not supported for `minify`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
         let mut program = String::new();
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
@@ -227,11 +227,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             error!("line entry is not supported for `renumber`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
-        let beg = usize::from_str_radix(cmd.value_of("beg").unwrap(),10)?;
-        let end = usize::from_str_radix(cmd.value_of("end").unwrap(),10)?;
-        let first = usize::from_str_radix(cmd.value_of("first").unwrap(),10)?;
-        let step = usize::from_str_radix(cmd.value_of("step").unwrap(),10)?;
+        let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
+        let beg = usize::from_str_radix(cmd.get_one::<String>("beg").unwrap(),10)?;
+        let end = usize::from_str_radix(cmd.get_one::<String>("end").unwrap(),10)?;
+        let first = usize::from_str_radix(cmd.get_one::<String>("first").unwrap(),10)?;
+        let step = usize::from_str_radix(cmd.get_one::<String>("step").unwrap(),10)?;
         let mut program = String::new();
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
@@ -264,8 +264,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             error!("line entry is not supported for `tokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
-        let addr_opt = cmd.value_of("addr");
+        let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
+        let addr_opt = cmd.get_one::<String>("addr");
         let mut program = String::new();
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
@@ -339,7 +339,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             error!("line entry is not supported for `detokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
-        let typ = ItemType::from_str(cmd.value_of("type").expect(RCH));
+        let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
         let mut tok: Vec<u8> = Vec::new();
         std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
         if tok.len()==0 {
@@ -378,8 +378,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Create directory inside disk image
     if let Some(cmd) = matches.subcommand_matches("mkdir") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.create(&path_in_img) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
@@ -391,8 +391,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Delete a file or directory
     if let Some(cmd) = matches.subcommand_matches("delete") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.delete(&path_in_img) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
@@ -404,8 +404,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Lock a file or directory
     if let Some(cmd) = matches.subcommand_matches("lock") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.lock(&path_in_img) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
@@ -417,8 +417,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Unlock a file or directory
     if let Some(cmd) = matches.subcommand_matches("unlock") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.unlock(&path_in_img) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
@@ -430,9 +430,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Rename a file or directory
     if let Some(cmd) = matches.subcommand_matches("rename") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let name = String::from(cmd.value_of("name").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let name = cmd.get_one::<String>("name").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.rename(&path_in_img,&name) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
@@ -444,10 +444,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     // Retype a file
     if let Some(cmd) = matches.subcommand_matches("retype") {
-        let path_to_img = String::from(cmd.value_of("dimg").expect(RCH));
-        let path_in_img = String::from(cmd.value_of("file").expect(RCH));
-        let typ = String::from(cmd.value_of("type").expect(RCH));
-        let aux = String::from(cmd.value_of("aux").expect(RCH));
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
+        let typ = cmd.get_one::<String>("type").expect(RCH);
+        let aux = cmd.get_one::<String>("aux").expect(RCH);
         return match a2kit::create_fs_from_file(&path_to_img) {
             Ok(mut disk) => match disk.retype(&path_in_img,&typ,&aux) {
                 Ok(()) => a2kit::save_img(&mut disk,&path_to_img),

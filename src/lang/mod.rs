@@ -16,7 +16,7 @@ use std::io;
 use std::io::Read;
 use std::io::Write;
 use atty;
-use log::error;
+use log::{debug,error};
 
 use crate::{STDRESULT,DYNERR};
 
@@ -124,12 +124,13 @@ pub trait Visit {
 
 pub struct SyntaxCheckVisitor {
     pub code: String,
-    pub err_count: usize
+    pub err_count: usize,
+    pub curr_line: usize
 }
 
 impl SyntaxCheckVisitor {
     fn new(prog: String) -> Self {
-        Self { code: prog, err_count: 0 }
+        Self { code: prog, err_count: 0, curr_line: 0 }
     }
 }
 
@@ -142,18 +143,21 @@ impl Visit for SyntaxCheckVisitor {
             let mut c = curs.clone();
             let b1 = c.node().start_byte();
             let b2 = c.node().end_byte();
-            let mut depth = 0;
-            let mut indent = String::from("");
+            let mut l1 = b1;
+            let mut l2 = b2;
             while c.goto_parent() {
-                depth += 1;
-                indent += "  ";
+                if c.node().kind()=="line" {
+                    l1 = c.node().start_byte();
+                    l2 = c.node().end_byte() - 1;
+                }
             }
-            let mess = match depth {
-                2 => String::from("ERROR on line"),
-                3 => String::from("ERROR in statement"),
-                _ => String::from("ERROR within statement")
-            };
-            eprintln!("{}{} {} {}",indent,mess.red(),self.code.get(b1..b2).expect("none").yellow().bold(),curs.node().to_sexp());
+            eprintln!("{} row {} col {}","ERROR".red(),self.curr_line,b1);
+            debug!("error bounds {} {} {} {}",l1,b1,b2,l2);
+            debug!("line length {}",self.code.len());
+            eprintln!("    {}{}{}",
+                match self.code.get(l1..b1) { None => "???", Some(s) => s },
+                match self.code.get(b1..b2) { None => "???".normal(), Some(s) => s.red().bold() },
+                match self.code.get(b2..l2) { None => "???", Some(s) => s });
         }
         return WalkerChoice::GotoChild;
     }
@@ -168,7 +172,7 @@ pub fn verify_str(lang: tree_sitter::Language,code: &str) -> STDRESULT {
     while let Some(line) = iter.next()
     {
         let tree = parser.parse(String::from(line) + "\n",None).expect("Error parsing file");
-        visitor.code = String::from(line);
+        visitor.code = String::from(String::from(line) + "\n");
         if line.len()>0 {
             // if stdout is the console, format some, and include the s-expression per line
             visitor.walk(&tree);
@@ -206,7 +210,7 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,
             if line=="bye\n" || line=="bye\r\n" {
                 break;
             }
-            code += &(line + "\n");
+            code += &line;
         }
     }
     else
@@ -230,6 +234,7 @@ pub fn verify_stdin(lang: tree_sitter::Language,prompt: &str) -> Result<(String,
             }
             visitor.walk(&tree);
         }
+        visitor.curr_line += 1;
     }
     if visitor.err_count==0 {
         writeln!(bottom_line,"\u{2713} {}","Syntax OK".to_string().green()).expect("formatting error");

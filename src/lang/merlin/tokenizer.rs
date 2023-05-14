@@ -64,13 +64,16 @@ impl lang::Visit for Tokenizer
 			None => return lang::WalkerChoice::GotoChild
 		};
 
-		// root level comment needs no separator, Merlin will indent it automatically
-		if curs.node().kind()=="comment" && parent.kind()=="source_file" {
+		// Handle root level comments and headings.
+		// Root level comment needs no separator, Merlin will indent it automatically.
+		if ["comment","heading"].contains(&curs.node().kind()) && parent.kind()=="source_file" {
 			let txt = lang::node_text(curs.node(), &self.line);
+			trace!("visit: {}",txt);
 			self.tokenized_line.append(&mut txt.as_bytes().to_vec());
 			return lang::WalkerChoice::GotoSibling;
 		}
 
+		// items that are at root level + 1
 		if let Some(grandparent) = parent.parent() {
 			if grandparent.kind()=="source_file" {
 				if curs.node().kind().len()>3 {
@@ -100,15 +103,11 @@ impl lang::Visit for Tokenizer
 						self.tokenized_line.push(0xa0);
 					}
 				}
+				let txt = lang::node_text(curs.node(), &self.line);
+				trace!("visit: {}",txt);
+				self.tokenized_line.append(&mut txt.as_bytes().to_vec());
+				return lang::WalkerChoice::GotoSibling;	
 			}
-		}
-
-		// append terminal nodes
-		if curs.node().named_child_count()==0 {
-			let txt = lang::node_text(curs.node(), &self.line);
-			trace!("visit: {}",txt);
-			self.tokenized_line.append(&mut txt.as_bytes().to_vec());
-			return lang::WalkerChoice::GotoSibling;
 		}
 
 		return lang::WalkerChoice::GotoChild;
@@ -138,7 +137,7 @@ impl Tokenizer
 		}
 		for curr in &mut self.tokenized_line {
 			if *curr<128 && *curr!=32 {
-				*curr += 128;
+				*curr += 128; 
 			}
 		}
 		self.tokenized_line.push(0x8d);

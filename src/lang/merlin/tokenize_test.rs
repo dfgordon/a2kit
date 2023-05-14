@@ -19,7 +19,6 @@ fn test_tokenizer(test_code: &str,expected: &str) {
 	assert_eq!(actual,expected);
 }
 
-// OUTPUT
 mod op_tests {
 	#[test]
 	fn no_label() {
@@ -83,5 +82,53 @@ mod macros {
 		let test_code = "\tPMC  MLI,READ;PARMS\n";
 		let expected = "A0D0CDC3A0CDCCC9ACD2C5C1C4BBD0C1D2CDD38D";
 		super::test_tokenizer(test_code,expected);
+	}
+	#[test]
+	fn explicit_call_spc() {
+		let test_code = "\tPMC  MLI READ;PARMS\n";
+		let expected = "A0D0CDC3A0CDCCC920D2C5C1C4BBD0C1D2CDD38D";
+		super::test_tokenizer(test_code,expected);
+	}
+}
+
+mod trailing {
+	#[test]
+	fn op_match() {
+		let test_code = "    inc16 word\r\n";
+		let expected = "A0E9EEE3B1B6A0F7EFF2E48D";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn op_match_w_lab() {
+		let test_code = ":ADVANCE inc16 word\r\n";
+		let expected = "BAC1C4D6C1CEC3C5A0E9EEE3B1B6A0F7EFF2E48D";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn psop_match() {
+		let test_code = "    doit a+b\r\n";
+		let expected = "A0E4EFE9F4A0E1ABE28D";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn psop_match_w_lab() {
+		let test_code = ":ADVANCE lstNext\r\n";
+		let expected = "BAC1C4D6C1CEC3C5A0ECF3F4CEE5F8F48D";
+		super::test_tokenizer(test_code, expected);
+	}
+}
+
+mod expressions {
+	#[test]
+	fn lr_expr() {
+		let test_code = " LDA #VAL*%1001+$FF";
+		let expected = "A0CCC4C1A0A3D6C1CCAAA5B1B0B0B1ABA4C6C68D";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn braced_expr() {
+		let test_code = " LUP VAL1+{{VAL2+1}*15/$E}\r\n";
+		let expected = "A0CCD5D0A0D6C1CCB1ABFBFBD6C1CCB2ABB1FDAAB1B5AFA4C5FD8D";
+		super::test_tokenizer(test_code, expected);
 	}
 }

@@ -1,4 +1,4 @@
-//! ## Low level treatment of 5.25 inch floppy disks
+//! ## Apple 5.25 inch disk module
 //! 
 //! This handles bit-level processing of a 5.25 inch GCR disk track.
 //! The logic state sequencer is approximated by a simple model.

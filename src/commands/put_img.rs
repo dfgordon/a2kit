@@ -40,9 +40,9 @@ fn parse_track(farg: &str) -> Result<[usize;2],DYNERR> {
 
 pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     // presence of arguments should already be resolved
-    let dest_path = String::from(cmd.value_of("file").expect(RCH));
-    let typ = ItemType::from_str(&String::from(cmd.value_of("type").expect(RCH))).expect(RCH);
-    let img_path = String::from(cmd.value_of("dimg").expect(RCH));
+    let dest_path = cmd.get_one::<String>("file").expect(RCH);
+    let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
+    let img_path = cmd.get_one::<String>("dimg").expect(RCH);
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {

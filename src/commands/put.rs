@@ -17,9 +17,9 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
     //     error!("output is redirected, but `put` must end the pipeline");
     //     return Err(Box::new(CommandError::InvalidCommand));
     // }
-    let dest_path = String::from(cmd.value_of("file").expect(RCH));
-    let maybe_typ = cmd.value_of("type");
-    let maybe_img = cmd.value_of("dimg");
+    let dest_path = cmd.get_one::<String>("file").expect(RCH);
+    let maybe_typ = cmd.get_one::<String>("type");
+    let maybe_img = cmd.get_one::<String>("dimg");
     let mut file_data = Vec::new();
     std::io::stdin().read_to_end(&mut file_data).expect("failed to read input stream");
     if file_data.len()==0 {
@@ -37,7 +37,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
                 Ok(ItemType::Track) | Ok(ItemType::RawTrack) | Ok(ItemType::Sector) => return super::put_img::put(cmd,&file_data),
                 _ => {}
             }
-            let load_address: u16 = match (cmd.value_of("addr"),&typ) {
+            let load_address: u16 = match (cmd.get_one::<String>("addr"),&typ) {
                 (Some(a),_) => u16::from_str(a).expect("bad address"),
                 (_ ,Ok(ItemType::Binary)) => {
                     error!("binary file requires an address");

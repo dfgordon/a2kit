@@ -38,9 +38,9 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     //     error!("input is redirected, but `get` must start the pipeline");
     //     return Err(Box::new(CommandError::InvalidCommand));
     // }
-    let src_path = String::from(cmd.value_of("file").expect(RCH));
-    let maybe_typ = cmd.value_of("type");
-    let maybe_img = cmd.value_of("dimg");
+    let src_path = cmd.get_one::<String>("file").expect(RCH);
+    let maybe_typ = cmd.get_one::<String>("type");
+    let maybe_img = cmd.get_one::<String>("dimg");
 
     match (maybe_typ,maybe_img) {
 
@@ -66,7 +66,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                     }
                     // special handling for random access text
                     if let Ok(ItemType::Records) = typ {
-                        let record_length = match cmd.value_of("len") {
+                        let record_length = match cmd.get_one::<String>("len") {
                             Some(s) => {
                                 if let Ok(l) = usize::from_str(s) {
                                     l
