@@ -50,7 +50,7 @@ impl lang::Visit for Minifier
 			return lang::WalkerChoice::GotoSibling;
 		}
 
-		// REM and DATA
+		// REM and DATA and ampersand
 		if curs.node().kind()=="statement" {
 			if let Some(tok) = curs.node().named_child(0) {
 				if tok.kind()=="tok_rem" {
@@ -64,8 +64,8 @@ impl lang::Visit for Minifier
 					self.minified_line += "REM";
 					return lang::WalkerChoice::GotoSibling;
 				}
-				// for DATA keep everything
-				if tok.kind()=="tok_data" {
+				// for DATA and ampersand keep everything
+				if tok.kind()=="tok_data" || tok.kind()=="tok_amp" {
 					self.minified_line += &node_str;
 					return lang::WalkerChoice::GotoSibling;
 				}
@@ -108,6 +108,9 @@ impl lang::Visit for Minifier
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().named_child_count()==0 {
 			self.minified_line += &node_str.replace(" ","");
+			if curs.node().kind()=="tok_at" {
+				self.minified_line += " ";
+			}
 			return lang::WalkerChoice::GotoSibling;
 		}
 

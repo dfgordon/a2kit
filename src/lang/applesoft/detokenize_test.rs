@@ -216,3 +216,61 @@ mod escapes {
 		super::test_detokenizer(tokens, expected);
 	}
 }
+
+mod ampersand {
+	#[test]
+	fn null_string_only() {
+		let expected = "10  & \"\n";
+		let tokens = "08080A00AF22000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn string_only() {
+		let expected = "10  & \"print something\"\n";
+		let tokens = "18080A00AF227072696E7420736F6D657468696E6722000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn anon_func_form() {
+		let expected = "10  & (\"sarg\",X + Y,A$)\n";
+		let tokens = "16080A00AF282273617267222C58C8592C412429000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	// syntax is unsupported, but detokenization will work
+	#[test]
+	fn func_form1() {
+		let expected = "10  & \"print\"(X + Y,A$)\n";
+		let tokens = "16080A00AF227072696E74222858C8592C412429000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn overloaded_tok_func() {
+		let expected = "10  &  PRINT (X + Y,A$)\n";
+		let tokens = "10080A00AFBA2858C8592C412429000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn func_form3() {
+		let expected = "10  & MYFUNC(X + Y,A$)\n";
+		let tokens = "15080A00AF4D5946554E432858C8592C412429000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn statement_form1() {
+		let expected = "10  & PRUSNG > \"0.00\";A$\n";
+		let tokens = "17080A00AF505255534E47CF22302E3030223B4124000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn statement_form2() {
+		let expected = "10  & CAL; COS (X) *  SIN (Y)\n";
+		let tokens = "14080A00AF43414C3BDE285829CADF285929000000";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn overloaded_tok_statement() {
+		let expected = "10  &  DRAW  AT X0,Y0\n";
+		let tokens = "0E080A00AF94C558302C5930000000";
+		super::test_detokenizer(tokens, expected);
+	}
+}

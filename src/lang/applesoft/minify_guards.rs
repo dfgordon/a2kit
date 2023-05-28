@@ -2,7 +2,9 @@
 /// It maps short variable names to trailing tokens that induce the need
 /// for guarding parenthesis.  E.g., in a case like `IF (A) THEN 100`, we
 /// say that `THEN` induces the need for guarding parenthesis around `A`.
-/// This is needed for minification.
+/// This is needed for minification.  This does not guard against names
+/// following tokens; e.g. the minifier has to explicitly keep spaces
+/// following AT to guard against producing ATN or A TO.
 pub const VAR_GUARDS_JSON: &str = r#"
 {
     "a": [

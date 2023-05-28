@@ -56,6 +56,10 @@ impl lang::Visit for Tokenizer
 		}
 		// Required upper case
 		if curs.node().kind().starts_with("name_") || curs.node().kind()=="real" {
+			if curs.node().kind()=="name_amp" && curs.node().child_count()>0 {
+				// handle overloaded tokens
+				return lang::WalkerChoice::GotoChild;
+			}
 			let mut cleaned = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
 			return lang::WalkerChoice::GotoSibling;

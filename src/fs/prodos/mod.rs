@@ -417,20 +417,39 @@ impl Disk {
         error!("directory block count not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
-    /// put path as [volume,subdir,subdir,...,last] where last could be an empty string,
+    /// Put path as [volume,subdir,subdir,...,last] where last could be an empty string,
     /// which indicates this is a directory.  If last is not empty, it could be either directory or file.
-    fn normalize_path(&mut self,vol_name: &str,path: &str) -> Vec<String> {
+    /// Also check that the path is not too long accounting for prefix rules.
+    fn normalize_path(&mut self,vol_name: &str,path: &str) -> Result<Vec<String>,DYNERR> {
         let mut path_nodes: Vec<String> = path.split("/").map(|s| s.to_string().to_uppercase()).collect();
         if &path[0..1]!="/" {
             path_nodes.insert(0,vol_name.to_string());
         } else {
             path_nodes = path_nodes[1..].to_vec();
         }
-        return path_nodes;
+        // check prefix/path length
+        let mut prefix_len = 0;
+        let mut rel_path_len = 0;
+        for s in path_nodes.iter() {
+            if rel_path_len>0 {
+                rel_path_len += 1 + s.len();
+            } else {
+                prefix_len += 1 + s.len();
+                if prefix_len>64 {
+                    prefix_len -= 1 + s.len();
+                    rel_path_len += 1 + s.len();
+                }
+            }
+        }
+        if rel_path_len>64 {
+            error!("ProDOS path too long, prefix {}, relative {}",prefix_len,rel_path_len);
+            return Err(Box::new(Error::Range));
+        }
+        return Ok(path_nodes);
     }
     /// split the path into the last node (file or directory) and its parent path
     fn split_path(&mut self,vol_name: &str,path: &str) -> Result<[String;2],DYNERR> {
-        let mut path_nodes = self.normalize_path(vol_name,path);
+        let mut path_nodes = self.normalize_path(vol_name,path)?;
         // if last node is empty, remove it (means we have a directory)
         if path_nodes[path_nodes.len()-1].len()==0 {
             path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
@@ -446,7 +465,7 @@ impl Disk {
     }
     fn search_volume(&mut self,file_types: &Vec<StorageType>,path: &str) -> Result<EntryLocation,DYNERR> {
         let vhdr = self.get_vol_header()?;
-        let path_nodes = self.normalize_path(&vhdr.name(),path);
+        let path_nodes = self.normalize_path(&vhdr.name(),path)?;
         if &path_nodes[0]!=&vhdr.name() {
             return Err(Box::new(Error::PathNotFound));
         }
@@ -1214,9 +1233,25 @@ fn test_path_normalize() {
     let img = Box::new(crate::img::dsk_po::PO::create(280));
     let mut disk = Disk::from_img(img);
     disk.format(&String::from("NEW.DISK"),true,None).expect("disk error");
-    assert_eq!(disk.normalize_path("NEW.DISK","DIR1"),["NEW.DISK","DIR1"]);
-    assert_eq!(disk.normalize_path("NEW.DISK","dir1/"),["NEW.DISK","DIR1",""]);
-    assert_eq!(disk.normalize_path("NEW.DISK","dir1/sub2"),["NEW.DISK","DIR1","SUB2"]);
-    assert_eq!(disk.normalize_path("NEW.DISK","/new.disk/dir1/sub2"),["NEW.DISK","DIR1","SUB2"]);
+    match disk.normalize_path("NEW.DISK","DIR1") {
+        Ok(res) => assert_eq!(res,["NEW.DISK","DIR1"]),
+        Err(e) => panic!("{}",e)
+    }
+    match disk.normalize_path("NEW.DISK","dir1/") {
+        Ok(res) => assert_eq!(res,["NEW.DISK","DIR1",""]),
+        Err(e) => panic!("{}",e)
+    }
+    match disk.normalize_path("NEW.DISK","dir1/sub2") {
+        Ok(res) => assert_eq!(res,["NEW.DISK","DIR1","SUB2"]),
+        Err(e) => panic!("{}",e)
+    }
+    match disk.normalize_path("NEW.DISK","/new.disk/dir1/sub2") {
+        Ok(res) => assert_eq!(res,["NEW.DISK","DIR1","SUB2"]),
+        Err(e) => panic!("{}",e)
+    }
+    match disk.normalize_path("NEW.DISK","abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno") {
+        Ok(_res) => panic!("normalize_path should have failed with path too long"),
+        Err(e) => assert_eq!(e.to_string(),"RANGE ERROR")
+    }
 }
 

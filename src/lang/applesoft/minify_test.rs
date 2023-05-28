@@ -88,13 +88,45 @@ mod minify_vars {
 		let expected = "10PRINTA%(X,Y)A$(X%,Y%)";
 		super::test_minify(test_code, expected);
 	}
+    #[test]
+	fn amp_func_vars() {
+		let test_code = "10 & MYFUNC (HELLO+Y,AERO%(XA1B2,YA2B1),aero$(x1ab2,y1ab1))";
+		let expected = "10& MYFUNC (HELLO+Y,AERO%(XA1B2,YA2B1),aero$(x1ab2,y1ab1))";
+		super::test_minify(test_code, expected);
+	}
+    #[test]
+	fn amp_expr_list() {
+		let test_code = "10 & (\"cmd\",HELLO+Y,AERO%(XA1B2,YA2B1),aero$(x1ab2,y1ab1))";
+		let expected = "10& (\"cmd\",HELLO+Y,AERO%(XA1B2,YA2B1),aero$(x1ab2,y1ab1))";
+		super::test_minify(test_code, expected);
+	}
+    #[test]
+	fn amp_overloaded_toks() {
+		let test_code = "10 & draw \"subcmd\" at HELLO+Y,AERO%(XA1B2,YA2B1) and aero%(x1ab2,y1ab1)";
+		let expected = "10& draw \"subcmd\" at HELLO+Y,AERO%(XA1B2,YA2B1) and aero%(x1ab2,y1ab1)";
+		super::test_minify(test_code, expected);
+	}
 }
 
 mod minify_vars_with_guards {
     #[test]
 	fn to_and_step_guards() {
-		let test_code = "10 for x = ca12345 to abracadabra step 5";
+		let test_code = "10 for x = ca12345 t o abracadabra step 5";
 		let expected = "10forx=(ca)to(ab)step5";
+		// TODO: could save 2 bytes by minifying as `10forx=cato(ab)step5`
+		// (Apple tokenizer will resolve ATO correctly)
+		super::test_minify(test_code, expected);
+	}
+    #[test]
+	fn atn_guard() {
+		let test_code = "10 hlin x,xrght at n";
+		let expected = "10hlinx,xrat n";
+		super::test_minify(test_code, expected);
+	}
+    #[test]
+	fn ato_guard() {
+		let test_code = "10 draw br at o1,o2";
+		let expected = "10drawbrat o1,o2";
 		super::test_minify(test_code, expected);
 	}
     #[test]

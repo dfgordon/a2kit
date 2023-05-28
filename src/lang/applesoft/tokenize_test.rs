@@ -286,3 +286,61 @@ mod escapes {
 		super::test_tokenizer(test_code, expected);
 	}
 }
+
+mod ampersand {
+	#[test]
+	fn null_string_only() {
+		let test_code = "10 & \"";
+		let expected = "08080A00AF22000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn string_only() {
+		let test_code = "10 & \"print something\"";
+		let expected = "18080A00AF227072696E7420736F6D657468696E6722000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn anon_func_form() {
+		let test_code = "10 & (\"sarg\",x+y,a$)";
+		let expected = "16080A00AF282273617267222C58C8592C412429000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	// syntax is unsupported; some tokenization strategies will work nevertheless
+	// #[test]
+	// fn func_form1() {
+	// 	let test_code = "10 & \"print\"(x+y,a$)";
+	// 	let expected = "16080A00AF227072696E74222858C8592C412429000000";
+	// 	super::test_tokenizer(test_code, expected);
+	// }
+	#[test]
+	fn overloaded_tok_func() {
+		let test_code = "10 & print(x+y,a$)";
+		let expected = "10080A00AFBA2858C8592C412429000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn func_form3() {
+		let test_code = "10 & MyFunc(x+y,a$)";
+		let expected = "15080A00AF4D5946554E432858C8592C412429000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn statement_form1() {
+		let test_code = "10 & PR USNG > \"0.00\";A$";
+		let expected = "17080A00AF505255534E47CF22302E3030223B4124000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn statement_form2() {
+		let test_code = "10 & cal ; cos(x)*sin(y)";
+		let expected = "14080A00AF43414C3BDE285829CADF285929000000";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn overloaded_tok_statement() {
+		let test_code = "10 & DRAW AT X0,Y0";
+		let expected = "0E080A00AF94C558302C5930000000";
+		super::test_tokenizer(test_code, expected);
+	}
+}
