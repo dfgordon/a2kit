@@ -819,8 +819,10 @@ impl Disk {
             }
         }
         // update the entry, do last to capture all the changes
-        let eof = usize::max(entry.eof(),super::FileImage::usize_from_truncated_le_bytes(&fimg.eof));
-        entry.set_eof(eof);
+        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        if eof>0 {
+            entry.set_eof(eof);
+        }
         entry.set_all_access(fimg.access[0]);
         self.write_entry(&loc,&entry)?;
         return Ok(eof);
@@ -1065,8 +1067,7 @@ impl super::DiskFS for Disk {
             Ok(loc) => {
                 let entry = self.read_entry(&loc)?;
                 let ans = self.read_file(&entry)?;
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
-                return Ok((0,ans.sequence_limited(eof)))
+                Ok((0,ans.sequence()))
             },
             Err(e) => Err(e)
         }

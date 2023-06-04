@@ -590,10 +590,10 @@ pub trait DiskFS {
     /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
     /// Tokenization is handled in a different module.
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
-    /// Read sequential text file from the disk, mirrors `READ`, text remains in raw A2 format.
+    /// Read sequential data from the disk, text remains in raw format.
     /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
     fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write sequential text file to the disk, mirrors `WRITE`, text must already be in A2 format.
+    /// Write sequential data to the disk, text must already be in raw format.
     /// Use `encode_text` to generate data from a UTF8 string.
     fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
     /// Read records from a random access text file.  This finds all possible records, some may be spurious.

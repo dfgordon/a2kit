@@ -864,7 +864,10 @@ impl super::DiskFS for Disk {
     fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
-            Ok(sd) => Ok((0,sd.sequence())),
+            Ok(ans) => {
+                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
+                Ok((0,ans.sequence_limited(eof)))
+            },
             Err(e) => Err(e)
         }
     }
