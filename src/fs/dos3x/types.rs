@@ -39,6 +39,7 @@ pub enum Error {
 /// * FileType to u8,u16,u32: `as u8` etc.
 /// * u8,u16,u32 to FileType: `FileType::from_u8` etc., (use FromPrimitive trait)
 /// * &str to FileType: `FileType::from_str`, str can be a number or mnemonic
+/// * N.b. high bit may need to be masked out in some conversions
 #[derive(FromPrimitive)]
 pub enum FileType {
     Text = 0x00,
@@ -52,7 +53,7 @@ impl FromStr for FileType {
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         // string can be the number itself
         if let Ok(num) = u8::from_str(s) {
-            return match FileType::from_u8(num) {
+            return match FileType::from_u8(num & 0x7f) {
                 Some(typ) => Ok(typ),
                 _ => Err(Error::FileTypeMismatch)
             };

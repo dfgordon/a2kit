@@ -212,8 +212,8 @@ impl Disk
                             debug!("entry {} name length {}",i,entry.name_len);
                             return false;
                         }
-                        for _j in 0..entry.name_len {
-                            let c = entry.name[i as usize];
+                        for j in 0..entry.name_len {
+                            let c = entry.name[j as usize];
                             if c<32 || c>126 {
                                 debug!("entry {} name char {}",i,c);
                                 return false;
@@ -593,13 +593,7 @@ impl super::DiskFS for Disk {
         self.modify(name, None, Some(new_type))
     }
     fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(name) {
-            Ok(ans) => {
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
-                Ok((0,ans.sequence_limited(eof)))
-            },
-            Err(e) => Err(e)
-        }
+        self.read_raw(name,true)
     }
     fn bsave(&mut self,name: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let padded = match trailing {
@@ -619,11 +613,29 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
-    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(name) {
-            Ok(sd) => Ok((0,sd.sequence())),
-            Err(e) => Err(e)
+    fn read_raw(&mut self,name: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
+        match self.read_file(&name) {
+            Ok(fimg) => {
+                if trunc {
+                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+                    Ok((0,fimg.sequence_limited(eof)))
+                } else {
+                    Ok((0,fimg.sequence()))
+                }
+            },
+            Err(e) => Err(e)  
         }
+    }
+    fn write_raw(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
+        fimg.desequence(dat);
+        fimg.fs_type = vec![FileType::Text as u8,0];
+        fimg.eof = u32::to_le_bytes(dat.len() as u32).to_vec();
+        self.write_file(name,&fimg)
+    }
+    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+        // keep everything, let decoder sort it out
+        self.read_raw(name,false)
     }
     fn write_text(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
@@ -700,7 +712,10 @@ impl super::DiskFS for Disk {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
-            Err(e) => Err(Box::new(e))
+            Err(_) => {
+                error!("Cannot encode, perhaps use raw type");
+                Err(Box::new(Error::BadFormat))
+            }
         }
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {

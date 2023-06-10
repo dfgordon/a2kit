@@ -176,7 +176,7 @@ pub struct EntryLocation {
 }
 
 /// Transforms between UTF8 and ProDOS text encodings.
-/// DOS uses positive ASCII with CR line separators.
+/// ProDOS uses positive ASCII with CR line separators.
 pub struct Encoder {
     line_terminator: Vec<u8>
 }

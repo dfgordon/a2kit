@@ -580,21 +580,25 @@ pub trait DiskFS {
     fn unlock(&mut self,path: &str) -> STDRESULT;
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
     fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> STDRESULT;
-    /// Read a binary file from the disk, mirrors `BLOAD`.  Returns (aux,data), aux = starting address.
+    /// Read a binary file from the disk.  Returns (aux,data), aux = load address if applicable.
     fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write a binary file to the disk, mirrors `BSAVE`
+    /// Write a binary file to the disk.
     fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
-    /// Read a BASIC program file from the disk, mirrors `LOAD`, program is in tokenized form.
-    /// Detokenization is handled in a different module.  Returns (aux,data), aux = 0
+    /// Read a BASIC program file from the disk, program is in tokenized form.
+    /// Detokenization is handled in a different module.  Returns (aux,data), aux = load address if applicable.
     fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write a BASIC program to the disk, mirrors `SAVE`, program must already be tokenized.
+    /// Write a BASIC program to the disk, program must already be tokenized.
     /// Tokenization is handled in a different module.
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
-    /// Read sequential data from the disk, text remains in raw format.
-    /// Use `decode_text` to get a UTF8 string.  Returns (aux,data), aux = 0.
+    /// Read sequential data from the disk, Returns (aux,data), aux is implementation dependent.
+    /// If `trunc=true` the data will be truncated at the EOF given by the file's metadata (if available),
+    /// otherwise it extends to the block boundary.
+    fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR>;
+    /// Write sequential data to the disk.
+    fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
+    /// Usually same as `read_raw` with `trunc=true`. Use `decode_text` on the result to get a UTF8 string.
     fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write sequential data to the disk, text must already be in raw format.
-    /// Use `encode_text` to generate data from a UTF8 string.
+    /// Usually same as `write_raw`. Use `encode_text` to generate `dat` from a UTF8 string.
     fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
     /// Read records from a random access text file.  This finds all possible records, some may be spurious.
     /// The `record_length` can be set to 0 on file systems where this is stored with the file.

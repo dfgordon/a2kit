@@ -14,6 +14,7 @@ mod directory;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
+use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
 use log::{info,debug,error};
 
@@ -23,6 +24,7 @@ use super::{Block,TextEncoder};
 use crate::img;
 use crate::commands::ItemType;
 
+use crate::lang::applesoft;
 use crate::{STDRESULT,DYNERR};
 
 /// This will accept lower case; case will be automatically converted as appropriate
@@ -802,7 +804,14 @@ impl super::DiskFS for Disk {
     }
     fn load(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.read_file(name) {
-            Ok(fimg) => Ok((0,types::TokenizedProgram::from_bytes(&fimg.sequence()).program)),
+            Ok(fimg) => {
+                let tokens = types::TokenizedProgram::from_bytes(&fimg.sequence()).program;
+                match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
+                    Some(FileType::Integer) => Ok((0,tokens)),
+                    Some(FileType::Applesoft) => Ok((applesoft::deduce_address(&tokens),tokens)),
+                    _ => Err(Box::new(Error::FileTypeMismatch))
+                }
+            },
             Err(e) => Err(e)
         }
     }
@@ -818,18 +827,24 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![fs_type as u8];
         return self.write_file(name, &fimg);
     }
-    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_raw(&mut self,name: &str,_trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
+        // eof is not generally available in DOS 3.x
         match self.read_file(name) {
             Ok(fimg) => Ok((0,fimg.sequence())),
             Err(e) => Err(e)
         }
     }
-    fn write_text(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        debug!("write text file");
+    fn write_raw(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         let mut fimg = Disk::new_fimg(256);
         fimg.desequence(dat);
         fimg.fs_type = vec![FileType::Text as u8];
         return self.write_file(name, &fimg);
+    }
+    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+        self.read_raw(name,false)
+    }
+    fn write_text(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+        self.write_raw(name,dat)
     }
     fn read_records(&mut self,name: &str,record_length: usize) -> Result<super::Records,DYNERR> {
         if record_length==0 {
@@ -906,7 +921,10 @@ impl super::DiskFS for Disk {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
-            Err(e) => Err(Box::new(e))
+            Err(_) => {
+                error!("Cannot encode, perhaps use raw type");
+                Err(Box::new(Error::FileTypeMismatch))
+            }
         }
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {

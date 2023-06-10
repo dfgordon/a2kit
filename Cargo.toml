@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -20,6 +20,7 @@ tree-sitter-applesoft = "3.1.1"
 tree-sitter-integerbasic = "1.0.2"
 tree-sitter-merlin6502 = "2.0.0"
 clap = {version="4.2.7",features=["cargo"]}
+tempfile = "3.6.0"
 json = "0.12"
 chrono = "0.4.20"
 regex = "1.5"

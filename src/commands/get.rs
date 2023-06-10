@@ -1,7 +1,8 @@
 use clap;
 use std::io::Write;
 use std::str::FromStr;
-use log::error;
+use log::{warn,error};
+
 use super::{ItemType,CommandError};
 use crate::fs::DiskFS;
 use crate::{STDRESULT,DYNERR};
@@ -16,16 +17,18 @@ fn output_get(
 ) -> STDRESULT {
     match maybe_object {
         Ok((start_addr,object)) => {
-            if atty::is(atty::Stream::Stdout) {
-                match (maybe_typ,maybe_disk) {
-                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)?),
-                    _ => crate::display_block(start_addr,&object)
-                };
-            } else {
-                match (maybe_typ,maybe_disk) {
-                    (Ok(ItemType::Text),Some(disk)) => println!("{}",disk.decode_text(&object)?),
-                    _ => std::io::stdout().write_all(&object).expect("could not write stdout")
-                };
+            match (maybe_typ,maybe_disk,atty::is(atty::Stream::Stdout)) {
+                (Ok(ItemType::Text),Some(disk),_) => {
+                    let str = disk.decode_text(&object)?;
+                    print!("{}",str);
+                    std::io::stdout().flush()?;
+                    if !str.ends_with("\n") {
+                        eprintln!();
+                        warn!("string ended without a newline");
+                    }
+                },
+                (_,_,true) => crate::display_block(start_addr,&object),
+                (_,_,false) => std::io::stdout().write_all(&object).expect("could not write stdout")
             }
             return Ok(())
         },
@@ -41,17 +44,27 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     let src_path = cmd.get_one::<String>("file").expect(RCH);
     let maybe_typ = cmd.get_one::<String>("type");
     let maybe_img = cmd.get_one::<String>("dimg");
+    let trunc = cmd.get_flag("trunc");
 
     match (maybe_typ,maybe_img) {
 
         // we are getting from a disk image
         (Some(typ_str),Some(img_path)) => {
-            let typ = ItemType::from_str(typ_str);
-            // If getting a track or sector, no need to resolve file system, handle differently
-            match typ {
-                Ok(ItemType::Track) | Ok(ItemType::RawTrack) | Ok(ItemType::Sector) => return super::get_img::get(cmd),
-                _ => {}
+            // If getting a track or sector, no need to resolve file system, handle differently.
+            // Also verify truncation flag.
+            match (ItemType::from_str(typ_str),trunc) {
+                (Ok(ItemType::Track),false) => return super::get_img::get(cmd),
+                (Ok(ItemType::RawTrack),false) => return super::get_img::get(cmd),
+                (Ok(ItemType::Sector),false) => return super::get_img::get(cmd),
+                (Ok(ItemType::Raw),_) => {},
+                (Ok(_),false) => {},
+                (_,true) => {
+                    eprintln!("`trunc` flag only used with raw type");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                },
+                (Err(e),_) => return Err(Box::new(e))
             }
+            let typ = ItemType::from_str(typ_str);
             match crate::create_fs_from_file(img_path) {
                 Ok(mut disk) => {
                     // special handling for sparse data
@@ -91,7 +104,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                         Ok(ItemType::MerlinTokens) => disk.read_text(&src_path),
                         Ok(ItemType::Binary) => disk.bload(&src_path),
                         Ok(ItemType::Text) => disk.read_text(&src_path),
-                        Ok(ItemType::Raw) => disk.read_text(&src_path),
+                        Ok(ItemType::Raw) => disk.read_raw(&src_path,trunc),
                         Ok(ItemType::Block) => disk.read_block(&src_path),
                         _ => Err::<(u16,Vec<u8>),DYNERR>(Box::new(CommandError::UnsupportedItemType))
                     };

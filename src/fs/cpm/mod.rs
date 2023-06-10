@@ -862,14 +862,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        let (user,name) = split_user_filename(xname)?;
-        match self.read_file(&name,user) {
-            Ok(ans) => {
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
-                Ok((0,ans.sequence_limited(eof)))
-            },
-            Err(e) => Err(e)
-        }
+        self.read_raw(xname,true)
     }
     fn bsave(&mut self,xname: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
@@ -890,19 +883,32 @@ impl super::DiskFS for Disk {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
-    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_raw(&mut self,xname: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         match self.read_file(&name,user) {
-            Ok(sd) => Ok((0,sd.sequence())),
-            Err(e) => Err(e)
+            Ok(fimg) => {
+                if trunc {
+                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+                    Ok((0,fimg.sequence_limited(eof)))
+                } else {
+                    Ok((0,fimg.sequence()))
+                }
+            },
+            Err(e) => Err(e)  
         }
     }
-    fn write_text(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+    fn write_raw(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         let mut fimg = self.new_fimg(self.dpb.block_size());
         fimg.desequence(&dat);
         update_fimg_with_name(&mut fimg, &name);
         return self.write_file(&name, user, &fimg);
+    }
+    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+        self.read_raw(xname, true)
+    }
+    fn write_text(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+        self.write_raw(xname,dat)
     }
     fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
         error!("CP/M implementation does not support operation");
@@ -961,7 +967,10 @@ impl super::DiskFS for Disk {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
-            Err(e) => Err(Box::new(e))
+            Err(_) => {
+                error!("Cannot encode, perhaps use raw type");
+                Err(Box::new(Error::BadFormat))
+            }
         }
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {

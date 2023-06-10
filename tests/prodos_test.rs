@@ -74,7 +74,7 @@ fn read_small() {
     let mut lib_tokens = get_tokens("disk_builder.abas");
     lib_tokens.push(196);
     let disk_tokens = emulator_disk.load("hello").expect("error");
-    assert_eq!(disk_tokens,(0,lib_tokens));
+    assert_eq!(disk_tokens,(2049,lib_tokens));
 
     // check the binary
     let binary_data = emulator_disk.bload("thechip").expect("error");
@@ -143,7 +143,7 @@ fn read_big() {
     let mut lib_tokens = get_tokens("disk_builder.abas");
     let disk_tokens = emulator_disk.load("hello").expect("error");
     lib_tokens.push(0xc4); // Virtual II added an extra byte, why?
-    assert_eq!(disk_tokens,(0,lib_tokens));
+    assert_eq!(disk_tokens,(2049,lib_tokens));
 
     // check the text records
     let recs = emulator_disk.read_records("tree1", 0).expect("failed to read tree1");

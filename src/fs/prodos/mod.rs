@@ -4,7 +4,6 @@
 //! 
 //! * Single volume images only
 
-// TODO: verify length of path string
 mod boot;
 pub mod types;
 mod directory;
@@ -1011,15 +1010,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.find_file(path) {
-            Ok(loc) => {
-                let entry = self.read_entry(&loc)?;
-                let ans = self.read_file(&entry)?;
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
-                Ok((entry.aux(),ans.sequence_limited(eof)))
-            },
-            Err(e) => Err(e)
-        }
+        self.read_raw(path,true)
     }
     fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let padded = match trailing {
@@ -1034,15 +1025,7 @@ impl super::DiskFS for Disk {
         return self.write_any(path,&fimg);
     }
     fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.find_file(path) {
-            Ok(loc) => {
-                let entry = self.read_entry(&loc)?;
-                let ans = self.read_file(&entry)?;
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&ans.eof);
-                return Ok((0,ans.sequence_limited(eof)))
-            },
-            Err(e) => Err(e)
-        }
+        self.read_raw(path,true)
     }
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
@@ -1062,22 +1045,33 @@ impl super::DiskFS for Disk {
         }
         return self.write_any(path,&fimg);
     }
-    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc)?;
-                let ans = self.read_file(&entry)?;
-                Ok((0,ans.sequence()))
+                let fimg = self.read_file(&entry)?;
+                if trunc {
+                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+                    Ok((entry.aux(),fimg.sequence_limited(eof)))
+                } else {
+                    Ok((entry.aux(),fimg.sequence()))
+                }
             },
             Err(e) => Err(e)
         }
     }
-    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+    fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         let mut fimg = Disk::new_fimg(BLOCK_SIZE);
         fimg.desequence(dat);
         fimg.fs_type = vec![FileType::Text as u8];
         fimg.access = vec![STD_ACCESS | DIDCHANGE];
         return self.write_any(path,&fimg);
+    }
+    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+        self.read_raw(path,true)
+    }
+    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+        self.write_raw(path,dat)
     }
     fn read_records(&mut self,path: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
         let encoder = Encoder::new(vec![0x0d]);
@@ -1175,7 +1169,10 @@ impl super::DiskFS for Disk {
         let file = types::SequentialText::from_str(&s);
         match file {
             Ok(txt) => Ok(txt.to_bytes()),
-            Err(e) => Err(Box::new(e))
+            Err(_) => {
+                error!("Cannot encode, perhaps use raw type");
+                Err(Box::new(Error::FileTypeMismatch))
+            }
         }
     }
     fn standardize(&mut self,ref_con: u16) -> HashMap<Block,Vec<usize>> {
