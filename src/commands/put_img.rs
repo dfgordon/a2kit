@@ -67,3 +67,28 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
         Err(e) => return Err(e)
     }
 }
+
+pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
+    // presence of arguments should already be resolved
+    let maybe_filter = cmd.get_one::<String>("file");
+    let img_path = cmd.get_one::<String>("dimg").expect(RCH);
+
+    match crate::create_img_from_file(&img_path) {
+        Ok(mut img) => {
+            let json_string = String::from_utf8(dat.to_vec())?;
+            let parsed = json::parse(&json_string)?;
+            let mut curs = crate::JsonCursor::new();
+            while let Some((key,leaf)) = curs.next(&parsed) {
+                if let Some(key_path) = curs.key_path() {
+                    img.put_metadata(&key_path, leaf)?;
+                } else {
+                    error!("problem getting the key path for {}",key);
+                    return Err(Box::new(CommandError::KeyNotFound));
+                }
+            }
+            std::fs::write(img_path,img.to_bytes())?;
+            Ok(())
+        },
+        Err(e) => return Err(e)
+    }
+}

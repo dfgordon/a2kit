@@ -25,7 +25,9 @@ pub enum CommandError {
     #[error("Input source could not be interpreted")]
     UnknownFormat,
     #[error("File not found")]
-    FileNotFound
+    FileNotFound,
+    #[error("Key not found")]
+    KeyNotFound
 }
 
 /// Types of files that may be distinguished by the file system or a2kit.
@@ -50,7 +52,8 @@ pub enum ItemType {
     Track,
     Sector,
     RawTrack,
-    System
+    System,
+    Metadata
 }
 
 impl FromStr for ItemType {
@@ -75,6 +78,7 @@ impl FromStr for ItemType {
             "raw_track" => Ok(Self::RawTrack),
             "sec" => Ok(Self::Sector),
             "sys" => Ok(Self::System),
+            "meta" => Ok(Self::Metadata),
             _ => Err(CommandError::UnknownItemType)
         }
     }

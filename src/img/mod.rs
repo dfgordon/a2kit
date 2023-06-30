@@ -37,6 +37,8 @@ pub mod disk525;
 pub mod dsk_d13;
 pub mod dsk_do;
 pub mod dsk_po;
+pub mod dot2mg;
+pub mod nib;
 pub mod woz;
 pub mod woz1;
 pub mod woz2;
@@ -45,7 +47,7 @@ pub mod names;
 
 use std::str::FromStr;
 use std::fmt;
-use log::info;
+use log::{info,warn};
 use crate::fs;
 use crate::{STDRESULT,DYNERR};
 
@@ -63,7 +65,9 @@ pub enum Error {
     #[error("image type not compatible with request")]
     ImageTypeMismatch,
     #[error("unable to access sector")]
-    SectorAccess
+    SectorAccess,
+    #[error("metadata mismatch")]
+    MetaDataMismatch
 }
 
 /// Errors pertaining to nibble encoding
@@ -132,7 +136,9 @@ pub enum DiskImageType {
     PO,
     WOZ1,
     WOZ2,
-    IMD
+    IMD,
+    DOT2MG,
+    NIB
 }
 
 impl TrackLayout {
@@ -231,7 +237,25 @@ impl FromStr for DiskImageType {
             "woz1" => Ok(Self::WOZ1),
             "woz2" => Ok(Self::WOZ2),
             "imd" => Ok(Self::IMD),
+            "2mg" => Ok(Self::DOT2MG),
+            "2img" => Ok(Self::DOT2MG),
+            "nib" => Ok(Self::NIB),
             _ => Err(Error::UnknownImageType)
+        }
+    }
+}
+
+impl fmt::Display for DiskImageType {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::D13 => write!(f,"d13"),
+            Self::DO => write!(f,"do"),
+            Self::PO => write!(f,"po"),
+            Self::WOZ1 => write!(f,"woz1"),
+            Self::WOZ2 => write!(f,"woz2"),
+            Self::IMD => write!(f,"imd"),
+            Self::DOT2MG => write!(f,"2mg"),
+            Self::NIB => write!(f,"nib")
         }
     }
 }
@@ -286,6 +310,74 @@ pub trait DiskImage {
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
     /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`
     fn display_track(&self,bytes: &[u8]) -> String;
+    /// Get image metadata into JSON string.
+    /// Default contains only the image type.
+    fn get_metadata(&self,indent: u16) -> String {
+        let mut json = json::JsonValue::new_object();
+        json["image_type"] = json::JsonValue::String(self.what_am_i().to_string());
+        if indent==0 {
+            json::stringify(json)
+        } else {
+            json::stringify_pretty(json, indent)
+        }
+    }
+    /// Add or change a metadata item.  This is designed to take as its arguments the
+    /// outputs produced by walking a JSON tree with `crate::JsonCursor`.
+    /// The `key_path` has the keys leading up to the item, e.g., `/category/item/raw`, and
+    /// the `val` is the JSON value associated with the last key in the chain.
+    fn put_metadata(&mut self,key_path: &str, val: &json::JsonValue) -> STDRESULT {
+        if key_path=="/image_type" {
+            warn!("changing image type identifier has no effect");
+            return Ok(())
+        }
+        return Err(Box::new(Error::MetaDataMismatch));
+    }
+}
+
+/// Test the metadata id for a match
+pub fn test_metadata(tst: &str, typ: DiskImageType) -> STDRESULT {
+    if tst==&typ.to_string() {
+        Ok(())
+    } else {
+        Err(Box::new(Error::MetaDataMismatch))
+    }
+}
+
+/// Set a binary metadata value using a hex string
+pub fn set_metadata_hex(hex_val: &str, buf: &mut [u8]) -> STDRESULT {
+    match hex::decode_to_slice(hex_val, buf) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(Box::new(e))
+    }
+}
+
+/// Set a byte metadata value using a hex string
+pub fn set_metadata_byte(hex_val: &str, buf: &mut u8) -> STDRESULT {
+    let mut slice: [u8;1] = [0];
+    match hex::decode_to_slice(hex_val, &mut slice) {
+        Ok(()) => { *buf = slice[0]; Ok(()) },
+        Err(e) => Err(Box::new(e))
+    }
+}
+
+/// Set a binary metadata value using a UTF8 string.
+/// If not `match_len`, pad with spaces when `buf` is longer than `utf8_val`.
+/// Always return error if `buf` cannot hold the string.
+pub fn set_metadata_utf8(utf8_val: &str, buf: &mut [u8], match_len: bool) -> STDRESULT {
+    let bytes = utf8_val.as_bytes();
+    if match_len && bytes.len()!=buf.len() {
+        Err(Box::new(Error::MetaDataMismatch))
+    } else if bytes.len()<=buf.len() {
+        for i in 0..buf.len() {
+            buf[i] = bytes[i];
+        }
+        for i in bytes.len()..buf.len() {
+            buf[i] = 0x20;
+        }
+        Ok(())
+    } else {
+        Err(Box::new(Error::MetaDataMismatch))
+    }
 }
 
 /// Test a buffer for a size match to DOS-oriented track and sector counts.

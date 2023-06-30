@@ -7,8 +7,6 @@ use super::{ItemType,CommandError};
 use crate::fs::DiskFS;
 use crate::{STDRESULT,DYNERR};
 
-const RCH: &str = "unreachable was reached";
-
 // TODO: somehow fold FileImage and Records into the pattern
 fn output_get(
     maybe_object: Result<(u16,Vec<u8>),DYNERR>,
@@ -41,21 +39,22 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     //     error!("input is redirected, but `get` must start the pipeline");
     //     return Err(Box::new(CommandError::InvalidCommand));
     // }
-    let src_path = cmd.get_one::<String>("file").expect(RCH);
+    let maybe_src_path = cmd.get_one::<String>("file");
     let maybe_typ = cmd.get_one::<String>("type");
     let maybe_img = cmd.get_one::<String>("dimg");
     let trunc = cmd.get_flag("trunc");
 
-    match (maybe_typ,maybe_img) {
+    match (maybe_typ,maybe_img,maybe_src_path) {
 
-        // we are getting from a disk image
-        (Some(typ_str),Some(img_path)) => {
-            // If getting a track or sector, no need to resolve file system, handle differently.
+        // we are getting a specific item from a disk image
+        (Some(typ_str),Some(img_path),Some(src_path)) => {
+            // For items that don't need a file system handle differently.
             // Also verify truncation flag.
             match (ItemType::from_str(typ_str),trunc) {
                 (Ok(ItemType::Track),false) => return super::get_img::get(cmd),
                 (Ok(ItemType::RawTrack),false) => return super::get_img::get(cmd),
                 (Ok(ItemType::Sector),false) => return super::get_img::get(cmd),
+                (Ok(ItemType::Metadata),false) => return super::get_img::get_meta(cmd),
                 (Ok(ItemType::Raw),_) => {},
                 (Ok(_),false) => {},
                 (_,true) => {
@@ -113,8 +112,21 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                 Err(e) => return Err(e)
             }
         },
-        // we are getting a local file
-        (None,None) => {
+
+        // this pattern can be used for metadata only
+        (Some(type_str),Some(_),None) => {
+            match ItemType::from_str(type_str) {
+                Ok(ItemType::Metadata) => return super::get_img::get_meta(cmd),
+                Ok(_) => {
+                    error!("please narrow the item with `-f`");
+                    Err(Box::new(CommandError::InvalidCommand))
+                },
+                Err(e) => Err(Box::new(e))
+            }
+        },
+
+        // this pattern means we have a local file
+        (None,None,Some(src_path)) => {
             match std::fs::read(&src_path) {
                 Ok(object) => {
                     std::io::stdout().write_all(&object).expect("could not write stdout");
@@ -126,7 +138,12 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
 
         // arguments inconsistent
         _ => {
-            error!("for `get` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
+            match (maybe_typ,maybe_img) {
+                (Some(_),None) => error!("please specify disk image with `-d`"),
+                (Some(_),Some(_)) => error!("please narrow the item with `-f`"),
+                (None,Some(_)) => error!("please narrow the type of item with `-t`"),
+                (None,None) => error!("please provide arguments")
+            }
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }

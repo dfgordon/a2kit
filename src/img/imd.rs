@@ -381,7 +381,7 @@ impl Imd {
                     ans.push(Track::create(track,&layout));
                 }
                 (layout.sides(),ans)
-            }
+            },
             _ => panic!("cannot create this kind of disk in IMD format")
         };
         Self {
@@ -657,5 +657,29 @@ impl img::DiskImage for Imd {
     }
     fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("IMD images have no track bits to display")
+    }
+    fn get_metadata(&self,indent: u16) -> String {
+        let mut json = json::JsonValue::new_object();
+        json["image_type"] = json::JsonValue::String("imd".to_string());
+        json["meta"] = json::JsonValue::new_object();
+        json["meta"]["header"] = json::JsonValue::String(String::from_utf8_lossy(&self.header).into());
+        json["meta"]["comment"] = json::JsonValue::String(self.comment.clone());
+        if indent==0 {
+            json::stringify(json)
+        } else {
+            json::stringify_pretty(json, indent)
+        }
+    }
+    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+        if let Some(val) = maybe_str_val.as_str() {
+            match key_path {
+                "/image_type" => img::test_metadata(val, self.what_am_i()),
+                "/meta/header" => img::set_metadata_utf8(val, &mut self.header,true),
+                "/meta/comment" => { self.comment = val.to_string(); Ok(()) },
+                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            }
+        } else {
+            Err(Box::new(img::Error::MetaDataMismatch))
+        }
     }
 }

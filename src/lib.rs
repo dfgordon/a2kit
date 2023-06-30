@@ -36,9 +36,11 @@
 //! 
 //! In order to manipulate tracks and sectors, `a2kit` must understand the way the track data is packed
 //! into a disk image.  As of this writing `a2kit` supports
+//! * 2MG
 //! * DSK, D13, DO, PO
-//! * WOZ (1 and 2)
 //! * IMD
+//! * NIB, NB2
+//! * WOZ (1 and 2)
 //! 
 //! ## Disk Kinds
 //! 
@@ -142,6 +144,22 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
             }
         }
     }
+    if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
+            info!("identified 2mg image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
+        }
+    }
+    if img::nib::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::nib::Nib::from_bytes(disk_img_data) {
+            info!("Possible nib/nb2 image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
+        }
+    }
     if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
             info!("Possible D13 image");
@@ -193,6 +211,18 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     if img::woz2::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
             info!("identified woz2 image");
+            return Ok(Box::new(img));
+        }
+    }
+    if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
+            info!("identified 2mg image");
+            return Ok(Box::new(img));
+        }
+    }
+    if img::nib::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::nib::Nib::from_bytes(disk_img_data) {
+            info!("Possible nib/nb2 image");
             return Ok(Box::new(img));
         }
     }
@@ -381,3 +411,111 @@ pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
 pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
     parse_escaped_ascii(s,inverted,true)
 }
+
+/// Cursor to walk a JSON tree.
+pub struct JsonCursor {
+    key: Vec<String>,
+    sibling: Vec<usize>,
+    leaf_key: String
+}
+
+impl JsonCursor {
+    pub fn new() -> Self {
+        Self {
+            key: Vec::new(),
+            sibling: vec![0],
+            leaf_key: String::new()
+        }
+    }
+    /// Walk the tree of a JSON object finding all the leaves.
+    /// Any value that is not an object is considered a leaf.
+    /// This may be called recursively.
+    pub fn next<'a>(&mut self,obj: &'a json::JsonValue) -> Option<(String,&'a json::JsonValue)> {
+        assert!(self.key.len()+1==self.sibling.len());
+        let depth = self.key.len();
+        let pos = self.sibling[depth];
+        let mut curr = obj;
+        for i in 0..depth {
+            curr = &curr[&self.key[i]];
+        }
+        let mut entry = curr.entries();
+        for _i in 0..pos {
+            entry.next();
+        }
+        match entry.next() {
+            None => {
+                if depth==0 {
+                    return None;
+                }
+                self.key.pop();
+                self.sibling.pop();
+                return self.next(obj);
+            }
+            Some((key,val)) => {
+                self.sibling[depth] += 1;
+                if val.is_object() {
+                    self.sibling.push(0);
+                    self.key.push(key.to_string());
+                    return self.next(obj);
+                }
+                self.leaf_key = key.to_string();
+                return Some((key.to_string(),val));
+            }
+        }
+    }
+    /// Return key to current leaf in path form, e.g., `/info/compatible_hardware/raw`.
+    /// Note this includes the key that is returned with `next`.
+    pub fn key_path(&self) -> Option<String> {
+        let mut ans = String::new();
+        for i in 0..self.key.len() {
+            ans += "/";
+            ans += &self.key[i];
+        }
+        ans += "/";
+        ans += &self.leaf_key;
+        Some(ans)
+    }
+}
+
+#[test]
+fn test_json_cursor() {
+    let mut curs = JsonCursor::new();
+    let s = "{
+        \"root_str\": \"01\",
+        \"obj1\": {
+            \"list1\": [1,3,5],
+            \"str1\": \"hello\"
+        },
+        \"num1\": 1000,
+        \"obj2\": {
+            \"null1\": null
+        }
+    }";
+    let obj = json::parse(s).expect("could not parse test string");
+    let mut leaves: Vec<(String,&json::JsonValue,String)> = Vec::new();
+    while let Some((key,leaf)) = curs.next(&obj) {
+        leaves.push((key,leaf,curs.key_path().unwrap()));
+    }
+    assert_eq!(leaves.len(),5);
+
+    assert_eq!(leaves[0].0,"root_str");
+    assert_eq!(leaves[0].1.as_str().unwrap(),"01");
+    assert_eq!(leaves[0].2,"/root_str");
+
+    assert_eq!(leaves[1].0,"list1");
+    assert!(leaves[1].1.is_array());
+    assert_eq!(leaves[1].2,"/obj1/list1");
+
+    assert_eq!(leaves[2].0,"str1");
+    assert_eq!(leaves[2].1.as_str().unwrap(),"hello");
+    assert_eq!(leaves[2].2,"/obj1/str1");
+
+    assert_eq!(leaves[3].0,"num1");
+    assert_eq!(leaves[3].1.as_u16().unwrap(),1000);
+    assert_eq!(leaves[3].2,"/num1");
+
+    assert_eq!(leaves[4].0,"null1");
+    assert!(leaves[4].1.is_null());
+    assert_eq!(leaves[4].2,"/obj2/null1");
+}
+

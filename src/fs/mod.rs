@@ -135,7 +135,7 @@ pub trait TextEncoder {
 /// these become hex strings.  The `DiskFS` is responsible for further interpretation.
 /// The data itself is stored in a map with a numerical chunk id as the key, and a Vec<u8>
 /// as the chunk data.  The JSON representation uses decimal strings for the key and hex
-/// strings for the data.
+/// strings for the data.  *Beware of sorting routines that put "10" before "9"*.
 /// 
 /// Each `DiskFS` provides its own routine for creating an empty file image.
 /// Buffer sizes should be set as appropriate for that FS.

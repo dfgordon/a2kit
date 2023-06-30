@@ -6,7 +6,7 @@
 //! function is set to panic if a 3.5 inch disk is requested.  You can use WOZ v2 for
 //! 3.5 inch disks.
 
-use log::{debug,info,error};
+use log::{debug,info,warn,error};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -446,5 +446,41 @@ impl img::DiskImage for Woz1 {
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         super::woz::display_track(self, 0, &bytes)
+    }
+    fn get_metadata(&self,indent: u16) -> String {
+        let mut json = json::JsonValue::new_object();
+        json["image_type"] = json::JsonValue::String("woz1".to_string());
+        json["info"] = json::JsonValue::new_object();
+        json["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
+        json["info"]["disk_type"] = json::JsonValue::new_object();
+        json["info"]["disk_type"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_type]));
+        json["info"]["disk_type"]["pretty"] = json::JsonValue::String(match self.info.disk_type {
+            1 => "Apple 5.25 inch".to_string(),
+            2 => "Apple 3.5 inch".to_string(),
+            _ => "Unexpected value".to_string()
+        });
+        json["info"]["write_protected"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.write_protected]));
+        json["info"]["cleaned"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.cleaned]));
+        json["info"]["synchronized"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.synchronized]));
+        if indent==0 {
+            json::stringify(json)
+        } else {
+            json::stringify_pretty(json, indent)
+        }
+    }
+    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+        if let Some(val) = maybe_str_val.as_str() {
+            match key_path {
+                "/image_type" => img::test_metadata(val, self.what_am_i()),
+                "/info/creator" => img::set_metadata_hex(val, &mut self.info.creator),
+                "/info/disk_type" | "/info/disk_type/raw" => {warn!("request to change disk type ignored"); Ok(()) },
+                "/info/write_protected" | "/info/write_protected/raw" => img::set_metadata_byte(val, &mut self.info.write_protected),
+                "/info/cleaned" | "/info/cleaned/raw" => img::set_metadata_byte(val, &mut self.info.cleaned),
+                "/info/synchronized" | "/info/synchronized/raw" => img::set_metadata_byte(val, &mut self.info.synchronized),
+                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            }
+        } else {
+            Err(Box::new(img::Error::MetaDataMismatch))
+        }
     }
 }

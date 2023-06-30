@@ -122,9 +122,10 @@ pub struct TrackBits {
     dat_fmt: SectorDataFormat,
     bit_count: usize,
     bit_ptr: usize,
+    sync_bits: usize
 }
 impl TrackBits {
-    /// Create the track R/W object with the given formatting protocol.
+    /// Create a WOZ track R/W object with the given formatting protocol.
     /// Use `disk525::create_track`, or variants, to actually format the track.
     pub fn create(id: usize,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
         Self {
@@ -132,7 +133,24 @@ impl TrackBits {
             adr_fmt,
             dat_fmt,
             bit_count,
-            bit_ptr: 0
+            bit_ptr: 0,
+            sync_bits: match dat_fmt.nib {
+                NibbleType::Enc53 => 9,
+                NibbleType::Enc62 => 10,
+                _ => panic!("only 5-3 or 6-2 nibbles allowed")
+            }
+        }
+    }
+    /// Create a NIB track R/W object with the given formatting protocol.
+    /// Use `disk525::create_track`, or variants, to actually format the track.
+    pub fn create_nib(id: usize,bit_count: usize,adr_fmt: SectorAddressFormat,dat_fmt: SectorDataFormat) -> Self {
+        Self {
+            id,
+            adr_fmt,
+            dat_fmt,
+            bit_count,
+            bit_ptr: 0,
+            sync_bits: 8
         }
     }
     /// Change the formatting protocol (but not the actual format).
@@ -386,13 +404,13 @@ impl TrackBits {
         match dat_fmt.nib {
             NibbleType::Enc44 => panic!("only 5-3 or 6-2 nibbles allowed in data"),
             NibbleType::Enc53 => {
-                self.write_sync_gap(bits,10,9);
+                self.write_sync_gap(bits,10);
                 self.write(bits,&dat_fmt.prolog,24);
                 self.encode_sector_53(bits,dat);
                 self.write(bits,&dat_fmt.epilog,24);
             },
             NibbleType::Enc62 => {
-                self.write_sync_gap(bits,10,10);
+                self.write_sync_gap(bits,10);
                 self.write(bits,&dat_fmt.prolog,24);
                 self.encode_sector_62(bits,dat);
                 self.write(bits,&dat_fmt.epilog,24);
@@ -518,11 +536,11 @@ impl TrackBits {
             return Ok([0;256].to_vec());
         }
     }
-    /// Add `num` n-bit sync-bytes to the track, where n = `num_bits`.
-    /// For DOS 3.3 and compatible track formats, n=10, for DOS 3.2 and compatible n=9.
-    fn write_sync_gap(&mut self,bits: &mut [u8],num: usize,num_bits: usize) {
+    /// Add `num` n-bit sync-bytes to the track, where n = `self.sync_bits`.
+    /// For NIB images n=8.  For WOZ images n=9 (DOS 3.2 like) or n=10 (DOS 3.3 like).
+    fn write_sync_gap(&mut self,bits: &mut [u8],num: usize) {
         for _i in 0..num {
-            self.write(bits,&[0xff,0x00],num_bits);
+            self.write(bits,&[0xff,0x00],self.sync_bits);
         }
     }
 }
@@ -622,22 +640,27 @@ fn decode_62(byte: u8,inv: [u8;256]) -> u8 {
     return inv[byte as usize];
 }
 
-/// This creates a track including sync bytes, address fields, nibbles, checksums, etc..
+/// This creates a NIB or WOZ track including sync bytes, address fields, nibbles, checksums, etc..
 /// The returned tuple has (track buffer, TrackBits object)
 /// For 13 sector disks, data segments are filled with high bits.
 /// For 16 sector disks, the data segment is created, and the data itself is zeroed.
-pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) ->
+/// `sync_bits` = 8 for NIB, 9 for WOZ 13 sector, 10 for WOZ 16 sector.
+/// Track is padded to `buf_len` with 0x00 for WOZ, 0xFF for NIB.
+pub fn format(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat,sync_bits: usize) ->
     (Vec<u8>,Box<dyn super::TrackBits>) {
-    let bit_count_13 = 40*9 + 13*((3+8+3)*8 + 10*9 + (3+411+3)*8 + 20*9);
-    let bit_count_16 = 40*10 + 16*((3+8+3)*8 + 10*10 + (3+343+3)*8 + 20*10);
-    let (sectors,bit_count,sync_bits) = match dat_fmt.nib {
-        NibbleType::Enc53 => (13,bit_count_13,9),
-        NibbleType::Enc62 => (16,bit_count_16,10),
+    let (sectors,data_nibs) = match dat_fmt.nib {
+        NibbleType::Enc53 => (13,411),
+        NibbleType::Enc62 => (16,343),
         _ => panic!("only 5-3 or 6-2 nibbles allowed")
     };
-    let mut bits: Vec<u8> = vec![0;buf_len];
+    let bit_count = 40*sync_bits + sectors*((3+8+3)*8 + 10*sync_bits + (3+data_nibs+3)*8 + 20*sync_bits);
+    let mut bits: Vec<u8> = match sync_bits {
+        b if b>8 => vec![0;buf_len], // WOZ
+        _ => vec![0xff;buf_len] // NIB
+    };
     let mut ans = TrackBits::create(track as usize,bit_count,adr_fmt,dat_fmt);
-    ans.write_sync_gap(&mut bits,40,sync_bits);
+    ans.sync_bits = sync_bits;
+    ans.write_sync_gap(&mut bits,40);
     for sector in 0..sectors {
         // address field
         ans.write(&mut bits,&adr_fmt.prolog,24);
@@ -656,7 +679,7 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
         // data segment
         match sectors {
             13 => {
-                ans.write_sync_gap(&mut bits,10,sync_bits);
+                ans.write_sync_gap(&mut bits,10);
                 ans.write(&mut bits,&[0xff;417],417*8);
             },
             _ => {
@@ -664,11 +687,36 @@ pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressForma
             }
         }
         //sync gap
-        ans.write_sync_gap(&mut bits,20,sync_bits);
+        ans.write_sync_gap(&mut bits,20);
     }
     let mut obj: Box<dyn super::TrackBits> = Box::new(ans);
     obj.reset();
-    return (bits,obj);
+    return (bits,obj);        
+}
+
+/// Convenient form of `format` for compatibility with DOS 3.3 and ProDOS
+pub fn format_std16_track(vol: u8,track: u8,buf_len: usize,sync_bits: usize) -> (Vec<u8>,Box<dyn super::TrackBits>) {
+    debug!("create 16 sectors on track {}",track);
+    return format(vol,track,buf_len,SectorAddressFormat::create_std16(),SectorDataFormat::create_std16(),sync_bits);
+}
+
+/// Convenient form of `format` for compatibility with DOS 3.0, 3.1, and 3.2
+pub fn format_std13_track(vol: u8,track: u8,buf_len: usize,sync_bits: usize) -> (Vec<u8>,Box<dyn super::TrackBits>) {
+    debug!("create 13 sectors on track {}",track);
+    return format(vol,track,buf_len,SectorAddressFormat::create_std13(),SectorDataFormat::create_std13(),sync_bits);
+}
+
+/// This creates a WOZ track including sync bytes, address fields, nibbles, checksums, etc..
+/// The returned tuple has (track buffer, TrackBits object)
+/// For 13 sector disks, data segments are filled with high bits.
+/// For 16 sector disks, the data segment is created, and the data itself is zeroed.
+pub fn create_track(vol: u8,track: u8,buf_len: usize,adr_fmt: SectorAddressFormat, dat_fmt: SectorDataFormat) ->
+    (Vec<u8>,Box<dyn super::TrackBits>) {
+    match dat_fmt.nib {
+        NibbleType::Enc53 => format(vol,track,buf_len,adr_fmt,dat_fmt,9),
+        NibbleType::Enc62 => format(vol,track,buf_len,adr_fmt,dat_fmt,10),
+        _ => panic!("only 5-3 or 6-2 nibbles allowed")
+    }
 }
 
 /// Convenient form of `create_track` for compatibility with DOS 3.3 and ProDOS

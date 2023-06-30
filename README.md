@@ -10,7 +10,7 @@ Command line interface and library for manipulating retro disk images, file syst
     - full read and write access
     - high or low level manipulations
     - interface for handling sparse (random access) files
-* Disk Images - DSK (and variants), WOZ (1 and 2), IMD
+* Disk Images - 2MG, D13, DO, DSK, IMD, NIB, NB2, PO, WOZ
 
 ## Documentation
 

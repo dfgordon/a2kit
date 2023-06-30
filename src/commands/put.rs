@@ -6,8 +6,6 @@ use super::{ItemType,CommandError};
 use crate::fs::{Records,FileImage};
 use crate::{STDRESULT,DYNERR};
 
-const RCH: &str = "unreachable was reached";
-
 pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
     if atty::is(atty::Stream::Stdin) {
         error!("cannot use `put` with console input, please pipe something in");
@@ -17,7 +15,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
     //     error!("output is redirected, but `put` must end the pipeline");
     //     return Err(Box::new(CommandError::InvalidCommand));
     // }
-    let dest_path = cmd.get_one::<String>("file").expect(RCH);
+    let maybe_dest_path = cmd.get_one::<String>("file");
     let maybe_typ = cmd.get_one::<String>("type");
     let maybe_img = cmd.get_one::<String>("dimg");
     let mut file_data = Vec::new();
@@ -27,14 +25,15 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
         return Err(Box::new(CommandError::InvalidCommand));
     }
 
-    match (maybe_typ,maybe_img) {
+    match (maybe_typ,maybe_img,maybe_dest_path) {
         
-        // we are writing to a disk image
-        (Some(typ_str),Some(img_path)) => {
+        // we are putting a specific item to a disk image
+        (Some(typ_str),Some(img_path),Some(dest_path)) => {
             let typ = ItemType::from_str(typ_str);
-            // If putting a track or sector, no need to resolve file system, handle differently
+            // For items that don't need a file system, handle differently
             match typ {
                 Ok(ItemType::Track) | Ok(ItemType::RawTrack) | Ok(ItemType::Sector) => return super::put_img::put(cmd,&file_data),
+                Ok(ItemType::Metadata) => return super::put_img::put_meta(cmd,&file_data),
                 _ => {}
             }
             let load_address: u16 = match (cmd.get_one::<String>("addr"),&typ) {
@@ -95,15 +94,32 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
             }
         },
 
-        // we are writing to a local file
-        (None,None) => {
+        // this pattern can be used for metadata only
+        (Some(type_str),Some(_),None) => {
+            match ItemType::from_str(type_str) {
+                Ok(ItemType::Metadata) => return super::put_img::put_meta(cmd,&file_data),
+                Ok(_) => {
+                    error!("please narrow the item with `-f`");
+                    Err(Box::new(CommandError::InvalidCommand))
+                },
+                Err(e) => Err(Box::new(e))
+            }
+        },
+
+        // this pattern means we have a local file
+        (None,None,Some(dest_path)) => {
             std::fs::write(&dest_path,&file_data).expect("could not write data to disk");
             return Ok(());
         },
 
         // arguments inconsistent
         _ => {
-            error!("for `put` provide either `-f` alone, or all of `-f`, `-d`, and `-t`");
+            match (maybe_typ,maybe_img) {
+                (Some(_),None) => error!("please specify disk image with `-d`"),
+                (Some(_),Some(_)) => error!("please narrow the item with `-f`"),
+                (None,Some(_)) => error!("please narrow the type of item with `-t`"),
+                (None,None) => error!("please provide arguments")
+            }
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }

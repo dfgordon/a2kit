@@ -42,7 +42,7 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
                            | a2kit put -f prog -t atok -d myimg.dsk`
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
-    let img_types = ["d13","do","po","woz1","woz2","imd"];
+    let img_types = ["d13","do","po","woz1","woz2","imd","2mg","nib"];
     let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
     let disk_kinds = [
         "8in",
@@ -59,7 +59,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "hdmax"
     ];
     let get_put_types = [
-        "atok","itok","mtok","bin","txt","raw","block","sec","track","raw_track","rec","any"     
+        "atok","itok","mtok","bin","txt","raw","block","sec","track","raw_track","rec","any","meta"
     ];
 
     let mut main_cmd = Command::new("a2kit")
@@ -117,15 +117,15 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-s --step <NUM> "step between numbers"))
         .about("renumber BASIC program lines"));
     main_cmd = main_cmd.subcommand(Command::new("get")
-        .arg(arg!(-f --file <PATH> "source path or address, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).value_parser(get_put_types))
+        .arg(arg!(-f --file <PATH> "path, key, or address, maybe inside disk image").required(false))
+        .arg(arg!(-t --type <TYPE> "type of the item").required(false).value_parser(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .arg(arg!(--trunc "truncate raw at EOF if possible").action(ArgAction::SetTrue))
         .about("read from local or disk image, write to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("put")
-        .arg(arg!(-f --file <PATH> "destination path or address, maybe inside disk image"))
-        .arg(arg!(-t --type <TYPE> "type of the file").required(false).value_parser(get_put_types))
+        .arg(arg!(-f --file <PATH> "path, key, or address, maybe inside disk image").required(false))
+        .arg(arg!(-t --type <TYPE> "type of the item").required(false).value_parser(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image"));

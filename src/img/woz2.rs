@@ -3,7 +3,7 @@
 //! This uses the nibble machinery in `disk35` and `disk525` to handle the bit streams.
 //! The `DiskStruct` trait is used to flatten and unflatten the wrapper structures.
 
-use log::{debug,info,error};
+use log::{debug,info,warn,error};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -586,5 +586,102 @@ impl img::DiskImage for Woz2 {
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         super::woz::display_track(self, 0, &bytes)
+    }
+    fn get_metadata(&self,indent: u16) -> String {
+        let mut json = json::JsonValue::new_object();
+        json["image_type"] = json::JsonValue::String("woz2".to_string());
+
+        json["info"] = json::JsonValue::new_object();
+        json["meta"] = json::JsonValue::new_object();
+        json["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
+        json["info"]["disk_type"] = json::JsonValue::new_object();
+        json["info"]["disk_type"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_type]));
+        json["info"]["disk_type"]["pretty"] = json::JsonValue::String(match self.info.disk_type {
+            1 => "Apple 5.25 inch".to_string(),
+            2 => "Apple 3.5 inch".to_string(),
+            _ => "Unexpected value".to_string()
+        });
+        json["info"]["write_protected"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.write_protected]));
+        json["info"]["cleaned"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.cleaned]));
+        json["info"]["synchronized"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.synchronized]));
+        json["info"]["sides"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_sides]));
+        json["info"]["boot_sector_format"] = json::JsonValue::new_object();
+        json["info"]["boot_sector_format"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.boot_sector_format]));
+        json["info"]["boot_sector_format"]["pretty"] = json::JsonValue::String(match self.info.boot_sector_format {
+            0 => "Unknown".to_string(),
+            1 => "Boots 16-sector".to_string(),
+            2 => "Boots 13-sector".to_string(),
+            3 => "Boots both".to_string(),
+            _ => "Unexpected value".to_string()
+        });
+        json["info"]["optimal_bit_timing"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.optimal_bit_timing]));
+        json["info"]["compatible_hardware"] = json::JsonValue::new_object();
+        json["info"]["compatible_hardware"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&self.info.compatible_hardware));
+        let mut hardware = String::new();
+        if self.info.compatible_hardware[0] & 1 > 0 {
+            hardware += "Apple ][, ";
+        }
+        if self.info.compatible_hardware[0] & 2 > 0  {
+            hardware += "Apple ][ Plus, ";
+        }
+        if self.info.compatible_hardware[0] & 4 > 0  {
+            hardware += "Apple //e (unenhanced), ";
+        }
+        if self.info.compatible_hardware[0] & 8 > 0  {
+            hardware += "Apple //c, ";
+        }
+        if self.info.compatible_hardware[0] & 16 > 0  {
+            hardware += "Apple //e Enhanced, ";
+        }
+        if self.info.compatible_hardware[0] & 32 > 0  {
+            hardware += "Apple IIgs, ";
+        }
+        if self.info.compatible_hardware[0] & 64 > 0  {
+            hardware += "Apple //c Plus, ";
+        }
+        if self.info.compatible_hardware[0] & 128 > 0  {
+            hardware += "Apple ///, ";
+        }
+        if self.info.compatible_hardware[1] & 1 > 0  {
+            hardware += "Apple /// Plus, ";
+        }
+        if hardware.len()==0 {
+            json["info"]["compatible_hardware"]["pretty"] = json::JsonValue::String("unknown".to_string());
+        } else {
+            json["info"]["compatible_hardware"]["pretty"] = json::JsonValue::String(hardware);
+        }
+
+        if let Some(meta) = &self.meta {
+            let meta_str = String::from_utf8_lossy(&meta[8..]);
+            let lines = meta_str.lines();
+            for line in lines {
+                let cols: Vec<&str> = line.split('\t').collect();
+                if cols.len()==2 {
+                    json["meta"][cols[0]] = json::JsonValue::String(cols[1].to_string());
+                } else {
+                    warn!("bad META record in WOZ {}",line);
+                }
+            }
+        }
+        if indent==0 {
+            json::stringify(json)
+        } else {
+            json::stringify_pretty(json, indent)
+        }
+    }
+    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+        if let Some(val) = maybe_str_val.as_str() {
+            match key_path {
+                "/image_type" => img::test_metadata(val, self.what_am_i()),
+                "/info/creator" => img::set_metadata_hex(val, &mut self.info.creator),
+                "/info/disk_type" | "/info/disk_type/raw" => {warn!("request to change disk type ignored"); Ok(()) },
+                "/info/write_protected" | "/info/write_protected/raw" => img::set_metadata_byte(val, &mut self.info.write_protected),
+                "/info/cleaned" | "/info/cleaned/raw" => img::set_metadata_byte(val, &mut self.info.cleaned),
+                "/info/synchronized" | "/info/synchronized/raw" => img::set_metadata_byte(val, &mut self.info.synchronized),
+                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            }
+        } else {
+            Err(Box::new(img::Error::MetaDataMismatch))
+        }
     }
 }
