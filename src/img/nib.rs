@@ -14,8 +14,8 @@ use crate::img;
 use crate::{STDRESULT,DYNERR};
 use super::woz::HeadCoords;
 
-const TRACK_BYTE_CAPACITY_NIB: usize = 6656;
-const TRACK_BYTE_CAPACITY_NB2: usize = 6384;
+pub const TRACK_BYTE_CAPACITY_NIB: usize = 6656;
+pub const TRACK_BYTE_CAPACITY_NB2: usize = 6384;
 const RCH: &str = "unreachable was reached";
  
 pub fn file_extensions() -> Vec<String> {

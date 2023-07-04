@@ -14,7 +14,7 @@ const BOOT_MESS_CPM: &str = "omit boot flag; for this OS you will need to copy r
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
+fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,maybe_wrap: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -22,6 +22,18 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>) -
         },
         _ => 254
     };
+    match (img_typ,maybe_wrap) {
+        (DiskImageType::DOT2MG,None) => {
+            error!("selected image type requires the `--wrap` option");
+            return Err(Box::new(CommandError::InvalidCommand))
+        },
+        (DiskImageType::DOT2MG,Some(_)) => {},
+        (_,None) => {},
+        _ => {
+            error!("omit the `--wrap` option for this image type");
+            return Err(Box::new(CommandError::InvalidCommand))
+        }
+    }
     return match (img_typ,*kind) {
         (DiskImageType::D13,names::A2_DOS32_KIND) => Ok(Box::new(img::dsk_d13::D13::create(35))),
         (DiskImageType::DO,names::A2_DOS33_KIND) => Ok(Box::new(img::dsk_do::DO::create(35,16))),
@@ -35,10 +47,10 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>) -
         (DiskImageType::PO,names::A2_400_KIND) => Ok(Box::new(img::dsk_po::PO::create(800))),
         (DiskImageType::PO,names::A2_800_KIND) => Ok(Box::new(img::dsk_po::PO::create(1600))),
         (DiskImageType::PO,names::A2_HD_MAX) => Ok(Box::new(img::dsk_po::PO::create(65535))),
-        (DiskImageType::DOT2MG,names::A2_DOS33_KIND) => Ok(Box::new(img::dot2mg::Dot2mg::create(vol,*kind))),
-        (DiskImageType::DOT2MG,names::A2_400_KIND) => Ok(Box::new(img::dot2mg::Dot2mg::create(vol,*kind))),
-        (DiskImageType::DOT2MG,names::A2_800_KIND) => Ok(Box::new(img::dot2mg::Dot2mg::create(vol,*kind))),
-        (DiskImageType::DOT2MG,names::A2_HD_MAX) => Ok(Box::new(img::dot2mg::Dot2mg::create(vol,*kind))),
+        (DiskImageType::DOT2MG,names::A2_DOS33_KIND) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
+        (DiskImageType::DOT2MG,names::A2_400_KIND) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
+        (DiskImageType::DOT2MG,names::A2_800_KIND) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
+        (DiskImageType::DOT2MG,names::A2_HD_MAX) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
         (DiskImageType::NIB,names::A2_DOS32_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
         (DiskImageType::NIB,names::A2_DOS33_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
         (DiskImageType::IMD,names::IBM_CPM1_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
@@ -195,6 +207,7 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     let maybe_vol = cmd.get_one::<String>("volume");
     let mut kind = DiskKind::from_str(cmd.get_one::<String>("kind").expect(RCH)).unwrap();
     let img_typ = DiskImageType::from_str(cmd.get_one::<String>("type").expect(RCH)).unwrap();
+    let maybe_wrap = cmd.get_one::<String>("wrap");
     // Refine disk kind based on combined inputs
     if kind==names::A2_DOS33_KIND && which_fs=="dos32" {
         kind = names::A2_DOS32_KIND;
@@ -203,31 +216,34 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     if boot {
         info!("bootable requested");
     }
-    let maybe_img = mkimage(&img_typ,&kind,maybe_vol);
-    if let Ok(img) = maybe_img {
-        if let Some(fext) = dest_path.split(".").last() {
-            if !img.file_extensions().contains(&fext.to_string().to_lowercase()) {
-                error!("Extension was {}, should be {:?}",fext,img.file_extensions());
+    match mkimage(&img_typ,&kind,maybe_vol,maybe_wrap) {
+        Ok(img) => {
+            if let Some(fext) = dest_path.split(".").last() {
+                if !img.file_extensions().contains(&fext.to_string().to_lowercase()) {
+                    error!("Extension was {}, should be {:?}",fext,img.file_extensions());
+                    return Err(Box::new(CommandError::InvalidCommand));
+                }
+            } else {
+                error!("Extension missing, should be {:?}",img.file_extensions());
                 return Err(Box::new(CommandError::InvalidCommand));
             }
-        } else {
-            error!("Extension missing, should be {:?}",img.file_extensions());
-            return Err(Box::new(CommandError::InvalidCommand));
-        }
-        let result = match which_fs.as_str() {
-            "cpm2" => mkcpm(maybe_vol,boot,&kind,img),
-            "dos32" => mkdos3x(maybe_vol,boot,img),
-            "dos33" => mkdos3x(maybe_vol,boot,img),
-            "prodos" => mkprodos(maybe_vol,boot,img),
-            "pascal" => mkpascal(maybe_vol,boot,img),
-            _ => panic!("unreachable")
-        };
-        if let Ok(buf) = result {
-            eprintln!("writing {} bytes",buf.len());
-            std::fs::write(&dest_path,&buf).expect("could not write data to disk");
-            return Ok(());
-        }
-        info!("result {:?}",result);
+            let result = match which_fs.as_str() {
+                "cpm2" => mkcpm(maybe_vol,boot,&kind,img),
+                "dos32" => mkdos3x(maybe_vol,boot,img),
+                "dos33" => mkdos3x(maybe_vol,boot,img),
+                "prodos" => mkprodos(maybe_vol,boot,img),
+                "pascal" => mkpascal(maybe_vol,boot,img),
+                _ => panic!("unreachable")
+            };
+            match result {
+                Ok(buf) => {
+                    eprintln!("writing {} bytes",buf.len());
+                    std::fs::write(&dest_path,&buf).expect("could not write data to disk");
+                    Ok(())
+                },
+                Err(e) => Err(e)
+            }
+        },
+        Err(e) => Err(e)
     }
-    return Err(Box::new(CommandError::UnsupportedItemType));
 }

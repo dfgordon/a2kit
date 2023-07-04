@@ -44,10 +44,11 @@ pub mod woz1;
 pub mod woz2;
 pub mod imd;
 pub mod names;
+pub mod meta;
 
 use std::str::FromStr;
 use std::fmt;
-use log::{info,warn};
+use log::{info,error};
 use crate::fs;
 use crate::{STDRESULT,DYNERR};
 
@@ -287,6 +288,7 @@ pub trait TrackBits {
 /// track of the head position or other status indicators.
 pub trait DiskImage {
     fn track_count(&self) -> usize;
+    /// N.b. this means bytes, not nibbles, e.g., a nibble buffer will be larger
     fn byte_capacity(&self) -> usize;
     fn what_am_i(&self) -> DiskImageType;
     fn file_extensions(&self) -> Vec<String>;
@@ -313,70 +315,24 @@ pub trait DiskImage {
     /// Get image metadata into JSON string.
     /// Default contains only the image type.
     fn get_metadata(&self,indent: u16) -> String {
-        let mut json = json::JsonValue::new_object();
-        json["image_type"] = json::JsonValue::String(self.what_am_i().to_string());
+        let mut root = json::JsonValue::new_object();
+        let typ = self.what_am_i().to_string();
+        root[typ] = json::JsonValue::new_object();
         if indent==0 {
-            json::stringify(json)
+            json::stringify(root)
         } else {
-            json::stringify_pretty(json, indent)
+            json::stringify_pretty(root, indent)
         }
     }
-    /// Add or change a metadata item.  This is designed to take as its arguments the
+    /// Add or change a single metadata item.  This is designed to take as its arguments the
     /// outputs produced by walking a JSON tree with `crate::JsonCursor`.
-    /// The `key_path` has the keys leading up to the item, e.g., `/category/item/raw`, and
-    /// the `val` is the JSON value associated with the last key in the chain.
-    fn put_metadata(&mut self,key_path: &str, val: &json::JsonValue) -> STDRESULT {
-        if key_path=="/image_type" {
-            warn!("changing image type identifier has no effect");
-            return Ok(())
-        }
-        return Err(Box::new(Error::MetaDataMismatch));
-    }
-}
-
-/// Test the metadata id for a match
-pub fn test_metadata(tst: &str, typ: DiskImageType) -> STDRESULT {
-    if tst==&typ.to_string() {
-        Ok(())
-    } else {
-        Err(Box::new(Error::MetaDataMismatch))
-    }
-}
-
-/// Set a binary metadata value using a hex string
-pub fn set_metadata_hex(hex_val: &str, buf: &mut [u8]) -> STDRESULT {
-    match hex::decode_to_slice(hex_val, buf) {
-        Ok(()) => Ok(()),
-        Err(e) => Err(Box::new(e))
-    }
-}
-
-/// Set a byte metadata value using a hex string
-pub fn set_metadata_byte(hex_val: &str, buf: &mut u8) -> STDRESULT {
-    let mut slice: [u8;1] = [0];
-    match hex::decode_to_slice(hex_val, &mut slice) {
-        Ok(()) => { *buf = slice[0]; Ok(()) },
-        Err(e) => Err(Box::new(e))
-    }
-}
-
-/// Set a binary metadata value using a UTF8 string.
-/// If not `match_len`, pad with spaces when `buf` is longer than `utf8_val`.
-/// Always return error if `buf` cannot hold the string.
-pub fn set_metadata_utf8(utf8_val: &str, buf: &mut [u8], match_len: bool) -> STDRESULT {
-    let bytes = utf8_val.as_bytes();
-    if match_len && bytes.len()!=buf.len() {
-        Err(Box::new(Error::MetaDataMismatch))
-    } else if bytes.len()<=buf.len() {
-        for i in 0..buf.len() {
-            buf[i] = bytes[i];
-        }
-        for i in bytes.len()..buf.len() {
-            buf[i] = 0x20;
-        }
-        Ok(())
-    } else {
-        Err(Box::new(Error::MetaDataMismatch))
+    /// The `key_path` has the keys leading up to the leaf, e.g., `/type/item/_raw`, and
+    /// the `val` is the JSON value associated with the leaf (anything but an object).
+    /// The special keys `_raw` and `_pretty` should be handled as follows.
+    /// If a leaf is neither `_raw` nor `_pretty` treat it as raw.
+    /// If a leaf is `_pretty` ignore it.
+    fn put_metadata(&mut self,key_path: &Vec<String>, _val: &json::JsonValue) -> STDRESULT {
+        meta::test_metadata(key_path,self.what_am_i())
     }
 }
 

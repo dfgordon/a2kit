@@ -463,9 +463,20 @@ impl JsonCursor {
             }
         }
     }
-    /// Return key to current leaf in path form, e.g., `/info/compatible_hardware/raw`.
+    /// Return key to current leaf as list of strings.
     /// Note this includes the key that is returned with `next`.
-    pub fn key_path(&self) -> Option<String> {
+    pub fn key_path(&self) -> Vec<String> {
+        let mut ans: Vec<String> = Vec::new();
+        for i in 0..self.key.len() {
+            ans.push(self.key[i].clone())
+        }
+        ans.push(self.leaf_key.clone());
+        ans
+    }
+    /// Return key to current leaf as a path string.
+    /// This can have problems in case there are keys containing `/`,
+    /// so `key_path` should always be preferred.
+    pub fn key_path_string(&self) -> String {
         let mut ans = String::new();
         for i in 0..self.key.len() {
             ans += "/";
@@ -473,7 +484,7 @@ impl JsonCursor {
         }
         ans += "/";
         ans += &self.leaf_key;
-        Some(ans)
+        ans
     }
 }
 
@@ -492,30 +503,30 @@ fn test_json_cursor() {
         }
     }";
     let obj = json::parse(s).expect("could not parse test string");
-    let mut leaves: Vec<(String,&json::JsonValue,String)> = Vec::new();
+    let mut leaves: Vec<(String,&json::JsonValue,Vec<String>)> = Vec::new();
     while let Some((key,leaf)) = curs.next(&obj) {
-        leaves.push((key,leaf,curs.key_path().unwrap()));
+        leaves.push((key,leaf,curs.key_path()));
     }
     assert_eq!(leaves.len(),5);
 
     assert_eq!(leaves[0].0,"root_str");
     assert_eq!(leaves[0].1.as_str().unwrap(),"01");
-    assert_eq!(leaves[0].2,"/root_str");
+    assert_eq!(leaves[0].2,vec!["root_str"]);
 
     assert_eq!(leaves[1].0,"list1");
     assert!(leaves[1].1.is_array());
-    assert_eq!(leaves[1].2,"/obj1/list1");
+    assert_eq!(leaves[1].2,vec!["obj1","list1"]);
 
     assert_eq!(leaves[2].0,"str1");
     assert_eq!(leaves[2].1.as_str().unwrap(),"hello");
-    assert_eq!(leaves[2].2,"/obj1/str1");
+    assert_eq!(leaves[2].2,vec!["obj1","str1"]);
 
     assert_eq!(leaves[3].0,"num1");
     assert_eq!(leaves[3].1.as_u16().unwrap(),1000);
-    assert_eq!(leaves[3].2,"/num1");
+    assert_eq!(leaves[3].2,vec!["num1"]);
 
     assert_eq!(leaves[4].0,"null1");
     assert!(leaves[4].1.is_null());
-    assert_eq!(leaves[4].2,"/obj2/null1");
+    assert_eq!(leaves[4].2,vec!["obj2","null1"]);
 }
 

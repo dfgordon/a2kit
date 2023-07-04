@@ -4,6 +4,7 @@
 //! The `DiskStruct` trait is used to flatten and unflatten the wrapper structures.
 
 use log::{debug,info,warn,error};
+use std::collections::HashMap;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -12,11 +13,37 @@ use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
 use crate::img::{disk35,disk525};
 use crate::img;
+use crate::img::meta;
 use crate::img::woz::{INFO_ID,TMAP_ID,TRKS_ID,META_ID,WRIT_ID,HeadCoords};
-use crate::{STDRESULT,DYNERR};
+use crate::{STDRESULT,DYNERR,getByte,getByteEx,getHexEx,putByte,putHex};
 
 const MAX_TRACK_BLOCKS_525: u16 = 13;
 const MAX_TRACK_BLOCKS_35: u16 = 19;
+
+const STD_META_OPTIONS: [(&str,&[&str]);3] = [
+    ("language",&["English","Spanish","French","German",
+    "Chinese","Japanese","Italian","Dutch",
+    "Portuguese","Danish","Finnish","Norwegian",
+    "Swedish","Russian","Polish","Turkish",
+    "Arabic","Thai","Czech","Hungarian",
+    "Catalan","Croatian","Greek","Hebrew",
+    "Romanian","Slovak","Ukrainian","Indonesian",
+    "Malay","Vietnamese","Other"]),
+    ("requires_ram",&["16K","24K","32K","48K","64K","128K","256K","512K","768K","1M","1.25M","1.5M+","Unknown"]),
+    ("requires_machine",&["2","2+","2e","2c","2e+","2gs","2c+","3","3+"])
+];
+
+const COMPATIBLE_HARDWARE_OPT: [&str;9] = [
+    "Apple ][",
+    "Apple ][ Plus",
+    "Apple //e (unenhanced)",
+    "Apple //c",
+    "Apple //e Enhanced",
+    "Apple IIgs",
+    "Apple //c Plus",
+    "Apple ///",
+    "Apple /// Plus"
+];
 
 pub fn file_extensions() -> Vec<String> {
     vec!["woz".to_string()]
@@ -72,6 +99,12 @@ pub struct Trks {
     bits: Vec<u8>
 }
 
+pub struct Meta {
+    id: [u8;4],
+    size: [u8;4],
+    recs: Vec<(String,String)>
+}
+
 pub struct Woz2 {
     kind: img::DiskKind,
     /// Track bit offsets are given with respect to start of file.
@@ -81,7 +114,7 @@ pub struct Woz2 {
     info: Info,
     tmap: TMap,
     trks: Trks,
-    meta: Option<Vec<u8>>,
+    meta: Option<Meta>,
     writ: Option<Vec<u8>>,
     head_coords: HeadCoords
 }
@@ -303,6 +336,116 @@ impl DiskStruct for Trks {
     }
 }
 
+impl Meta {
+    /// Find an item in the META chunk by key.
+    /// Return record number and value in a tuple.
+    fn get_meta_item(&self,key: &str) -> Option<(usize,String)> {
+        for i in 0..self.recs.len() {
+            if self.recs[i].0==key {
+                return Some((i,self.recs[i].1.to_string()));
+            }
+        }
+        None
+    }
+    /// Some META keys take only specific values.
+    /// Return true if `val` is allowed for the given `key`.
+    fn verify_value(&self,key: &str,val: &str) -> bool {
+        let map = HashMap::from(STD_META_OPTIONS);
+        if let Some(valid_options) = map.get(key) {
+            for s in *valid_options {
+                debug!("check {} against {}",s,val);
+                if *s==val {
+                    return true;
+                }
+            }
+            return false
+        }
+        true
+    }
+    /// Look for the key and replace its value, or else add
+    /// a new record if the key is not found.
+    fn add_or_replace(&mut self,key: &str,val: &str) -> STDRESULT {
+        if key.contains("\t") {
+            error!("META key contained a tab");
+            return Err(Box::new(img::Error::MetaDataMismatch));
+        }
+        if key.contains("\n") {
+            error!("META key contained a line feed");
+            return Err(Box::new(img::Error::MetaDataMismatch));
+        }
+        if val.contains("\t") {
+            error!("META value contained a tab");
+            return Err(Box::new(img::Error::MetaDataMismatch));
+        }
+        if val.contains("\n") {
+            error!("META value contained a line feed");
+            return Err(Box::new(img::Error::MetaDataMismatch));
+        }
+        match self.get_meta_item(key) {
+            Some((i,_)) => {
+                self.recs[i] = (key.to_string(),val.to_string());
+                Ok(())
+            },
+            None => {
+                self.recs.push((key.to_string(),val.to_string()));
+                Ok(())
+            }
+        }
+    }
+}
+
+impl DiskStruct for Meta {
+    fn new() -> Self where Self: Sized {
+        Self {
+            id: u32::to_le_bytes(META_ID),
+            size: u32::to_le_bytes(8),
+            recs: Vec::new()
+        }        
+    }
+    fn len(&self) -> usize {
+        let bytes = self.to_bytes();
+        bytes.len()
+    }
+    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+        self.id = [bytes[0],bytes[1],bytes[2],bytes[3]];
+        self.size = [bytes[4],bytes[5],bytes[6],bytes[7]];
+        if let Err(_) = String::from_utf8(bytes[8..].to_vec()) {
+            warn!("Invalid UTF8 in WOZ META chunk, will use lossy conversion");
+        }
+        let s = String::from_utf8_lossy(&bytes[8..]);
+        let lines: Vec<&str> = s.lines().collect();
+        for i in 0..lines.len() {
+            let cols: Vec<&str> = lines[i].split('\t').collect();
+            if cols.len()!=2 {
+                warn!("Wrong tab count in META item {}, skipping",lines[i]);
+            } else {
+                self.recs.push((cols[0].to_string(),cols[1].to_string()));
+            }
+        }
+    }
+    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+        let mut ans = Meta::new();
+        ans.update_from_bytes(bytes);
+        return ans;
+    }
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut ans: Vec<u8> = Vec::new();
+        let mut s = String::new();
+        // first load records into contiguous string
+        for i in 0..self.recs.len() {
+            s += &self.recs[i].0;
+            s += "\t";
+            s += &self.recs[i].1;
+            s += "\n";
+        }
+        // now load the flattened chunk
+        ans.append(&mut u32::to_le_bytes(META_ID).to_vec());
+        ans.append(&mut u32::to_le_bytes(s.len() as u32).to_vec());
+        ans.append(&mut s.as_bytes().to_vec());
+        return ans;
+    }
+}
+
 impl Woz2 {
     fn new() -> Self {
         Self {
@@ -512,7 +655,11 @@ impl img::DiskImage for Woz2 {
                     ans.track_bits_offset = ptr + 1288;
                     ans.trks.update_from_bytes(&chunk)
                 },
-                (META_ID,Some(chunk)) => ans.meta = Some(chunk),
+                (META_ID,Some(chunk)) => {
+                    let mut new_meta = Meta::new();
+                    new_meta.update_from_bytes(&chunk);
+                    ans.meta = Some(new_meta);
+                },
                 (WRIT_ID,Some(chunk)) => ans.writ = Some(chunk),
                 _ => if id!=0 {
                     info!("unprocessed chunk with id {:08X}/{}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)))
@@ -520,11 +667,7 @@ impl img::DiskImage for Woz2 {
             }
             ptr = next;
         }
-        if ans.info.vers>3 {
-            error!("cannot process INFO chunk version {}",ans.info.vers);
-            return None;
-        }
-        if ans.info.flux_block!=[0,0] && ans.info.largest_flux_track!=[0,0] {
+        if ans.info.vers>=3 && ans.info.flux_block!=[0,0] && ans.info.largest_flux_track!=[0,0] {
             error!("WOZ uses flux data (not supported)");
             return None;
         }
@@ -552,8 +695,8 @@ impl img::DiskImage for Woz2 {
         ans.append(&mut self.info.to_bytes());
         ans.append(&mut self.tmap.to_bytes());
         ans.append(&mut self.trks.to_bytes());
-        if let Some(mut meta) = self.meta.clone() {
-            ans.append(&mut meta);
+        if let Some(meta) = &self.meta {
+            ans.append(&mut meta.to_bytes());
         }
         if let Some(mut writ) = self.writ.clone() {
             ans.append(&mut writ);
@@ -588,100 +731,120 @@ impl img::DiskImage for Woz2 {
         super::woz::display_track(self, 0, &bytes)
     }
     fn get_metadata(&self,indent: u16) -> String {
-        let mut json = json::JsonValue::new_object();
-        json["image_type"] = json::JsonValue::String("woz2".to_string());
-
-        json["info"] = json::JsonValue::new_object();
-        json["meta"] = json::JsonValue::new_object();
-        json["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
-        json["info"]["disk_type"] = json::JsonValue::new_object();
-        json["info"]["disk_type"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_type]));
-        json["info"]["disk_type"]["pretty"] = json::JsonValue::String(match self.info.disk_type {
+        let mut root = json::JsonValue::new_object();
+        let woz2 = self.what_am_i().to_string();
+        root[&woz2] = json::JsonValue::new_object();
+        root[&woz2]["info"] = json::JsonValue::new_object();
+        root[&woz2]["meta"] = json::JsonValue::new_object();
+        getByteEx!(root,woz2,self.info.disk_type);
+        root[&woz2]["info"]["disk_type"]["_pretty"] = json::JsonValue::String(match self.info.disk_type {
             1 => "Apple 5.25 inch".to_string(),
             2 => "Apple 3.5 inch".to_string(),
             _ => "Unexpected value".to_string()
         });
-        json["info"]["write_protected"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.write_protected]));
-        json["info"]["cleaned"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.cleaned]));
-        json["info"]["synchronized"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.synchronized]));
-        json["info"]["sides"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_sides]));
-        json["info"]["boot_sector_format"] = json::JsonValue::new_object();
-        json["info"]["boot_sector_format"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.boot_sector_format]));
-        json["info"]["boot_sector_format"]["pretty"] = json::JsonValue::String(match self.info.boot_sector_format {
-            0 => "Unknown".to_string(),
-            1 => "Boots 16-sector".to_string(),
-            2 => "Boots 13-sector".to_string(),
-            3 => "Boots both".to_string(),
-            _ => "Unexpected value".to_string()
-        });
-        json["info"]["optimal_bit_timing"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.optimal_bit_timing]));
-        json["info"]["compatible_hardware"] = json::JsonValue::new_object();
-        json["info"]["compatible_hardware"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&self.info.compatible_hardware));
-        let mut hardware = String::new();
-        if self.info.compatible_hardware[0] & 1 > 0 {
-            hardware += "Apple ][, ";
+        getByte!(root,woz2,self.info.write_protected);
+        getByte!(root,woz2,self.info.synchronized);
+        getByte!(root,woz2,self.info.cleaned);
+        root[&woz2]["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
+        if self.info.vers>=2 {
+            getByte!(root,woz2,self.info.disk_sides);
+            getByteEx!(root,woz2,self.info.boot_sector_format);
+            root[&woz2]["info"]["boot_sector_format"]["_pretty"] = json::JsonValue::String(match self.info.boot_sector_format {
+                0 => "Unknown".to_string(),
+                1 => "Boots 16-sector".to_string(),
+                2 => "Boots 13-sector".to_string(),
+                3 => "Boots both".to_string(),
+                _ => "Unexpected value".to_string()
+            });
+            getByte!(root,woz2,self.info.optimal_bit_timing);
+            getHexEx!(root,woz2,self.info.compatible_hardware);
+            let mut hardware = String::new();
+            let hard_flags = u16::from_le_bytes(self.info.compatible_hardware);
+            let mut hard_mask = 1 as u16;
+            for machine in COMPATIBLE_HARDWARE_OPT {
+                if hard_flags & hard_mask > 0 {
+                    hardware += machine;
+                    hardware += ", ";
+                }
+                hard_mask *= 2;
+            }
+            if hardware.len()==0 {
+                root[&woz2]["info"]["compatible_hardware"]["_pretty"] = json::JsonValue::String("unknown".to_string());
+            } else {
+                root[&woz2]["info"]["compatible_hardware"]["_pretty"] = json::JsonValue::String(hardware);
+            }
+            getHexEx!(root,woz2,self.info.required_ram);
+            let ram = u16::from_le_bytes(self.info.required_ram);
+            root[&woz2]["info"]["required_ram"]["_pretty"] = json::JsonValue::String(match ram { 0 => "unknown".to_string(), _ => ram.to_string()+"K" });
+            getHexEx!(root,woz2,self.info.largest_track);
+            let lrg_trk = u16::from_le_bytes(self.info.largest_track);
+            root[&woz2]["info"]["largest_track"]["_pretty"] = json::JsonValue::String(lrg_trk.to_string() + " blocks");
         }
-        if self.info.compatible_hardware[0] & 2 > 0  {
-            hardware += "Apple ][ Plus, ";
-        }
-        if self.info.compatible_hardware[0] & 4 > 0  {
-            hardware += "Apple //e (unenhanced), ";
-        }
-        if self.info.compatible_hardware[0] & 8 > 0  {
-            hardware += "Apple //c, ";
-        }
-        if self.info.compatible_hardware[0] & 16 > 0  {
-            hardware += "Apple //e Enhanced, ";
-        }
-        if self.info.compatible_hardware[0] & 32 > 0  {
-            hardware += "Apple IIgs, ";
-        }
-        if self.info.compatible_hardware[0] & 64 > 0  {
-            hardware += "Apple //c Plus, ";
-        }
-        if self.info.compatible_hardware[0] & 128 > 0  {
-            hardware += "Apple ///, ";
-        }
-        if self.info.compatible_hardware[1] & 1 > 0  {
-            hardware += "Apple /// Plus, ";
-        }
-        if hardware.len()==0 {
-            json["info"]["compatible_hardware"]["pretty"] = json::JsonValue::String("unknown".to_string());
-        } else {
-            json["info"]["compatible_hardware"]["pretty"] = json::JsonValue::String(hardware);
+        if self.info.vers>=3 {
+            getHexEx!(root,woz2,self.info.flux_block);
+            let flx_blk = u16::from_le_bytes(self.info.flux_block);
+            root[&woz2]["info"]["flux_block"]["_pretty"] = json::JsonValue::String(["block ",&flx_blk.to_string()].concat());
+            getHexEx!(root,woz2,self.info.largest_flux_track);
+            let lrg_flx = u16::from_le_bytes(self.info.largest_flux_track);
+            root[&woz2]["info"]["largest_flux_track"]["_pretty"] = json::JsonValue::String(lrg_flx.to_string() + " blocks");
         }
 
         if let Some(meta) = &self.meta {
-            let meta_str = String::from_utf8_lossy(&meta[8..]);
-            let lines = meta_str.lines();
-            for line in lines {
-                let cols: Vec<&str> = line.split('\t').collect();
-                if cols.len()==2 {
-                    json["meta"][cols[0]] = json::JsonValue::String(cols[1].to_string());
-                } else {
-                    warn!("bad META record in WOZ {}",line);
+            for (k,v) in &meta.recs {
+                root[&woz2]["meta"][k] = json::JsonValue::String(v.to_string());
+                if !meta.verify_value(k, v) {
+                    warn!("illegal META value `{}` for key `{}`",v,k);
                 }
             }
         }
         if indent==0 {
-            json::stringify(json)
+            json::stringify(root)
         } else {
-            json::stringify_pretty(json, indent)
+            json::stringify_pretty(root, indent)
         }
     }
-    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+    fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {
         if let Some(val) = maybe_str_val.as_str() {
-            match key_path {
-                "/image_type" => img::test_metadata(val, self.what_am_i()),
-                "/info/creator" => img::set_metadata_hex(val, &mut self.info.creator),
-                "/info/disk_type" | "/info/disk_type/raw" => {warn!("request to change disk type ignored"); Ok(()) },
-                "/info/write_protected" | "/info/write_protected/raw" => img::set_metadata_byte(val, &mut self.info.write_protected),
-                "/info/cleaned" | "/info/cleaned/raw" => img::set_metadata_byte(val, &mut self.info.cleaned),
-                "/info/synchronized" | "/info/synchronized/raw" => img::set_metadata_byte(val, &mut self.info.synchronized),
-                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            debug!("put key `{:?}` with val `{}`",key_path,val);
+            let woz2 = self.what_am_i().to_string();
+            meta::test_metadata(key_path, self.what_am_i())?;
+            if meta::match_key(key_path, &[&woz2,"info","disk_type"]) {
+                warn!("WOZ disk type will be left untouched");
+                return Ok(())
             }
-        } else {
-            Err(Box::new(img::Error::MetaDataMismatch))
+            putByte!(val,key_path,woz2,self.info.write_protected);
+            putByte!(val,key_path,woz2,self.info.synchronized);
+            putByte!(val,key_path,woz2,self.info.cleaned);
+            putHex!(val,key_path,woz2,self.info.creator);
+            // TODO: take some action if user is writing an item
+            // that is not consistent with the INFO chunk version
+            putByte!(val,key_path,woz2,self.info.disk_sides);
+            putByte!(val,key_path,woz2,self.info.boot_sector_format);
+            putByte!(val,key_path,woz2,self.info.optimal_bit_timing);
+            putHex!(val,key_path,woz2,self.info.compatible_hardware);
+            putHex!(val,key_path,woz2,self.info.required_ram);
+            putHex!(val,key_path,woz2,self.info.largest_track);
+            putHex!(val,key_path,woz2,self.info.flux_block);
+            putHex!(val,key_path,woz2,self.info.largest_flux_track);
+            
+            if key_path[1]=="meta" {
+                if key_path.len()!=3 {
+                    error!("wrong depth in WOZ key path {:?}",key_path);
+                    return Err(Box::new(img::Error::MetaDataMismatch));
+                }
+                match self.meta.as_mut() {
+                    None => {
+                        self.meta = Some(Meta::new());
+                    },
+                    Some(_) => {}
+                };
+                if !self.meta.as_ref().unwrap().verify_value(&key_path[2], val) {
+                    error!("illegal META value `{}` for key `{}`",val,key_path[2]);
+                    return Err(Box::new(img::Error::MetaDataMismatch));
+                }
+                return self.meta.as_mut().unwrap().add_or_replace(&key_path[2], val);
+            } 
         }
+        Err(Box::new(img::Error::MetaDataMismatch))
     }
 }

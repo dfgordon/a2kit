@@ -15,8 +15,9 @@ use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
 use crate::img::disk525;
 use crate::img;
+use crate::img::meta;
 use crate::img::woz::{TMAP_ID,TRKS_ID,INFO_ID,META_ID};
-use crate::{STDRESULT,DYNERR};
+use crate::{STDRESULT,DYNERR,getByte,getByteEx,putByte,putHex};
 
 use super::woz::HeadCoords;
 
@@ -448,39 +449,40 @@ impl img::DiskImage for Woz1 {
         super::woz::display_track(self, 0, &bytes)
     }
     fn get_metadata(&self,indent: u16) -> String {
-        let mut json = json::JsonValue::new_object();
-        json["image_type"] = json::JsonValue::String("woz1".to_string());
-        json["info"] = json::JsonValue::new_object();
-        json["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
-        json["info"]["disk_type"] = json::JsonValue::new_object();
-        json["info"]["disk_type"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.disk_type]));
-        json["info"]["disk_type"]["pretty"] = json::JsonValue::String(match self.info.disk_type {
+        let mut root = json::JsonValue::new_object();
+        let woz1 = self.what_am_i().to_string();
+        root[&woz1] = json::JsonValue::new_object();
+        root[&woz1]["info"] = json::JsonValue::new_object();
+        getByteEx!(root,woz1,self.info.disk_type);
+        root[&woz1]["info"]["disk_type"]["_pretty"] = json::JsonValue::String(match self.info.disk_type {
             1 => "Apple 5.25 inch".to_string(),
             2 => "Apple 3.5 inch".to_string(),
             _ => "Unexpected value".to_string()
         });
-        json["info"]["write_protected"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.write_protected]));
-        json["info"]["cleaned"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.cleaned]));
-        json["info"]["synchronized"] = json::JsonValue::String(hex::ToHex::encode_hex(&vec![self.info.synchronized]));
+        getByte!(root,woz1,self.info.write_protected);
+        getByte!(root,woz1,self.info.synchronized);
+        getByte!(root,woz1,self.info.cleaned);
+        root[woz1]["info"]["creator"] = json::JsonValue::String(String::from_utf8_lossy(&self.info.creator).trim_end().to_string());
         if indent==0 {
-            json::stringify(json)
+            json::stringify(root)
         } else {
-            json::stringify_pretty(json, indent)
+            json::stringify_pretty(root, indent)
         }
     }
-    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+    fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {
         if let Some(val) = maybe_str_val.as_str() {
-            match key_path {
-                "/image_type" => img::test_metadata(val, self.what_am_i()),
-                "/info/creator" => img::set_metadata_hex(val, &mut self.info.creator),
-                "/info/disk_type" | "/info/disk_type/raw" => {warn!("request to change disk type ignored"); Ok(()) },
-                "/info/write_protected" | "/info/write_protected/raw" => img::set_metadata_byte(val, &mut self.info.write_protected),
-                "/info/cleaned" | "/info/cleaned/raw" => img::set_metadata_byte(val, &mut self.info.cleaned),
-                "/info/synchronized" | "/info/synchronized/raw" => img::set_metadata_byte(val, &mut self.info.synchronized),
-                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            debug!("put key `{:?}` with val `{}`",key_path,val);
+            let woz1 = self.what_am_i().to_string();
+            meta::test_metadata(key_path, self.what_am_i())?;
+            if meta::match_key(key_path,&[&woz1,"info","disk_type"]) {
+                warn!("WOZ disk type will be left untouched");
+                return Ok(())
             }
-        } else {
-            Err(Box::new(img::Error::MetaDataMismatch))
+            putByte!(val,key_path,woz1,self.info.write_protected);
+            putByte!(val,key_path,woz1,self.info.synchronized);
+            putByte!(val,key_path,woz1,self.info.cleaned);
+            putHex!(val,key_path,woz1,self.info.creator);
         }
+        Err(Box::new(img::Error::MetaDataMismatch))
     }
 }

@@ -82,22 +82,30 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
 
 pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
     // presence of arguments should already be resolved
-    let maybe_src_path = cmd.get_one::<String>("file");
+    let maybe_selection = cmd.get_one::<String>("file");
     let img_path = cmd.get_one::<String>("dimg").expect(RCH);
 
     match crate::create_img_from_file(&img_path) {
         Ok(img) => {
-            match maybe_src_path {
+            match maybe_selection {
                 None => {
                     print!("{}",img.get_metadata(4));
                     Ok(())
                 }
-                Some(src_path) => {
+                Some(selection) => {
+                    if selection.chars().next()!=Some('/') {
+                        error!("selection string should start with `/`");
+                        return Err(Box::new(CommandError::KeyNotFound));
+                    }
                     match json::parse(&img.get_metadata(0)) {
                         Ok(parsed) => {
-                            let mut keys = src_path.split('/');
+                            let mut keys = selection.split('/');
                             let mut obj = parsed;
+                            keys.next();
                             while let Some(key) = keys.next() {
+                                if key=="" {
+                                    break;
+                                }
                                 match obj[key].clone() {
                                     json::JsonValue::Null => return Err(Box::new(CommandError::KeyNotFound)),
                                     x => { obj = x }

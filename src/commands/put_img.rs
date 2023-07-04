@@ -5,7 +5,7 @@
 
 use clap;
 use std::str::FromStr;
-use log::{debug,error};
+use log::{debug,info,error};
 use super::{ItemType,CommandError};
 use crate::{STDRESULT,DYNERR};
 
@@ -70,7 +70,8 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
 
 pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     // presence of arguments should already be resolved
-    let maybe_filter = cmd.get_one::<String>("file");
+    // TODO: verify no leaf object has _pretty without _raw
+    let maybe_selection = cmd.get_one::<String>("file");
     let img_path = cmd.get_one::<String>("dimg").expect(RCH);
 
     match crate::create_img_from_file(&img_path) {
@@ -79,11 +80,24 @@ pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
             let parsed = json::parse(&json_string)?;
             let mut curs = crate::JsonCursor::new();
             while let Some((key,leaf)) = curs.next(&parsed) {
-                if let Some(key_path) = curs.key_path() {
-                    img.put_metadata(&key_path, leaf)?;
+                if key=="_pretty" {
+                    debug!("skip R/O `{}`",curs.key_path_string());
+                    continue;
+                }
+                if let Some(selection) = maybe_selection {
+                    if selection.chars().next()!=Some('/') {
+                        error!("selection string should start with `/`");
+                        return Err(Box::new(CommandError::KeyNotFound));
+                    }
+                    if selection.ends_with("/") && curs.key_path_string().contains(selection) {
+                        img.put_metadata(&curs.key_path(), leaf)?;
+                    } else if &curs.key_path_string()==selection {
+                        img.put_metadata(&curs.key_path(), leaf)?;
+                    } else {
+                        info!("skipping `{}` based on selection string `{}`",curs.key_path_string(),selection);
+                    }
                 } else {
-                    error!("problem getting the key path for {}",key);
-                    return Err(Box::new(CommandError::KeyNotFound));
+                    img.put_metadata(&curs.key_path(), leaf)?;
                 }
             }
             std::fs::write(img_path,img.to_bytes())?;

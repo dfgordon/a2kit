@@ -5,12 +5,14 @@
 //! The NIB variants are not accepted at present.
 
 use chrono;
-use log::{warn,info,error};
+use std::str::FromStr;
+use log::{warn,debug,info,error};
 use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
 use crate::img;
+use crate::img::meta;
 use crate::fs::Block;
-use crate::{STDRESULT,DYNERR};
+use crate::{STDRESULT,DYNERR,putHex,getHex,getHexEx,putString};
 
 const BLOCK_SIZE: u32 = 512;
 
@@ -47,26 +49,52 @@ pub struct Dot2mg {
 }
 
 impl Dot2mg {
-    pub fn create(vol: u8,kind: img::DiskKind) -> Self {
+    pub fn create(vol: u8,kind: img::DiskKind,maybe_wrap: Option<&String>) -> Result<Box<dyn img::DiskImage>,DYNERR> {
         let now = chrono::Local::now().naive_local();
         let creator_info = "a2kit v".to_string() + env!("CARGO_PKG_VERSION") + " " + &now.format("%d-%m-%Y %H:%M:%S").to_string();
-        let raw_img: Box<dyn img::DiskImage> = match kind {
-            img::names::A2_DOS33_KIND => Box::new(img::dsk_do::DO::create(35,16)),
-            img::names::A2_400_KIND => Box::new(img::dsk_po::PO::create(800)),
-            img::names::A2_800_KIND => Box::new(img::dsk_po::PO::create(1600)),
-            img::names::A2_HD_MAX => Box::new(img::dsk_po::PO::create(65535)),
-            _ => panic!("cannot create this kind of disk in 2MG format")
+        let wrap = match maybe_wrap {
+            None => None,
+            Some(s) => {
+                match img::DiskImageType::from_str(s) {
+                    Ok(typ) => Some(typ),
+                    Err(_) => panic!("create received unexpected image type string") // should not happen
+                }
+            }
+        };
+        let raw_img: Box<dyn img::DiskImage> = match (kind,wrap) {
+            (img::names::A2_DOS33_KIND,Some(img::DiskImageType::DO)) => Box::new(img::dsk_do::DO::create(35,16)),
+            (img::names::A2_DOS33_KIND,Some(img::DiskImageType::NIB)) => Box::new(img::nib::Nib::create(vol,kind)),
+            (img::names::A2_400_KIND,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(800)),
+            (img::names::A2_800_KIND,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(1600)),
+            (img::names::A2_HD_MAX,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(65535)),
+            (img::names::A2_DOS33_KIND,None) => Box::new(img::dsk_do::DO::create(35,16)),
+            (img::names::A2_400_KIND,None) => Box::new(img::dsk_po::PO::create(800)),
+            (img::names::A2_800_KIND,None) => Box::new(img::dsk_po::PO::create(1600)),
+            (img::names::A2_HD_MAX,None) => Box::new(img::dsk_po::PO::create(65535)),
+            _ => {
+                error!("the disk kind could not be paired with the wrapped image");
+                return Err(Box::new(img::Error::ImageTypeMismatch));
+            }
         };
         let flags = match kind {
             img::names::A2_DOS33_KIND => [vol,1,0,0],
             _ => [0,0,0,0]
         };
-        let fmt = match kind {
-            img::names::A2_DOS33_KIND => 0,
-            _ => 1
+        let actual_blocks = raw_img.byte_capacity() as u32 / BLOCK_SIZE;
+        let (fmt,blocks,buf_len) = match raw_img.what_am_i() {
+            // Some sources say blocks should be 0 unless we have fmt=1 (PO).
+            // However, CiderPress, for one, will reject a DO with blocks=0.
+            // So we will write the blocks unconditionally.
+            // When we are reading, we ignore blocks unless fmt=1.
+            img::DiskImageType::DO => (0, actual_blocks, raw_img.byte_capacity() as u32),
+            img::DiskImageType::PO => (1, actual_blocks, raw_img.byte_capacity() as u32),
+            img::DiskImageType::NIB => (2, actual_blocks, img::nib::TRACK_BYTE_CAPACITY_NIB as u32*35),
+            _ => {
+                error!("attempt to wrap unsupported image type in 2MG");
+                return Err(Box::new(img::Error::ImageTypeMismatch));
+            }
         };
-        let blocks = raw_img.byte_capacity() as u32 / BLOCK_SIZE;
-        Self {
+        Ok(Box::new(Self {
             kind,
             header: Header {
                 magic: u32::to_be_bytes(0x32494D47), // '2IMG'
@@ -77,17 +105,17 @@ impl Dot2mg {
                 flags,
                 blocks: u32::to_le_bytes(blocks),
                 data_offset: [64,0,0,0],
-                data_len: u32::to_le_bytes(blocks*BLOCK_SIZE),
+                data_len: u32::to_le_bytes(buf_len),
                 comment_offset: [0,0,0,0],
                 comment_len: [0,0,0,0],
-                creator_offset: u32::to_le_bytes(64 + blocks*BLOCK_SIZE),
+                creator_offset: u32::to_le_bytes(64 + buf_len),
                 creator_len: u32::to_le_bytes(creator_info.len() as u32),
                 pad: [0;16]
             },
             raw_img,
             comment: "".to_string(),
             creator_info
-        }
+        }))
     }
 }
 
@@ -141,6 +169,10 @@ impl img::DiskImage for Dot2mg {
         let blocks = u32::from_le_bytes(header.blocks);
         let offset = u32::from_le_bytes(header.data_offset) as usize;
         let len = u32::from_le_bytes(header.data_len) as usize;
+        if data.len()<offset+len {
+            error!("end of data {} runs past EOF",offset+len);
+            return None;
+        }
         let maybe_raw_img: Option<Box<dyn img::DiskImage>> = match fmt {
             0 => {
                 info!("2MG flagged as DOS ordered");
@@ -167,30 +199,40 @@ impl img::DiskImage for Dot2mg {
         };
         let comment_off = u32::from_le_bytes(header.comment_offset) as usize;
         let comment_len = u32::from_le_bytes(header.comment_len) as usize;
-        let comment = match String::from_utf8(data[comment_off..comment_off+comment_len].to_vec()) {
-            Ok(s) => {
-                info!("2MG comment: {}",s);
-                s
-            },
-            _ => {
-                warn!("comment field could not be read as UTF8 string");
-                "".to_string()
-            }
-        };
+        let mut comment = String::new();
+        if data.len()<comment_off+comment_len {
+            warn!("end of comment {} runs past EOF, ignoring",comment_off+comment_len);
+        } else {
+            comment = match String::from_utf8(data[comment_off..comment_off+comment_len].to_vec()) {
+                Ok(s) => {
+                    info!("2MG comment: {}",s);
+                    s
+                },
+                _ => {
+                    warn!("comment field could not be read as UTF8 string");
+                    "".to_string()
+                }
+            };
+        }
         let creator_offset = u32::from_le_bytes(header.creator_offset) as usize;
         let creator_len = u32::from_le_bytes(header.creator_len) as usize;
-        let creator_info = match String::from_utf8(data[creator_offset..creator_offset+creator_len].to_vec()) {
-            Ok(s) => {
-                info!("2MG creator info: {}",s);
-                s
-            },
-            _ => {
-                warn!("creator info could not be read as UTF8 string");
-                "".to_string()
-            }
-        };
+        let mut creator_info = String::new();
+        if data.len()<creator_offset+creator_len {
+            warn!("end of creator info {} runs past EOF, ignoring",creator_offset+creator_len);
+        } else {
+            creator_info = match String::from_utf8(data[creator_offset..creator_offset+creator_len].to_vec()) {
+                Ok(s) => {
+                    info!("2MG creator info: {}",s);
+                    s
+                },
+                _ => {
+                    warn!("creator info could not be read as UTF8 string");
+                    "".to_string()
+                }
+            };
+        }
         if let Some(raw_img) = maybe_raw_img {
-            if blocks as usize * BLOCK_SIZE as usize != raw_img.byte_capacity() {
+            if fmt==1 && blocks as usize * BLOCK_SIZE as usize != raw_img.byte_capacity() {
                 error!("2MG block count does not match data size");
                 return None;
             }
@@ -218,14 +260,13 @@ impl img::DiskImage for Dot2mg {
     }
     fn to_bytes(&mut self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
-        let cap = self.raw_img.byte_capacity() as u32;
+        let buf_len = u32::from_le_bytes(self.header.data_len);
         let rem_len = self.comment.len() as u32;
         let cre_len = self.creator_info.len() as u32; 
         self.header.data_offset = u32::to_le_bytes(64);
-        self.header.data_len = u32::to_le_bytes(cap);
-        self.header.comment_offset = u32::to_le_bytes(64+cap);
+        self.header.comment_offset = u32::to_le_bytes(match rem_len { 0 => 0, _ => 64+buf_len });
         self.header.comment_len = u32::to_le_bytes(rem_len);
-        self.header.creator_offset = u32::to_le_bytes(64+cap+rem_len);
+        self.header.creator_offset = u32::to_le_bytes(match cre_len { 0 => 0, _ => 64+buf_len+rem_len});
         self.header.creator_len = u32::to_le_bytes(cre_len);
         ans.append(&mut self.header.to_bytes());
         ans.append(&mut self.raw_img.to_bytes());
@@ -252,43 +293,56 @@ impl img::DiskImage for Dot2mg {
         self.raw_img.display_track(bytes)
     }
     fn get_metadata(&self,indent: u16) -> String {
-        let mut json = json::JsonValue::new_object();
-        json["image_type"] = json::JsonValue::String("2mg".to_string());
-        json["meta"] = json::JsonValue::new_object();
-        json["meta"]["creator_id"] = json::JsonValue::new_object();
-        json["meta"]["creator_id"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&self.header.creator_id));
-        json["meta"]["creator_id"]["pretty"] = json::JsonValue::String(String::from_utf8_lossy(&self.header.creator_id).into());
-        json["meta"]["format"] = json::JsonValue::new_object();
-        json["meta"]["format"]["raw"] = json::JsonValue::String(hex::ToHex::encode_hex(&self.header.img_fmt));
-        json["meta"]["format"]["pretty"] = json::JsonValue::String(match self.header.img_fmt {
+        let mg = self.what_am_i().to_string();
+        let mut root = json::JsonValue::new_object();
+        root[&mg] = json::JsonValue::new_object();
+        getHexEx!(root,mg,self.header.creator_id);
+        root[&mg]["header"]["creator_id"]["_pretty"] = json::JsonValue::String(String::from_utf8_lossy(&self.header.creator_id).into());
+        getHex!(root,mg,self.header.header_len);
+        getHex!(root,mg,self.header.version);
+        getHexEx!(root,mg,self.header.img_fmt);
+        root[&mg]["header"]["img_fmt"]["_pretty"] = json::JsonValue::String(match self.header.img_fmt {
                 [0,0,0,0] => "DOS ordered sectors (DO)".to_string(),
                 [1,0,0,0] => "ProDOS ordered blocks (PO)".to_string(),
                 [2,0,0,0] => "Track data as nibbles (NIB)".to_string(),
                 _ => "Unexpected format code".to_string()
         });
-        json["meta"]["flags"] = json::JsonValue::String(hex::ToHex::encode_hex(&self.header.flags));
-        json["meta"]["comment"] = json::JsonValue::String(self.comment.clone());
-        json["meta"]["creator_info"] = json::JsonValue::String(self.creator_info.clone());
+        getHex!(root,mg,self.header.flags);
+        getHex!(root,mg,self.header.blocks);
+        getHex!(root,mg,self.header.data_offset);
+        getHex!(root,mg,self.header.data_len);
+        getHex!(root,mg,self.header.comment_offset);
+        getHex!(root,mg,self.header.comment_len);
+        getHex!(root,mg,self.header.creator_offset);
+        getHex!(root,mg,self.header.creator_len);
+        root[&mg]["comment"] = json::JsonValue::String(self.comment.clone());
+        root[&mg]["creator_info"] = json::JsonValue::String(self.creator_info.clone());
         if indent==0 {
-            json::stringify(json)
+            json::stringify(root)
         } else {
-            json::stringify_pretty(json, indent)
+            json::stringify_pretty(root, indent)
         }
     }
-    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
-        info!("processing key {}",key_path);
+    fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {
         if let Some(val) = maybe_str_val.as_str() {
-            match key_path {
-                "/image_type" => img::test_metadata(val, self.what_am_i()),
-                "/meta/creator_id" | "/meta/creator_id/raw" => img::set_metadata_hex(val, &mut self.header.creator_id),
-                "/meta/format" | "/meta/format/raw" => img::set_metadata_hex(val, &mut self.header.img_fmt),
-                "/meta/flags" | "/meta/flags/raw" => img::set_metadata_hex(val, &mut self.header.flags),
-                "/meta/comment" => { self.comment = val.to_string(); Ok(()) },
-                "/meta/creator_info" => { self.creator_info = val.to_string(); Ok(()) },
-                _ => Err(Box::new(img::Error::MetaDataMismatch))
-            }
-        } else {
-            Err(Box::new(img::Error::MetaDataMismatch))
+            debug!("put key `{:?}` with val `{}`",key_path,val);
+            meta::test_metadata(key_path, self.what_am_i())?;
+            let mg = self.what_am_i().to_string();
+            putHex!(val,key_path,mg,self.header.creator_id);
+            putHex!(val,key_path,mg,self.header.header_len);
+            putHex!(val,key_path,mg,self.header.version);
+            putHex!(val,key_path,mg,self.header.img_fmt);
+            putHex!(val,key_path,mg,self.header.flags);
+            putHex!(val,key_path,mg,self.header.blocks);
+            putHex!(val,key_path,mg,self.header.data_offset);
+            putHex!(val,key_path,mg,self.header.data_len);
+            putHex!(val,key_path,mg,self.header.comment_offset);
+            putHex!(val,key_path,mg,self.header.comment_len);
+            putHex!(val,key_path,mg,self.header.creator_offset);
+            putHex!(val,key_path,mg,self.header.creator_len);
+            putString!(val,key_path,mg,self.comment);
+            putString!(val,key_path,mg,self.creator_info);
         }
+        Err(Box::new(img::Error::MetaDataMismatch))
     }
 }

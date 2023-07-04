@@ -14,9 +14,10 @@ use log::{warn,info,trace,debug,error};
 use a2kit_macro::DiskStruct;
 use crate::fs::cpm::types::RECORD_SIZE;
 use crate::img;
+use crate::img::meta;
 use crate::bios::skew;
 use crate::fs::Block;
-use crate::{STDRESULT,DYNERR};
+use crate::{STDRESULT,DYNERR,putString};
 
 pub enum Mode {
     Fm500Kbps = 0,
@@ -659,27 +660,28 @@ impl img::DiskImage for Imd {
         String::from("IMD images have no track bits to display")
     }
     fn get_metadata(&self,indent: u16) -> String {
-        let mut json = json::JsonValue::new_object();
-        json["image_type"] = json::JsonValue::String("imd".to_string());
-        json["meta"] = json::JsonValue::new_object();
-        json["meta"]["header"] = json::JsonValue::String(String::from_utf8_lossy(&self.header).into());
-        json["meta"]["comment"] = json::JsonValue::String(self.comment.clone());
+        let imd = self.what_am_i().to_string();
+        let mut root = json::JsonValue::new_object();
+        root[&imd] = json::JsonValue::new_object();
+        root[&imd] = json::JsonValue::new_object();
+        root[&imd]["header"] = json::JsonValue::String(String::from_utf8_lossy(&self.header).into());
+        root[&imd]["comment"] = json::JsonValue::String(self.comment.clone());
         if indent==0 {
-            json::stringify(json)
+            json::stringify(root)
         } else {
-            json::stringify_pretty(json, indent)
+            json::stringify_pretty(root, indent)
         }
     }
-    fn put_metadata(&mut self,key_path: &str,maybe_str_val: &json::JsonValue) -> STDRESULT {
+    fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {
         if let Some(val) = maybe_str_val.as_str() {
-            match key_path {
-                "/image_type" => img::test_metadata(val, self.what_am_i()),
-                "/meta/header" => img::set_metadata_utf8(val, &mut self.header,true),
-                "/meta/comment" => { self.comment = val.to_string(); Ok(()) },
-                _ => Err(Box::new(img::Error::MetaDataMismatch))
+            meta::test_metadata(key_path, self.what_am_i())?;
+            let imd = self.what_am_i().to_string();
+            if meta::match_key(key_path,&[&imd,"header"]) {
+                warn!("IMD header will be left untouched");
+                return Ok(())
             }
-        } else {
-            Err(Box::new(img::Error::MetaDataMismatch))
-        }
+            putString!(val,key_path,imd,self.comment);
+       }
+        Err(Box::new(img::Error::MetaDataMismatch))
     }
 }

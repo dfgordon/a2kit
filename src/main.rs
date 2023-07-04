@@ -21,7 +21,7 @@ const RCH: &str = "unreachable was reached";
 
 fn main() -> Result<(),Box<dyn std::error::Error>>
 {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     #[cfg(windows)]
     colored::control::set_virtual_terminal(true).unwrap();
     let long_help =
@@ -43,6 +43,7 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
     let img_types = ["d13","do","po","woz1","woz2","imd","2mg","nib"];
+    let wrap_types = ["do","po","nib"];
     let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
     let disk_kinds = [
         "8in",
@@ -75,6 +76,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .required(false)
             .default_value("5.25in"))
         .arg(arg!(-d --dimg <PATH> "disk image path to create"))
+        .arg(arg!(-w --wrap <TYPE> "type of disk image to wrap").value_parser(wrap_types)
+            .required(false))
         .about("write a blank disk image to the given path"));
     main_cmd = main_cmd.subcommand(Command::new("mkdir")
         .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
