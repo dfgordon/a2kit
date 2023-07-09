@@ -89,7 +89,7 @@ pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
         Ok(img) => {
             match maybe_selection {
                 None => {
-                    print!("{}",img.get_metadata(4));
+                    println!("{}",img.get_metadata(4));
                     Ok(())
                 }
                 Some(selection) => {
@@ -111,7 +111,7 @@ pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
                                     x => { obj = x }
                                 };
                             }
-                            print!("{}",json::stringify_pretty(obj, 4));
+                            println!("{}",json::stringify_pretty(obj, 4));
                             Ok(())
                         },
                         Err(e) => Err(Box::new(e))
