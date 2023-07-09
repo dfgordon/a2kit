@@ -17,7 +17,7 @@ use crate::img::disk525;
 use crate::img;
 use crate::img::meta;
 use crate::img::woz::{TMAP_ID,TRKS_ID,INFO_ID,META_ID};
-use crate::{STDRESULT,DYNERR,getByte,getByteEx,putByte,putHex};
+use crate::{STDRESULT,DYNERR,getByte,getByteEx,putByte,putStringBuf};
 
 use super::woz::HeadCoords;
 
@@ -115,6 +115,15 @@ impl Info {
             cleaned: 0,
             creator,
             pad: [0;23]
+        }
+    }
+    fn verify_value(&self,key: &str,hex_str: &str) -> bool {
+        match key {
+            stringify!(disk_type) => hex_str=="01" || hex_str=="02",
+            stringify!(write_protected) => hex_str=="00" || hex_str=="01",
+            stringify!(synchronized) => hex_str=="00" || hex_str=="01",
+            stringify!(cleaned) => hex_str=="00" || hex_str=="01",
+            _ => true
         }
     }
 }
@@ -475,14 +484,21 @@ impl img::DiskImage for Woz1 {
             let woz1 = self.what_am_i().to_string();
             meta::test_metadata(key_path, self.what_am_i())?;
             if meta::match_key(key_path,&[&woz1,"info","disk_type"]) {
-                warn!("WOZ disk type will be left untouched");
-                return Ok(())
+                warn!("skipping read-only `disk_type`");
+                return Ok(());
+            }
+            if key_path.len()>2 && key_path[0]=="woz1" && key_path[1]=="info" {
+                if !self.info.verify_value(&key_path[2], val) {
+                    error!("INFO chunk key `{}` had a bad value `{}`",key_path[2],val);
+                    return Err(Box::new(img::Error::MetadataMismatch));
+                }
             }
             putByte!(val,key_path,woz1,self.info.write_protected);
             putByte!(val,key_path,woz1,self.info.synchronized);
             putByte!(val,key_path,woz1,self.info.cleaned);
-            putHex!(val,key_path,woz1,self.info.creator);
+            putStringBuf!(val,key_path,woz1,self.info.creator,0x20);
         }
-        Err(Box::new(img::Error::MetaDataMismatch))
+        error!("unresolved key path {:?}",key_path);
+        Err(Box::new(img::Error::MetadataMismatch))
     }
 }

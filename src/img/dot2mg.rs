@@ -2,7 +2,6 @@
 //! 
 //! This format consists of a header followed by data in either DSK or NIB format.
 //! At the end of the data there can be a comment and creator information.
-//! The NIB variants are not accepted at present.
 
 use chrono;
 use std::str::FromStr;
@@ -13,6 +12,19 @@ use crate::img;
 use crate::img::meta;
 use crate::fs::Block;
 use crate::{STDRESULT,DYNERR,putHex,getHex,getHexEx,putString};
+
+/// These are all in the header branch
+const RO_META_ITEMS: [&str;9] = [
+    "header_len",
+    "version",
+    "img_fmt",
+    "data_offset",
+    "data_len",
+    "comment_offset",
+    "comment_len",
+    "creator_offset",
+    "creator_len"
+];
 
 const BLOCK_SIZE: u32 = 512;
 
@@ -327,22 +339,20 @@ impl img::DiskImage for Dot2mg {
         if let Some(val) = maybe_str_val.as_str() {
             debug!("put key `{:?}` with val `{}`",key_path,val);
             meta::test_metadata(key_path, self.what_am_i())?;
+            if key_path.len()>2 && key_path[1]=="header" {
+                if RO_META_ITEMS.contains(&key_path[2].as_str()) {
+                    warn!("skipping read-only `{}`",key_path[2]);
+                    return Ok(());
+                }
+            }
             let mg = self.what_am_i().to_string();
             putHex!(val,key_path,mg,self.header.creator_id);
-            putHex!(val,key_path,mg,self.header.header_len);
-            putHex!(val,key_path,mg,self.header.version);
-            putHex!(val,key_path,mg,self.header.img_fmt);
             putHex!(val,key_path,mg,self.header.flags);
             putHex!(val,key_path,mg,self.header.blocks);
-            putHex!(val,key_path,mg,self.header.data_offset);
-            putHex!(val,key_path,mg,self.header.data_len);
-            putHex!(val,key_path,mg,self.header.comment_offset);
-            putHex!(val,key_path,mg,self.header.comment_len);
-            putHex!(val,key_path,mg,self.header.creator_offset);
-            putHex!(val,key_path,mg,self.header.creator_len);
             putString!(val,key_path,mg,self.comment);
             putString!(val,key_path,mg,self.creator_info);
         }
-        Err(Box::new(img::Error::MetaDataMismatch))
+        error!("unresolved key path {:?}",key_path);
+        Err(Box::new(img::Error::MetadataMismatch))
     }
 }

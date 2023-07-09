@@ -68,7 +68,7 @@ pub enum Error {
     #[error("unable to access sector")]
     SectorAccess,
     #[error("metadata mismatch")]
-    MetaDataMismatch
+    MetadataMismatch
 }
 
 /// Errors pertaining to nibble encoding

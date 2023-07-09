@@ -98,7 +98,7 @@ macro_rules! putHex {
     };
 }
 
-/// Put a UTF8 string into the image using the given key path.
+/// Put a variable length UTF8 string into the image using the given key path.
 /// ```rs
 /// putString!(val:&str,key_path:&Vec<String>,image_type:String,self.path.to.string:String)
 /// ```
@@ -108,6 +108,19 @@ macro_rules! putString {
         if meta::match_key($key,&[&$typ,$(stringify!($x)),+]) {
             $slf.$($x).+ = $val.to_string();
             return Ok(());
+        }
+    };
+}
+
+/// Put a fixed length UTF8 string into the image using the given key path.
+/// ```rs
+/// putString!(val:&str,key_path:&Vec<String>,image_type:String,self.path.to.buf:[u8],pad:u8)
+/// ```
+#[macro_export]
+macro_rules! putStringBuf {
+    ($val:ident,$key:ident,$typ:ident,$slf:ident.$($x:ident).+,$pad:expr) => {
+        if meta::match_key($key,&[&$typ,$(stringify!($x)),+]) {
+            return meta::set_metadata_utf8($val,&mut $slf.$($x).+,$pad);
         }
     };
 }
@@ -139,7 +152,7 @@ pub fn test_metadata(key_path: &[String], typ: DiskImageType) -> STDRESULT {
         Some(key) if key==&typ.to_string() => Ok(()),
         _ => {
             error!("metadata root did not match `{}`",typ.to_string());
-            Err(Box::new(Error::MetaDataMismatch))
+            Err(Box::new(Error::MetadataMismatch))
         }
     }
 }
@@ -161,23 +174,21 @@ pub fn set_metadata_byte(hex_val: &str, buf: &mut u8) -> STDRESULT {
     }
 }
 
-/// Set a binary metadata value using a UTF8 string.
-/// If not `match_len`, pad with spaces when `buf` is longer than `utf8_val`.
-/// Always return error if `buf` cannot hold the string.
-pub fn set_metadata_utf8(utf8_val: &str, buf: &mut [u8], match_len: bool) -> STDRESULT {
+/// Fill a fixed length metadata buffer with a UTF8 string.
+/// Pad with `pad` when `buf` is longer than `utf8_val`.
+/// Return error if `buf` cannot hold the string.
+pub fn set_metadata_utf8(utf8_val: &str, buf: &mut [u8], pad: u8) -> STDRESULT {
     let bytes = utf8_val.as_bytes();
-    if match_len && bytes.len()!=buf.len() {
-        Err(Box::new(Error::MetaDataMismatch))
-    } else if bytes.len()<=buf.len() {
-        for i in 0..buf.len() {
+    if bytes.len()<=buf.len() {
+        for i in 0..bytes.len() {
             buf[i] = bytes[i];
         }
         for i in bytes.len()..buf.len() {
-            buf[i] = 0x20;
+            buf[i] = pad;
         }
         Ok(())
     } else {
-        Err(Box::new(Error::MetaDataMismatch))
+        Err(Box::new(Error::MetadataMismatch))
     }
 }
 

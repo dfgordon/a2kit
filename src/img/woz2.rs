@@ -5,6 +5,7 @@
 
 use log::{debug,info,warn,error};
 use std::collections::HashMap;
+use regex;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
@@ -15,22 +16,51 @@ use crate::img::{disk35,disk525};
 use crate::img;
 use crate::img::meta;
 use crate::img::woz::{INFO_ID,TMAP_ID,TRKS_ID,META_ID,WRIT_ID,HeadCoords};
-use crate::{STDRESULT,DYNERR,getByte,getByteEx,getHexEx,putByte,putHex};
+use crate::{STDRESULT,DYNERR,getByte,getByteEx,getHexEx,putByte,putHex,putStringBuf};
 
 const MAX_TRACK_BLOCKS_525: u16 = 13;
 const MAX_TRACK_BLOCKS_35: u16 = 19;
 
-const STD_META_OPTIONS: [(&str,&[&str]);3] = [
-    ("language",&["English","Spanish","French","German",
-    "Chinese","Japanese","Italian","Dutch",
-    "Portuguese","Danish","Finnish","Norwegian",
-    "Swedish","Russian","Polish","Turkish",
-    "Arabic","Thai","Czech","Hungarian",
-    "Catalan","Croatian","Greek","Hebrew",
-    "Romanian","Slovak","Ukrainian","Indonesian",
-    "Malay","Vietnamese","Other"]),
-    ("requires_ram",&["16K","24K","32K","48K","64K","128K","256K","512K","768K","1M","1.25M","1.5M+","Unknown"]),
-    ("requires_machine",&["2","2+","2e","2c","2e+","2gs","2c+","3","3+"])
+/// Form regex to match patterns like `a|c|b` (order deliberately scrambled).
+/// Expansion of `metaOptions!("a","b","c")` looks like this: `^(a|b|c)(\|(a|b|c))*$`
+macro_rules! metaOptions {
+    ($x:literal,$($y:literal),+) => {
+        concat!("^(",$x,$("|",$y),+,r")(\|(",$x,$("|",$y),+,"))*$")
+    }
+}
+
+/// Tuple (key,regex), where regex matches to an allowed pattern.
+/// The regex will not forbid redundant repetitions.
+/// The regex will not match to an empty string.
+/// Do not confuse the `|` appearing in the regex with the one in the metadata value.
+const STD_META_OPTIONS: [(&str,&str);5] = [
+    (
+        "language",
+        metaOptions!(
+            "English","Spanish","French","German","Chinese","Japanese","Italian","Dutch",
+            "Portuguese","Danish","Finnish","Norwegian","Swedish","Russian","Polish","Turkish",
+            "Arabic","Thai","Czech","Hungarian","Catalan","Croatian","Greek","Hebrew","Romanian",
+            "Slovak","Ukrainian","Indonesian","Malay","Vietnamese","Other"
+        )
+    ),
+    ("requires_ram",r"^(16K|24K|32K|48K|64K|128K|256K|512K|768K|1M|1\.25M|1\.5M\+|Unknown)$"),
+    ("requires_rom",r"^(Any|Integer|Applesoft|IIgs ROM0|IIgs ROM0\+1|IIgs ROM1|IIgs ROM1\+3|IIgs ROM3)$"),
+    ("requires_machine",metaOptions!("2",r"2\+","2e","2c",r"2e\+","2gs",r"2c\+","3",r"3\+")),
+    ("side",r"^Disk [0-9]+, Side [A-B]$")
+];
+
+const STD_META_KEYS: [&str;16] = [
+    "title","subtitle","publisher","developer","copyright","version","language","requires_ram",
+    "requires_rom","requires_machine","apple2_requires","notes","side","side_name","contributor","image_date"
+];
+
+/// These are all in the INFO chunk
+const RO_META_ITEMS: [&str;5] = [
+    "disk_type",
+    "disk_sides",
+    "largest_track",
+    "flux_block",
+    "largest_flux_block"
 ];
 
 const COMPATIBLE_HARDWARE_OPT: [&str;9] = [
@@ -186,6 +216,29 @@ impl Info {
             flux_block: [0,0],
             largest_flux_track: [0,0],
             pad: [0;10]
+        }
+    }
+    fn verify_value(&self,key: &str,hex_str: &str) -> bool {
+        match key {
+            stringify!(disk_type) => hex_str=="01" || hex_str=="02",
+            stringify!(write_protected) => hex_str=="00" || hex_str=="01",
+            stringify!(synchronized) => hex_str=="00" || hex_str=="01",
+            stringify!(cleaned) => hex_str=="00" || hex_str=="01",
+            stringify!(disk_sides) => hex_str=="01" || hex_str=="02",
+            stringify!(boot_sector_format) => hex_str=="00" || hex_str=="01" || hex_str=="02" || hex_str=="03",
+            stringify!(compatible_hardware) => {
+                if hex_str.len()!=4 {
+                    return false;
+                }
+                match hex::decode(hex_str) {
+                    Ok(val) => {
+                        let val = u16::from_le_bytes([val[0],val[1]]);
+                        val<512
+                    },
+                    Err(_) => false
+                }
+            },
+            _ => true
         }
     }
 }
@@ -347,39 +400,38 @@ impl Meta {
         }
         None
     }
-    /// Some META keys take only specific values.
+    /// Some META keys must follow a specific pattern.
     /// Return true if `val` is allowed for the given `key`.
+    /// This is hard coded to allow an empty string in all cases.
     fn verify_value(&self,key: &str,val: &str) -> bool {
+        if val=="" {
+            return true;
+        }
         let map = HashMap::from(STD_META_OPTIONS);
         if let Some(valid_options) = map.get(key) {
-            for s in *valid_options {
-                debug!("check {} against {}",s,val);
-                if *s==val {
-                    return true;
-                }
-            }
-            return false
+            let re = regex::Regex::new(valid_options).expect("could not parse regex");
+            return re.is_match(val);
         }
-        true
+        true // if key is not in the map then any value is acceptable
     }
     /// Look for the key and replace its value, or else add
     /// a new record if the key is not found.
     fn add_or_replace(&mut self,key: &str,val: &str) -> STDRESULT {
         if key.contains("\t") {
             error!("META key contained a tab");
-            return Err(Box::new(img::Error::MetaDataMismatch));
+            return Err(Box::new(img::Error::MetadataMismatch));
         }
         if key.contains("\n") {
             error!("META key contained a line feed");
-            return Err(Box::new(img::Error::MetaDataMismatch));
+            return Err(Box::new(img::Error::MetadataMismatch));
         }
         if val.contains("\t") {
             error!("META value contained a tab");
-            return Err(Box::new(img::Error::MetaDataMismatch));
+            return Err(Box::new(img::Error::MetadataMismatch));
         }
         if val.contains("\n") {
             error!("META value contained a line feed");
-            return Err(Box::new(img::Error::MetaDataMismatch));
+            return Err(Box::new(img::Error::MetadataMismatch));
         }
         match self.get_meta_item(key) {
             Some((i,_)) => {
@@ -390,6 +442,17 @@ impl Meta {
                 self.recs.push((key.to_string(),val.to_string()));
                 Ok(())
             }
+        }
+    }
+    /// Delete key if it exists, return true if it existed
+    fn delete(&mut self,key: &str) -> bool {
+        match self.get_meta_item(key) {
+            Some((i,_)) => {
+                warn!("deleting META record `{}`",key);
+                self.recs.remove(i);
+                true
+            }
+            _ => false
         }
     }
 }
@@ -806,16 +869,22 @@ impl img::DiskImage for Woz2 {
     fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {
         if let Some(val) = maybe_str_val.as_str() {
             debug!("put key `{:?}` with val `{}`",key_path,val);
-            let woz2 = self.what_am_i().to_string();
             meta::test_metadata(key_path, self.what_am_i())?;
-            if meta::match_key(key_path, &[&woz2,"info","disk_type"]) {
-                warn!("WOZ disk type will be left untouched");
-                return Ok(())
+            if key_path.len()>2 && key_path[0]=="woz2" && key_path[1]=="info" {
+                if RO_META_ITEMS.contains(&key_path[2].as_str()) {
+                    warn!("skipping read-only `{}`",key_path[2]);
+                    return Ok(());
+                }
+                if !self.info.verify_value(&key_path[2], val) {
+                    error!("INFO chunk key `{}` had a bad value `{}`",key_path[2],val);
+                    return Err(Box::new(img::Error::MetadataMismatch));
+                }
             }
+            let woz2 = self.what_am_i().to_string();
             putByte!(val,key_path,woz2,self.info.write_protected);
             putByte!(val,key_path,woz2,self.info.synchronized);
             putByte!(val,key_path,woz2,self.info.cleaned);
-            putHex!(val,key_path,woz2,self.info.creator);
+            putStringBuf!(val,key_path,woz2,self.info.creator,0x20);
             // TODO: take some action if user is writing an item
             // that is not consistent with the INFO chunk version
             putByte!(val,key_path,woz2,self.info.disk_sides);
@@ -830,7 +899,7 @@ impl img::DiskImage for Woz2 {
             if key_path[1]=="meta" {
                 if key_path.len()!=3 {
                     error!("wrong depth in WOZ key path {:?}",key_path);
-                    return Err(Box::new(img::Error::MetaDataMismatch));
+                    return Err(Box::new(img::Error::MetadataMismatch));
                 }
                 match self.meta.as_mut() {
                     None => {
@@ -838,13 +907,22 @@ impl img::DiskImage for Woz2 {
                     },
                     Some(_) => {}
                 };
+                if val=="" {
+                    if self.meta.as_mut().unwrap().delete(&key_path[2]) {
+                        return Ok(());
+                    }
+                }
                 if !self.meta.as_ref().unwrap().verify_value(&key_path[2], val) {
                     error!("illegal META value `{}` for key `{}`",val,key_path[2]);
-                    return Err(Box::new(img::Error::MetaDataMismatch));
+                    return Err(Box::new(img::Error::MetadataMismatch));
+                }
+                if !STD_META_KEYS.contains(&key_path[2].as_str()) {
+                    warn!("`{}` is not a standard META key",key_path[2]);
                 }
                 return self.meta.as_mut().unwrap().add_or_replace(&key_path[2], val);
             } 
         }
-        Err(Box::new(img::Error::MetaDataMismatch))
+        error!("unresolved key path {:?}",key_path);
+        Err(Box::new(img::Error::MetadataMismatch))
     }
 }

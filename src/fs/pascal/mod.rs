@@ -36,8 +36,8 @@ fn unpack_date(pascal_date: [u8;2]) -> chrono::NaiveDateTime {
     let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
     let month = date & 15;
     let day = (date >> 4) & 31;
-    return chrono::NaiveDate::from_ymd(year as i32,month as u32,day as u32)
-        .and_hms(0, 0, 0);
+    return chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32).unwrap()
+        .and_hms_opt(0, 0, 0).unwrap();
 }
 
 /// This will accept lower case; case will be automatically converted as appropriate

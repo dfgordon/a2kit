@@ -46,8 +46,8 @@ fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
     let day = date & 31;
     let hour = (time >> 8) & 255;
     let minute = time & 255;
-    return chrono::NaiveDate::from_ymd(year as i32,month as u32,day as u32).
-        and_hms(hour as u32,minute as u32,0);
+    return chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32).unwrap().
+        and_hms_opt(hour as u32,minute as u32,0).unwrap();
 }
 
 /// Test the string for validity as a ProDOS name.

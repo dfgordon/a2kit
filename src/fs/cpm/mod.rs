@@ -44,19 +44,20 @@ fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
         Some(t) => t,
         _ => chrono::Local::now().naive_local()
     };
-    let ref_date = chrono::NaiveDate::from_ymd(1978, 1, 1);
-    let days = u16::to_le_bytes(now.signed_duration_since(ref_date.and_hms(0, 0, 0)).num_days() as u16);
+    let ref_date = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap()
+        .and_hms_opt(0,0,0).unwrap();
+    let days = u16::to_le_bytes(now.signed_duration_since(ref_date).num_days() as u16);
     let hours = (now.hour() % 100 - now.hour() % 10)*16 + now.hour() % 10;
     let minutes = (now.minute() % 100 - now.minute() % 10)*16 + now.minute() % 10;
     return [days[0],days[1],hours as u8,minutes as u8];
 }
 
 fn unpack_date(cpm_date: [u8;4]) -> chrono::NaiveDateTime {
-    let ref_date = chrono::NaiveDate::from_ymd(1978, 1, 1);
+    let ref_date = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap();
     let now = ref_date + Duration::days(u16::from_le_bytes([cpm_date[0],cpm_date[1]]).into());
     let hours = (cpm_date[2] & 0x0f) + 10*(cpm_date[2] >> 4);
     let minutes = (cpm_date[3] & 0x0f) + 10*(cpm_date[3] >> 4);
-    return now.and_hms(hours.into(), minutes.into(), 0);
+    return now.and_hms_opt(hours.into(), minutes.into(), 0).unwrap();
 }
 
 /// Accepts lower case, case is raised by string_to_file_name

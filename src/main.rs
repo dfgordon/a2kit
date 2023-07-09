@@ -69,55 +69,55 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .version(crate_version!());
     main_cmd = main_cmd.subcommand(Command::new("mkdsk")
         .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
-        .arg(arg!(-t --type <TYPE> "type of disk image to create").value_parser(img_types))
-        .arg(arg!(-o --os <OS> "operating system format").value_parser(os_names))
+        .arg(arg!(-t --type <TYPE> "type of disk image to create").required(true).value_parser(img_types))
+        .arg(arg!(-o --os <OS> "operating system format").required(true).value_parser(os_names))
         .arg(arg!(-b --bootable "make disk bootable").action(ArgAction::SetTrue))
         .arg(arg!(-k --kind <SIZE> "kind of disk").value_parser(disk_kinds)
             .required(false)
             .default_value("5.25in"))
-        .arg(arg!(-d --dimg <PATH> "disk image path to create"))
+        .arg(arg!(-d --dimg <PATH> "disk image path to create").required(true))
         .arg(arg!(-w --wrap <TYPE> "type of disk image to wrap").value_parser(wrap_types)
             .required(false))
         .about("write a blank disk image to the given path"));
     main_cmd = main_cmd.subcommand(Command::new("mkdir")
-        .arg(arg!(-f --file <PATH> "path inside disk image of new directory"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image of new directory").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("create a new directory inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("delete")
-        .arg(arg!(-f --file <PATH> "path inside disk image to delete"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image to delete").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("delete a file or directory inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("lock")
-        .arg(arg!(-f --file <PATH> "path inside disk image to lock"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image to lock").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("write protect a file or directory inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("unlock")
-        .arg(arg!(-f --file <PATH> "path inside disk image to unlock"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image to unlock").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("remove write protection from a file or directory inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("rename")
-        .arg(arg!(-f --file <PATH> "path inside disk image to rename"))
-        .arg(arg!(-n --name <NAME> "new name"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image to rename").required(true))
+        .arg(arg!(-n --name <NAME> "new name").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("rename a file or directory inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("retype")
-        .arg(arg!(-f --file <PATH> "path inside disk image to retype"))
-        .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic"))
-        .arg(arg!(-a --aux <AUX> "file system auxiliary metadata"))
-        .arg(arg!(-d --dimg <PATH> "path to disk image itself"))
+        .arg(arg!(-f --file <PATH> "path inside disk image to retype").required(true))
+        .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic").required(true))
+        .arg(arg!(-a --aux <AUX> "file system auxiliary metadata").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
         .about("change file type inside a disk image"));
     main_cmd = main_cmd.subcommand(Command::new("verify")
-        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt","itxt","mtxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt","itxt","mtxt"]))
         .about("read from stdin and error check"));
     main_cmd = main_cmd.subcommand(Command::new("minify")
-        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt"]))
         .about("reduce program size"));
     main_cmd = main_cmd.subcommand(Command::new("renumber")
-        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt"]))
-        .arg(arg!(-b --beg <NUM> "lowest number to renumber"))
-        .arg(arg!(-e --end <NUM> "highest number to renumber plus 1"))
-        .arg(arg!(-f --first <NUM> "first number"))
-        .arg(arg!(-s --step <NUM> "step between numbers"))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt"]))
+        .arg(arg!(-b --beg <NUM> "lowest number to renumber").required(true))
+        .arg(arg!(-e --end <NUM> "highest number to renumber plus 1").required(true))
+        .arg(arg!(-f --first <NUM> "first number").required(true))
+        .arg(arg!(-s --step <NUM> "step between numbers").required(true))
         .about("renumber BASIC program lines"));
     main_cmd = main_cmd.subcommand(Command::new("get")
         .arg(arg!(-f --file <PATH> "path, key, or address, maybe inside disk image").required(false))
@@ -134,14 +134,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("read from stdin, write to local or disk image"));
     main_cmd = main_cmd.subcommand(Command::new("catalog")
         .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
-        .arg(arg!(-d --dimg <PATH> "path to disk image"))
+        .arg(arg!(-d --dimg <PATH> "path to disk image").required(true))
         .about("write disk image catalog to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
-        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atxt","itxt","mtxt"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt","itxt","mtxt"]))
         .about("read from stdin, tokenize, write to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("detokenize")
-        .arg(arg!(-t --type <TYPE> "type of the file").value_parser(["atok","itok","mtok"]))
+        .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atok","itok","mtok"]))
         .about("read from stdin, detokenize, write to stdout"));
 
     let matches = main_cmd.get_matches();

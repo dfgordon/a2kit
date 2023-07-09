@@ -677,11 +677,12 @@ impl img::DiskImage for Imd {
             meta::test_metadata(key_path, self.what_am_i())?;
             let imd = self.what_am_i().to_string();
             if meta::match_key(key_path,&[&imd,"header"]) {
-                warn!("IMD header will be left untouched");
+                warn!("skipping read-only `header`");
                 return Ok(())
             }
             putString!(val,key_path,imd,self.comment);
-       }
-        Err(Box::new(img::Error::MetaDataMismatch))
+        }
+        error!("unresolved key path {:?}",key_path);
+        Err(Box::new(img::Error::MetadataMismatch))
     }
 }

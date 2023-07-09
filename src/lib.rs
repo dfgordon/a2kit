@@ -39,7 +39,7 @@
 //! * 2MG
 //! * DSK, D13, DO, PO
 //! * IMD
-//! * NIB, NB2
+//! * NIB
 //! * WOZ (1 and 2)
 //! 
 //! ## Disk Kinds
