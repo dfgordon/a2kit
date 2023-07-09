@@ -158,7 +158,7 @@ fn put_get_meta_woz2() -> STDRESULT {
     let output = child.wait_with_output().expect("Failed to read stdout");
     // take string to object and back to get the format consistent
     let expected = json::stringify_pretty(json::parse(WOZ2_EXPECTED).expect("json parsing failed"),4);
-    assert_eq!(&String::from_utf8(output.stdout).unwrap(),&expected);
+    assert_eq!(&String::from_utf8(output.stdout).unwrap().trim_end(),&expected.trim_end());
 
     Ok(())
 }
@@ -199,7 +199,7 @@ fn put_get_meta_woz2_filtered() -> STDRESULT {
     let output = child.wait_with_output().expect("Failed to read stdout");
     // take string to object and back to get the format consistent
     let expected = json::stringify_pretty(json::parse(WOZ2_EXPECTED_FILTERED).expect("json parsing failed"),4);
-    assert_eq!(&String::from_utf8(output.stdout).unwrap(),&expected);
+    assert_eq!(&String::from_utf8(output.stdout).unwrap().trim_end(),&expected.trim_end());
 
     Ok(())
 }
