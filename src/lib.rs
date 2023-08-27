@@ -27,7 +27,7 @@
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
 //! As of this writing `a2kit` supports
-//! * CP/M 1,2, some 3
+//! * CP/M 1,2,3
 //! * DOS 3.x
 //! * ProDOS
 //! * Pascal File System
@@ -40,6 +40,7 @@
 //! * DSK, D13, DO, PO
 //! * IMD
 //! * NIB
+//! * TD0
 //! * WOZ (1 and 2)
 //! 
 //! ## Disk Kinds
@@ -50,7 +51,7 @@
 //! * 3.5 inch Apple formats (400K/800K)
 //! * 5.25 inch Apple formats (114K/140K)
 //! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
-//! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K)
+//! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K, Amstrad 184K)
 
 pub mod fs;
 pub mod lang;
@@ -69,7 +70,7 @@ use hex;
 type DYNERR = Box<dyn std::error::Error>;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
-const KNOWN_FILE_EXTENSIONS: &str = "dsk,d13,do,po,woz,imd";
+const KNOWN_FILE_EXTENSIONS: &str = "2mg,2img,dsk,d13,do,nib,po,woz,imd,td0";
 
 /// Save the image file (make changes permanent)
 pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
@@ -99,15 +100,16 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         bios::dpb::SSSD_525,
         bios::dpb::SSDD_525_OFF1,
         bios::dpb::SSDD_525_OFF3,
+        bios::dpb::SSDD_525_AMSTRAD_184K,
         bios::dpb::DSDD_525_OFF1,
         bios::dpb::TRS80_M2,
         bios::dpb::NABU,
 
     ];
     for dpb in &dpb_list {
-        if fs::cpm::Disk::test_img(&mut img,dpb,[2,2,3]) {
+        if fs::cpm::Disk::test_img(&mut img,dpb,[3,1,0]) {
             info!("identified CP/M file system on {}",dpb);
-            return Some(Box::new(fs::cpm::Disk::from_img(img,dpb.clone(),[2,2,3])));
+            return Some(Box::new(fs::cpm::Disk::from_img(img,dpb.clone(),[3,1,0])));
         }
     }
    return None;
@@ -147,6 +149,14 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
             info!("identified 2mg image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
+        }
+    }
+    if img::td0::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::td0::Td0::from_bytes(disk_img_data) {
+            info!("identified td0 image");
             if let Some(disk) = try_img(Box::new(img)) {
                 return Ok(disk);
             }
@@ -217,6 +227,12 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
             info!("identified 2mg image");
+            return Ok(Box::new(img));
+        }
+    }
+    if img::td0::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::td0::Td0::from_bytes(disk_img_data) {
+            info!("identified td0 image");
             return Ok(Box::new(img));
         }
     }
@@ -462,6 +478,18 @@ impl JsonCursor {
                 return Some((key.to_string(),val));
             }
         }
+    }
+    pub fn parent<'a>(&self,obj: &'a json::JsonValue) -> Option<&'a json::JsonValue> {
+        assert!(self.key.len()+1==self.sibling.len());
+        let depth = self.key.len();
+        if depth==0 {
+            return None;
+        }
+        let mut curr = obj;
+        for i in 0..depth {
+            curr = &curr[&self.key[i]];
+        }
+        Some(curr)
     }
     /// Return key to current leaf as list of strings.
     /// Note this includes the key that is returned with `next`.

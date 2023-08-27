@@ -574,6 +574,11 @@ pub trait DiskFS {
     fn delete(&mut self,path: &str) -> STDRESULT;
     /// Rename a file or directory
     fn rename(&mut self,path: &str,name: &str) -> STDRESULT;
+    /// Change password protection for a file or disk.
+    /// N.b. protection will only work in an emulation environment, and should not be considered secure.
+    fn protect(&mut self,path: &str,password: &str,read: bool,write: bool,delete: bool) -> STDRESULT;
+    /// Remove password protection for a file or disk.
+    fn unprotect(&mut self,path: &str) -> STDRESULT;
     /// write protect a file
     fn lock(&mut self,path: &str) -> STDRESULT;
     // remove write protection from a file

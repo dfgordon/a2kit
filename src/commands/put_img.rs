@@ -70,7 +70,6 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
 
 pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     // presence of arguments should already be resolved
-    // TODO: verify no leaf object has _pretty without _raw
     let maybe_selection = cmd.get_one::<String>("file");
     let img_path = cmd.get_one::<String>("dimg").expect(RCH);
 
@@ -81,7 +80,18 @@ pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
             let mut curs = crate::JsonCursor::new();
             while let Some((key,leaf)) = curs.next(&parsed) {
                 if key=="_pretty" {
-                    debug!("skip R/O `{}`",curs.key_path_string());
+                    match curs.parent(&parsed) {
+                        Some(parent) => {
+                            if !parent.has_key("_raw") {
+                                error!("found _pretty key but no _raw key for {}",parent.to_string());
+                                return Err(Box::new(CommandError::KeyNotFound));
+                            }
+                        },
+                        None => {
+                            error!("found _pretty key without a parent");
+                            return Err(Box::new(CommandError::UnknownFormat));
+                        }
+                    }
                     continue;
                 }
                 if let Some(selection) = maybe_selection {

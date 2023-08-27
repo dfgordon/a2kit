@@ -15,5 +15,7 @@ pub mod dpb;
 #[derive(thiserror::Error,Debug)]
 pub enum Error {
     #[error("incompatible disk kind")]
-    IncompatibleDiskKind
+    IncompatibleDiskKind,
+    #[error("problem accessing sector")]
+    SectorAccess
 }

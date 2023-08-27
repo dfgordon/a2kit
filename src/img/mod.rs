@@ -32,6 +32,10 @@
 //! These functions have to be able to take a `Block` and transform it into whatever disk
 //! addressing the image uses.  The tables in `bios::skew` are accessible to any image.
 
+// TODO: the DiskStruct trait, defined in separate derive_macro crates, should be revised
+// to return a Result, so we can error out instead of panicking if the image is bad.
+// Also revise it to accept slices.
+
 pub mod disk35;
 pub mod disk525;
 pub mod dsk_d13;
@@ -43,6 +47,7 @@ pub mod woz;
 pub mod woz1;
 pub mod woz2;
 pub mod imd;
+pub mod td0;
 pub mod names;
 pub mod meta;
 
@@ -105,6 +110,13 @@ pub enum NibbleCode {
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]
+pub enum DataRate {
+    R250Kbps,
+    R300Kbps,
+    R500Kbps
+}
+
+#[derive(PartialEq,Eq,Clone,Copy)]
 pub struct BlockLayout {
     block_size: usize,
     block_count: usize
@@ -117,7 +129,8 @@ pub struct TrackLayout {
     sectors: [usize;5],
     sector_size: [usize;5],
     flux_code: [FluxCode;5],
-    nib_code: [NibbleCode;5]
+    nib_code: [NibbleCode;5],
+    data_rate: [DataRate;5]
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]
@@ -139,7 +152,8 @@ pub enum DiskImageType {
     WOZ2,
     IMD,
     DOT2MG,
-    NIB
+    NIB,
+    TD0
 }
 
 impl TrackLayout {
@@ -194,7 +208,7 @@ impl fmt::Display for DiskKind {
             names::A2_DOS33_KIND => write!(f,"Apple 5.25 inch 16 sector"),
             names::IBM_CPM1_KIND => write!(f,"IBM 8 inch SSSD"),
             names::OSBORNE1_SD_KIND => write!(f,"IBM 5.25 inch SSSD"),
-            names::OSBORNE1_DD_KIND | names::KAYPROII_KIND => write!(f,"IBM 5.25 inch SSDD"),
+            names::OSBORNE1_DD_KIND | names::KAYPROII_KIND | names::AMSTRAD_184K_KIND => write!(f,"IBM 5.25 inch SSDD"),
             names::KAYPRO4_KIND => write!(f,"IBM 5.25 inch DSDD"),
             names::TRS80_M2_CPM_KIND => write!(f,"IBM 8 inch SSDD"),
             names::NABU_CPM_KIND => write!(f,"IBM 8 inch DSDD"),
@@ -214,6 +228,7 @@ impl FromStr for DiskKind {
             "8in" => Ok(names::IBM_CPM1_KIND),
             "8in-trs80" => Ok(names::TRS80_M2_CPM_KIND),
             "8in-nabu" => Ok(names::NABU_CPM_KIND),
+            "5.25in-amstrad" => Ok(names::AMSTRAD_184K_KIND),
             "5.25in-osb-sd" => Ok(names::OSBORNE1_SD_KIND),
             "5.25in-osb-dd" => Ok(names::OSBORNE1_DD_KIND),
             "5.25in-kayii" => Ok(names::KAYPROII_KIND),
@@ -241,6 +256,7 @@ impl FromStr for DiskImageType {
             "2mg" => Ok(Self::DOT2MG),
             "2img" => Ok(Self::DOT2MG),
             "nib" => Ok(Self::NIB),
+            "td0" => Ok(Self::TD0),
             _ => Err(Error::UnknownImageType)
         }
     }
@@ -256,7 +272,8 @@ impl fmt::Display for DiskImageType {
             Self::WOZ2 => write!(f,"woz2"),
             Self::IMD => write!(f,"imd"),
             Self::DOT2MG => write!(f,"2mg"),
-            Self::NIB => write!(f,"nib")
+            Self::NIB => write!(f,"nib"),
+            Self::TD0 => write!(f,"td0")
         }
     }
 }

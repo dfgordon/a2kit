@@ -63,6 +63,24 @@ fn write_small() {
 }
 
 #[test]
+fn write_small_timestamps() {
+    // Formatting: INITDIR.COM, writing: ED.COM, emulator: AppleWin
+    // This tests a small CP/M text file with timestamping, and therefore the disk label also.
+    let time = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap()
+        .and_hms_opt(0,43,0).unwrap();
+    let img = dsk_do::DO::create(35, 16);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[3,1,0]);
+    disk.format("",Some(time)).expect("failed to format disk");
+
+    // save the text
+    let txt_data = disk.encode_text(ED_TEST).expect("could not encode text");
+    disk.write_text("POLARIS.TXT",&txt_data).expect("write error");
+
+    let ignore = disk.standardize(0);
+    disk.compare(&Path::new("tests").join("cpm-timestamps.dsk"),&ignore);
+}
+
+#[test]
 fn out_of_space() {
     let img = a2kit::img::dsk_do::DO::create(35,16);
     let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);

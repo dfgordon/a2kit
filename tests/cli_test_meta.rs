@@ -6,6 +6,8 @@ use tempfile;
 use json;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
+const PK_VERS: &str = env!("CARGO_PKG_VERSION");
+
 const WOZ2_PUT_ITEMS: &str = "
 {
     \"woz2\": {
@@ -157,7 +159,8 @@ fn put_get_meta_woz2() -> STDRESULT {
         .expect("failed to spawn child process");    
     let output = child.wait_with_output().expect("Failed to read stdout");
     // take string to object and back to get the format consistent
-    let expected = json::stringify_pretty(json::parse(WOZ2_EXPECTED).expect("json parsing failed"),4);
+    let woz2_exp = WOZ2_EXPECTED.replace("2.2.0",PK_VERS);
+    let expected = json::stringify_pretty(json::parse(&woz2_exp).expect("json parsing failed"),4);
     assert_eq!(&String::from_utf8(output.stdout).unwrap().trim_end(),&expected.trim_end());
 
     Ok(())
@@ -198,7 +201,8 @@ fn put_get_meta_woz2_filtered() -> STDRESULT {
         .expect("failed to spawn child process");    
     let output = child.wait_with_output().expect("Failed to read stdout");
     // take string to object and back to get the format consistent
-    let expected = json::stringify_pretty(json::parse(WOZ2_EXPECTED_FILTERED).expect("json parsing failed"),4);
+    let woz2_exp = WOZ2_EXPECTED_FILTERED.replace("2.2.0",PK_VERS);
+    let expected = json::stringify_pretty(json::parse(&woz2_exp).expect("json parsing failed"),4);
     assert_eq!(&String::from_utf8(output.stdout).unwrap().trim_end(),&expected.trim_end());
 
     Ok(())

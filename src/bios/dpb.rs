@@ -55,11 +55,11 @@ pub const A2_525: DiskParameterBlock = DiskParameterBlock {
     bsh: 3,
     blm: 7,
     exm: 0,
-    dsm: 127,
-    drm: 63,
+    dsm: 127,// some have this as 139 (erroneously?)
+    drm: 47,// why is this not 63?  the last sector seems unused.
     al0: 0b11000000,
     al1: 0b00000000,
-    cks: 0x8000,
+    cks: 12,//0x8000,
     off: 3,
     psh: 0,
     phm: 0,
@@ -154,6 +154,24 @@ pub const DSDD_525_OFF1: DiskParameterBlock = DiskParameterBlock {
     reserved_track_capacity: 40*128
 };
 
+// This covers Amstrad PCW9512 and maybe PCW8256 (at least 1 image has extra cylinder with 8 sectors)
+// There is a "superblock" at track 0 sector 0 [40 cyl, 9 secs, sector shift 2, off 1, bsh 3, dir blocks 2]
+pub const SSDD_525_AMSTRAD_184K: DiskParameterBlock = DiskParameterBlock {
+    spt: 36,
+    bsh: 3,
+    blm: 7,
+    exm: 0,
+    dsm: 174,
+    drm: 63,
+    al0: 0b11000000,
+    al1: 0b00000000,
+    cks: 16,
+    off: 1,
+    psh: 0,
+    phm: 0,
+    reserved_track_capacity: 36*128
+};
+
 pub const TRS80_M2: DiskParameterBlock = DiskParameterBlock {
     spt: 64,
     bsh: 4,
@@ -195,6 +213,7 @@ impl DiskParameterBlock {
             crate::img::names::OSBORNE1_DD_KIND => SSDD_525_OFF3,
             crate::img::names::KAYPROII_KIND => SSDD_525_OFF1,
             crate::img::names::KAYPRO4_KIND => DSDD_525_OFF1,
+            crate::img::names::AMSTRAD_184K_KIND => SSDD_525_AMSTRAD_184K,
             crate::img::names::TRS80_M2_CPM_KIND => TRS80_M2,
             crate::img::names::NABU_CPM_KIND => NABU,
             _ => panic!("Disk kind not supported")
@@ -282,9 +301,14 @@ impl DiskParameterBlock {
     pub fn dir_entries(&self) -> usize {
         self.drm as usize + 1
     }
-    /// number of directory blocks (n.b. reserved blocks may follow)
+    /// Number of directory blocks rounded up. Full block is not always used. Reserved blocks may follow.
+    /// This assumes the directory blocks mapped in contiguous fashion.
     pub fn dir_blocks(&self) -> usize {
-        self.dir_entries()*DIR_ENTRY_SIZE/self.block_size()
+        let full_blocks = self.dir_entries()*DIR_ENTRY_SIZE/self.block_size();
+        match (self.dir_entries() * DIR_ENTRY_SIZE) % self.block_size() {
+            0 => full_blocks,
+            _ => 1 + full_blocks
+        }
     }
     /// how many blocks in the user area are reserved
     pub fn reserved_blocks(&self) -> usize {
@@ -329,6 +353,7 @@ impl fmt::Display for DiskParameterBlock {
             SSDD_525_OFF1 => write!(f,"IBM 5.25 inch SSDD"),
             SSDD_525_OFF3 => write!(f,"IBM 5.25 inch SSDD"),
             DSDD_525_OFF1 => write!(f,"IBM 5.25 inch DSSD"),
+            SSDD_525_AMSTRAD_184K => write!(f,"IBM 5.25 inch SSDD"),
             TRS80_M2 => write!(f,"IBM 8 inch SSDD"),
             NABU => write!(f,"IBM 8 inch DSDD"),
             _ => write!(f,"unknown disk")

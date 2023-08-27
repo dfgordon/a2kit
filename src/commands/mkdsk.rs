@@ -1,6 +1,6 @@
 use clap;
 use std::str::FromStr;
-use log::{error,info};
+use log::{error,warn,info};
 use crate::bios::dpb;
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal};
 use crate::img;
@@ -60,6 +60,15 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::IMD,names::KAYPRO4_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::IMD,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::IMD,names::NABU_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::IMD,names::AMSTRAD_184K_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::TD0,names::IBM_CPM1_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::OSBORNE1_SD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::OSBORNE1_DD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::KAYPROII_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::KAYPRO4_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::NABU_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::AMSTRAD_184K_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         _ => {
             error!("pairing of image type and disk kind is not supported");
             Err(Box::new(CommandError::UnsupportedItemType))
@@ -153,17 +162,25 @@ fn mkpascal(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<V
     }
 }
 
-fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>,vers: u8) -> Result<Vec<u8>,DYNERR> {
     if boot {
         error!("{}",BOOT_MESS_CPM);
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
-    let mut disk = Box::new(cpm::Disk::from_img(img,dpb::DiskParameterBlock::create(&kind),[2,2,3]));
-    let vol_name = match vol {
-        Some(nm) => nm,
-        None => "A"
+    if vers<3 && vol.is_some() {
+        warn!("volume name inapplicable for CP/M version < 3");
+    }
+    let (vol_name,time,cpm_vers) = match vers {
+        3 => match vol {
+            // notice timestamps are always created
+            Some(nm) => (nm.as_str(),Some(chrono::Local::now().naive_local()),[3,1,0]),
+            None => ("",Some(chrono::Local::now().naive_local()),[3,1,0])
+        },
+        2 => ("",None,[2,2,3]),
+        _ => panic!("unexpected CP/M version")
     };
-    match disk.format(vol_name,None) {
+    let mut disk = Box::new(cpm::Disk::from_img(img,dpb::DiskParameterBlock::create(&kind),cpm_vers));
+    match disk.format(vol_name,time) {
         Ok(()) => Ok(disk.get_img().to_bytes()),
         Err(e) => return Err(e)
     }
@@ -172,7 +189,7 @@ fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>
 pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     let dest_path= cmd.get_one::<String>("dimg").expect(RCH);
     let which_fs = cmd.get_one::<String>("os").expect(RCH);
-    if !["cpm2","dos32","dos33","prodos","pascal"].contains(&which_fs.as_str()) {
+    if !["cpm2","cpm3","dos32","dos33","prodos","pascal"].contains(&which_fs.as_str()) {
         return Err(Box::new(CommandError::UnknownItemType));
     }
     // First make sure destination is OK
@@ -228,7 +245,8 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
                 return Err(Box::new(CommandError::InvalidCommand));
             }
             let result = match which_fs.as_str() {
-                "cpm2" => mkcpm(maybe_vol,boot,&kind,img),
+                "cpm2" => mkcpm(maybe_vol,boot,&kind,img,2),
+                "cpm3" => mkcpm(maybe_vol,boot,&kind,img,3),
                 "dos32" => mkdos3x(maybe_vol,boot,img),
                 "dos33" => mkdos3x(maybe_vol,boot,img),
                 "prodos" => mkprodos(maybe_vol,boot,img),

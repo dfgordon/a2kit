@@ -769,6 +769,14 @@ impl super::DiskFS for Disk {
         error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
+    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
+        error!("DOS does not support operation");
+        Err(Box::new(Error::IOError))
+    }
+    fn unprotect(&mut self,_path: &str) -> STDRESULT {
+        error!("DOS does not support operation");
+        Err(Box::new(Error::IOError))
+    }
     fn lock(&mut self,name: &str) -> STDRESULT {
         return self.modify(name,Some(true),None,None);
     }

@@ -38,12 +38,9 @@ fn invalid_file_type() -> STDRESULT {
 fn catalog_cpm() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
-r#"A>USER 0
-A>DIR
-
+r#"
 A: POLARIS  BAK : POLARIS  TXT
 
-found 1 user
 "#;
     cmd.arg("catalog")
         .arg("-d").arg(Path::new("tests").join("cpm-smallfiles.dsk"))

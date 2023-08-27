@@ -42,14 +42,15 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
                            | a2kit put -f prog -t atok -d myimg.dsk`
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
-    let img_types = ["d13","do","po","woz1","woz2","imd","2mg","nib"];
+    let img_types = ["d13","do","po","woz1","woz2","imd","2mg","nib","td0"];
     let wrap_types = ["do","po","nib"];
-    let os_names = ["cpm2","dos32","dos33","prodos","pascal"];
+    let os_names = ["cpm2","cpm3","dos32","dos33","prodos","pascal"];
     let disk_kinds = [
         "8in",
         "8in-trs80",
         "8in-nabu",
         "5.25in",
+        "5.25in-amstrad",
         "5.25in-kayii",
         "5.25in-kay4",
         "5.25in-osb-sd",
@@ -86,7 +87,21 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(Command::new("delete")
         .arg(arg!(-f --file <PATH> "path inside disk image to delete").required(true))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
+        .visible_alias("del")
+        .visible_alias("era")
         .about("delete a file or directory inside a disk image"));
+    main_cmd = main_cmd.subcommand(Command::new("protect")
+        .arg(arg!(-f --file <PATH> "path inside disk image to protect").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
+        .arg(arg!(-p --password <PASSWORD> "password to assign").required(true))
+        .arg(arg!(--read "protect read").action(ArgAction::SetTrue))
+        .arg(arg!(--write "protect read").action(ArgAction::SetTrue))
+        .arg(arg!(--delete "protect read").action(ArgAction::SetTrue))
+        .about("password protect a disk or file"));
+    main_cmd = main_cmd.subcommand(Command::new("unprotect")
+        .arg(arg!(-f --file <PATH> "path inside disk image to unprotect").required(true))
+        .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
+        .about("remove password protection from a disk or file"));
     main_cmd = main_cmd.subcommand(Command::new("lock")
         .arg(arg!(-f --file <PATH> "path inside disk image to lock").required(true))
         .arg(arg!(-d --dimg <PATH> "path to disk image itself").required(true))
@@ -135,13 +150,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(Command::new("catalog")
         .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(true))
+        .visible_alias("cat")
+        .visible_alias("dir")
+        .visible_alias("ls")
         .about("write disk image catalog to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
         .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt","itxt","mtxt"]))
+        .visible_alias("tok")
         .about("read from stdin, tokenize, write to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("detokenize")
         .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atok","itok","mtok"]))
+        .visible_alias("dtok")
         .about("read from stdin, detokenize, write to stdout"));
 
     let matches = main_cmd.get_matches();
@@ -393,6 +413,36 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         }
     }
 
+    // Update password for a file
+    if let Some(cmd) = matches.subcommand_matches("protect") {
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
+        let password = cmd.get_one::<String>("password").expect(RCH);
+        let read = cmd.get_flag("read");
+        let write = cmd.get_flag("write");
+        let delete = cmd.get_flag("delete");
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.protect(path_in_img,password,read,write,delete) {
+                Ok(()) => a2kit::save_img(&mut disk,path_to_img),
+                Err(e) => Err(e)
+            },
+            Err(e) => Err(e)
+        };
+    }
+
+    // Remove password from a file
+    if let Some(cmd) = matches.subcommand_matches("unprotect") {
+        let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
+        let path_in_img = cmd.get_one::<String>("file").expect(RCH);
+        return match a2kit::create_fs_from_file(&path_to_img) {
+            Ok(mut disk) => match disk.unprotect(path_in_img) {
+                Ok(()) => a2kit::save_img(&mut disk,path_to_img),
+                Err(e) => Err(e)
+            },
+            Err(e) => Err(e)
+        };
+    }
+    
     // Delete a file or directory
     if let Some(cmd) = matches.subcommand_matches("delete") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);

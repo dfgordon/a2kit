@@ -5,6 +5,10 @@ use super::super::TextEncoder;
 
 /// Status byte for a deleted file, also fill value for unused blocks.
 pub const DELETED: u8 = 0xe5;
+/// Status byte for a label
+pub const LABEL: u8 = 0x20;
+/// Status byte for a timestamp
+pub const TIMESTAMP: u8 = 0x21;
 /// Largest possible user number plus one
 pub const USER_END: u8 = 0x10;
 /// Unit of data transfer in bytes as seen by the CP/M BDOS.
@@ -59,7 +63,8 @@ pub enum ExtentType {
 
 /// Pointers to the various levels of CP/M disk structures.
 /// This is supposed to help us distinguish "extent as directory entry" from "extent as data."
-#[derive(PartialEq,Copy,Clone)]
+/// We should probably abolish all conflating of "extent" with "entry" (TODO).
+#[derive(PartialEq,Eq,Copy,Clone)]
 pub enum Ptr {
     /// Index to the extent's metadata, ordering its appearance in the directory
     ExtentEntry(usize),
@@ -77,6 +82,30 @@ impl Ptr {
             Self::ExtentData(i) => *i,
             Self::ExtentEntry(i) => *i
         }
+    }
+}
+
+impl PartialOrd for Ptr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.unwrap().partial_cmp(&other.unwrap())
+    }
+    fn ge(&self, other: &Self) -> bool {
+        self.unwrap().ge(&other.unwrap())
+    }
+    fn gt(&self, other: &Self) -> bool {
+        self.unwrap().gt(&other.unwrap())
+    }
+    fn le(&self, other: &Self) -> bool {
+        self.unwrap().le(&other.unwrap())
+    }
+    fn lt(&self, other: &Self) -> bool {
+        self.unwrap().lt(&other.unwrap())
+    }
+}
+
+impl Ord for Ptr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.unwrap().cmp(&other.unwrap())
     }
 }
 

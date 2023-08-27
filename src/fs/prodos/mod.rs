@@ -969,6 +969,14 @@ impl super::DiskFS for Disk {
         }
         return Err(Box::new(Error::PathNotFound));
     }
+    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
+        error!("ProDOS does not support operation");
+        Err(Box::new(Error::IOError))
+    }
+    fn unprotect(&mut self,_path: &str) -> STDRESULT {
+        error!("ProDOS does not support operation");
+        Err(Box::new(Error::IOError))
+    }
     fn lock(&mut self,path: &str) -> STDRESULT {
         match self.find_file(path) {
             Ok(loc) => {

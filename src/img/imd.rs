@@ -63,38 +63,12 @@ pub fn is_slice_uniform(slice: &[u8]) -> bool {
     true
 }
 
-/// Take a logical track-sector list and produce a hybrid cylinder-head-sector list.
-/// Hybrid means the sector order is logical while the size is physical.
-/// Remember CP/M logical sectors are numbered from 1.
-/// This assumes the mapping track = cyl*heads + head.
+#[deprecated="use equivalent function in bios::skew"]
 pub fn cpm_blocking(ts_list: Vec<[usize;2]>,sec_shift: u8,heads: usize) -> Result<Vec<[usize;3]>,img::Error> {
-    trace!("ts list {:?} (logical deblocked)",ts_list);
-    if (ts_list.len() % (1 << sec_shift) != 0) || ((ts_list[0][1]-1) % (1 << sec_shift) != 0) {
-        info!("CP/M blocking was misaligned, start {}, length {}",ts_list[0][1],ts_list.len());
-        return Err(img::Error::SectorAccess);
+    match skew::cpm_blocking(ts_list, sec_shift, heads) {
+        Ok(ans) => Ok(ans),
+        Err(_) => Err(img::Error::SectorAccess)
     }
-    if heads<1 {
-        error!("CP/M blocking was passed 0 heads");
-        return Err(img::Error::SectorAccess);
-    }
-    let mut ans: Vec<[usize;3]> = Vec::new();
-    let mut track = 0;
-    for i in 0..ts_list.len() {
-        let lsec = ts_list[i][1];
-        if (lsec-1)%(1<<sec_shift) == 0 {
-            track = ts_list[i][0];
-        }
-        if lsec%(1<<sec_shift) == 0 {
-            let cyl = track/heads;
-            let head = match heads { 1 => 0, _ => track%heads };
-            ans.push([cyl,head,1+(lsec-1)/(1<<sec_shift)]);
-        } else if ts_list[i][0]!=track {
-            info!("CP/M blocking failed, sector crossed track {}",track);
-            return Err(img::Error::SectorAccess);
-        }
-    }
-    trace!("ts list {:?} (logical blocked)",ans);
-    return Ok(ans);
 }
 
 pub struct Track {
@@ -128,25 +102,19 @@ pub struct Imd {
 
 impl Track {
     fn create(track_num: usize, layout: &super::TrackLayout) -> Self {
-        let mode = match *layout {
-            super::names::CPM_1 => Mode::Fm500Kbps as u8,
-            super::names::KAYPROII => Mode::Fm250Kbps as u8,
-            super::names::KAYPRO4 => Mode::Mfm250Kbps as u8,
-            super::names::OSBORNE1_SD => Mode::Fm250Kbps as u8,
-            super::names::OSBORNE1_DD => Mode::Mfm250Kbps as u8,
-            super::names::TRS80_M2_CPM => match track_num {
-                0 => Mode::Fm500Kbps as u8,
-                _ => Mode::Mfm500Kbps as u8
-            },
-            super::names::NABU_CPM => match track_num {
-                0 => Mode::Fm500Kbps as u8,
-                1 => Mode::Fm500Kbps as u8,
-                _ => Mode::Mfm500Kbps as u8
-            },
-            _ => panic!("unhandled track layout")
+        let zone = layout.zone(track_num);
+        let mode = match (layout.flux_code[zone],layout.data_rate[zone]) {
+            (super::FluxCode::FM,super::DataRate::R250Kbps) => Mode::Fm250Kbps,
+            (super::FluxCode::FM,super::DataRate::R300Kbps) => Mode::Fm300Kbps,
+            (super::FluxCode::FM,super::DataRate::R500Kbps) => Mode::Fm500Kbps,
+            (super::FluxCode::MFM,super::DataRate::R250Kbps) => Mode::Mfm250Kbps,
+            (super::FluxCode::MFM,super::DataRate::R300Kbps) => Mode::Mfm300Kbps,
+            (super::FluxCode::MFM,super::DataRate::R500Kbps) => Mode::Mfm500Kbps,
+            _ => panic!("unhandled track mode")
         };
         let sector_map: Vec<u8> = match *layout {
             super::names::CPM_1 => (1..27).collect(),
+            super::names::AMSTRAD_184K => (1..10).collect(),
             super::names::KAYPROII => (0..10).collect(),
             super::names::KAYPRO4 => match track_num%2 {
                 0 => (0..10).collect(),
@@ -188,7 +156,7 @@ impl Track {
             head += 0x40;
         }
         Self {
-            mode,
+            mode: mode as u8,
             cylinder: (track_num / layout.sides[zone]) as u8,
             head,
             sectors: layout.sectors[zone] as u8,
@@ -421,6 +389,7 @@ impl Imd {
     fn get_skew(&self,head: usize) -> Result<Vec<u8>,DYNERR> {
         match (self.kind,head) {
             (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
+            (super::names::AMSTRAD_184K_KIND,_) => Ok((1..10).collect()),
             (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
             (super::names::OSBORNE1_DD_KIND,_) => Ok(vec![1,2,3,4,5]),
             (super::names::KAYPROII_KIND,_) => Ok((0..10).collect()),
@@ -468,7 +437,7 @@ impl img::DiskImage for Imd {
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let mut ans: Vec<u8> = Vec::new();
                 let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
-                let chs_list = cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
+                let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 for [cyl,head,lsec] in chs_list {
                     self.check_user_area_up_to_cyl(cyl, off)?;
                     let skew_table = self.get_skew(head)?;
@@ -491,7 +460,7 @@ impl img::DiskImage for Imd {
                 let sectors = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
-                let chs_list = cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
+                let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 let mut src_offset = 0;
                 let psec_size = SECTOR_SIZE_BASE << sector_shift;
                 let padded = super::quantize_block(dat, chs_list.len()*psec_size);
@@ -605,6 +574,7 @@ impl img::DiskImage for Imd {
             ans.kind = match (ans.byte_capacity(),ans.tracks[0].sectors) {
                 (256256,26) => img::names::IBM_CPM1_KIND,
                 (102400,10) => img::names::OSBORNE1_SD_KIND,
+                (184320,9) => img::names::AMSTRAD_184K_KIND,
                 (204800,5) => img::names::OSBORNE1_DD_KIND,
                 (204800,10) => img::names::KAYPROII_KIND,
                 (409600,10) => img::names::KAYPRO4_KIND,
@@ -662,7 +632,6 @@ impl img::DiskImage for Imd {
     fn get_metadata(&self,indent: u16) -> String {
         let imd = self.what_am_i().to_string();
         let mut root = json::JsonValue::new_object();
-        root[&imd] = json::JsonValue::new_object();
         root[&imd] = json::JsonValue::new_object();
         root[&imd]["header"] = json::JsonValue::String(String::from_utf8_lossy(&self.header).into());
         root[&imd]["comment"] = json::JsonValue::String(self.comment.clone());

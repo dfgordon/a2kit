@@ -6,7 +6,7 @@
 //! The sector skews are kept separate from file systems and disk images because multiple
 //! submodules of either can use the same tables.
 
-use log::{trace,error};
+use log::{trace,info,error};
 use crate::img::disk35;
 use crate::img::{names,DiskKind};
 use crate::DYNERR;
@@ -109,4 +109,38 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2
             Err(Box::new(super::Error::IncompatibleDiskKind))
         }
     }
+}
+
+/// Take a logical track-sector list and produce a hybrid cylinder-head-sector list.
+/// Hybrid means the sector order is logical while the size is physical.
+/// Remember CP/M logical sectors are numbered from 1.
+/// This assumes the mapping track = cyl*heads + head.
+pub fn cpm_blocking(ts_list: Vec<[usize;2]>,sec_shift: u8,heads: usize) -> Result<Vec<[usize;3]>,super::Error> {
+    trace!("ts list {:?} (logical deblocked)",ts_list);
+    if (ts_list.len() % (1 << sec_shift) != 0) || ((ts_list[0][1]-1) % (1 << sec_shift) != 0) {
+        info!("CP/M blocking was misaligned, start {}, length {}",ts_list[0][1],ts_list.len());
+        return Err(super::Error::SectorAccess);
+    }
+    if heads<1 {
+        error!("CP/M blocking was passed 0 heads");
+        return Err(super::Error::SectorAccess);
+    }
+    let mut ans: Vec<[usize;3]> = Vec::new();
+    let mut track = 0;
+    for i in 0..ts_list.len() {
+        let lsec = ts_list[i][1];
+        if (lsec-1)%(1<<sec_shift) == 0 {
+            track = ts_list[i][0];
+        }
+        if lsec%(1<<sec_shift) == 0 {
+            let cyl = track/heads;
+            let head = match heads { 1 => 0, _ => track%heads };
+            ans.push([cyl,head,1+(lsec-1)/(1<<sec_shift)]);
+        } else if ts_list[i][0]!=track {
+            info!("CP/M blocking failed, sector crossed track {}",track);
+            return Err(super::Error::SectorAccess);
+        }
+    }
+    trace!("ts list {:?} (logical blocked)",ans);
+    return Ok(ans);
 }

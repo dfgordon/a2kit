@@ -21,9 +21,6 @@ pub fn file_extensions() -> Vec<String> {
 }
 
 /// Wrapper for DO data.
-/// Although this is DOS 3.3 ordered, we allow an extended (and abstract) mapping
-/// from ProDOS blocks to 16 bit track indices.  As a result even a 32MB
-/// ProDOS volume can be mapped into DOS 3.3 ordering.
 pub struct DO {
     kind: img::DiskKind,
     tracks: u16,

@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -13,6 +13,7 @@ homepage = "https://github.com/dfgordon/a2kit"
 
 [dependencies]
 log = "0.4.17"
+bit-vec = "0.6.3"
 env_logger = "0.9.1"
 hex = "0.4.3"
 tree-sitter = "0.20.8"
@@ -33,3 +34,4 @@ num-traits = "0.2.14"
 num-derive = "0.3.3"
 a2kit_macro = "0.1.0"
 a2kit_macro_derive = "0.1.0"
+retrocompressor = "0.1.0"

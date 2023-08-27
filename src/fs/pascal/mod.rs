@@ -496,7 +496,7 @@ impl Disk
             return Err(Box::new(Error::BadFormat));
         }
         if let (Some(idx),mut dir) = self.get_file_entry(name)? {
-            let mut entry = &mut dir.entries[idx];
+            let entry = &mut dir.entries[idx];
             if let Some(new_name) = maybe_new_name {
                 if !is_name_valid(new_name,false) {
                     return Err(Box::new(Error::BadFormat));
@@ -576,6 +576,14 @@ impl super::DiskFS for Disk {
         } else {
             return Err(Box::new(Error::NoFile));
         }
+    }
+    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
+        error!("pascal does not support operation");
+        Err(Box::new(Error::DevErr))
+    }
+    fn unprotect(&mut self,_path: &str) -> STDRESULT {
+        error!("pascal does not support operation");
+        Err(Box::new(Error::DevErr))
     }
     fn lock(&mut self,_name: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");
