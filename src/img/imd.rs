@@ -114,7 +114,7 @@ impl Track {
         };
         let sector_map: Vec<u8> = match *layout {
             super::names::CPM_1 => (1..27).collect(),
-            super::names::AMSTRAD_184K => (1..10).collect(),
+            super::names::AMSTRAD_SS => (1..10).collect(),
             super::names::KAYPROII => (0..10).collect(),
             super::names::KAYPRO4 => match track_num%2 {
                 0 => (0..10).collect(),
@@ -344,7 +344,9 @@ impl Imd {
         let creator_str = "a2kit v".to_string() + env!("CARGO_PKG_VERSION");
         debug!("header {}",header);
         let (heads,tracks) = match kind {
-            img::DiskKind::D525(layout) | img::DiskKind::D8(layout) => {
+            img::DiskKind::D3(layout) |
+            img::DiskKind::D525(layout) |
+            img::DiskKind::D8(layout) => {
                 let mut ans: Vec<Track> = Vec::new();
                 for track in 0..layout.track_count() {
                     ans.push(Track::create(track,&layout));
@@ -389,7 +391,7 @@ impl Imd {
     fn get_skew(&self,head: usize) -> Result<Vec<u8>,DYNERR> {
         match (self.kind,head) {
             (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
-            (super::names::AMSTRAD_184K_KIND,_) => Ok((1..10).collect()),
+            (super::names::AMSTRAD_SS_KIND,_) => Ok((1..10).collect()),
             (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
             (super::names::OSBORNE1_DD_KIND,_) => Ok(vec![1,2,3,4,5]),
             (super::names::KAYPROII_KIND,_) => Ok((0..10).collect()),
@@ -574,7 +576,7 @@ impl img::DiskImage for Imd {
             ans.kind = match (ans.byte_capacity(),ans.tracks[0].sectors) {
                 (256256,26) => img::names::IBM_CPM1_KIND,
                 (102400,10) => img::names::OSBORNE1_SD_KIND,
-                (184320,9) => img::names::AMSTRAD_184K_KIND,
+                (184320,9) => img::names::AMSTRAD_SS_KIND,
                 (204800,5) => img::names::OSBORNE1_DD_KIND,
                 (204800,10) => img::names::KAYPROII_KIND,
                 (409600,10) => img::names::KAYPRO4_KIND,

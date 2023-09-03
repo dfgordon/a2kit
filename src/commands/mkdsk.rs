@@ -60,7 +60,7 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::IMD,names::KAYPRO4_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::IMD,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::IMD,names::NABU_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::AMSTRAD_184K_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::IMD,names::AMSTRAD_SS_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::TD0,names::IBM_CPM1_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         (DiskImageType::TD0,names::OSBORNE1_SD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         (DiskImageType::TD0,names::OSBORNE1_DD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
@@ -68,7 +68,7 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::TD0,names::KAYPRO4_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         (DiskImageType::TD0,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         (DiskImageType::TD0,names::NABU_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::AMSTRAD_184K_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::TD0,names::AMSTRAD_SS_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
         _ => {
             error!("pairing of image type and disk kind is not supported");
             Err(Box::new(CommandError::UnsupportedItemType))

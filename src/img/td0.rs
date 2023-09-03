@@ -213,15 +213,18 @@ impl CommentHeader {
         }
         [(year-1900) as u8,month,day,now.hour() as u8,now.minute() as u8,now.second()as u8]
     }
-    fn unpack_timestamp(&self) -> chrono::NaiveDateTime {
-        let ans = chrono::NaiveDate::from_ymd_opt(1900+self.timestamp[0] as i32,
-             self.timestamp[1] as u32, self.timestamp[2] as u32).
-             expect("invalid date while unpacking timestamp").
-             and_hms_opt(self.timestamp[3] as u32,self.timestamp[4] as u32,self.timestamp[5] as u32);
-        ans.unwrap()
+    fn unpack_timestamp(&self) -> Option<chrono::NaiveDateTime> {
+        match chrono::NaiveDate::from_ymd_opt(1900+self.timestamp[0] as i32,
+            self.timestamp[1] as u32, self.timestamp[2] as u32) {
+            Some(d) => d.and_hms_opt(self.timestamp[3] as u32,self.timestamp[4] as u32,self.timestamp[5] as u32),
+            None => None
+        }
     }
     fn pretty_timestamp(&self) -> String {
-        self.unpack_timestamp().format("%Y-%m-%d %H:%M:%S").to_string()
+        match self.unpack_timestamp() {
+            Some(ts) => ts.format("%Y-%m-%d %H:%M:%S").to_string(),
+            None => String::from("could not unpack")
+        }
     }
 }
 
@@ -291,7 +294,7 @@ impl Sector {
         let mut ptr: usize = 0;
         let sector_size: usize = SECTOR_SIZE_BASE << self.header.sector_shift;
         if self.header.flags & NO_DATA_MASK > 0 {
-            error!("sector {} is marked as having no data",self.header.id);
+            debug!("cyl {} sec {} has no data",self.header.cylinder,self.header.id);
             return Err(Box::new(super::Error::SectorAccess))
         }
         let end = verified_get_slice!(self.data,ptr,2,&loc).to_vec();
@@ -344,7 +347,7 @@ impl Sector {
                 return Err(Box::new(super::Error::SectorAccess));
             }
         }
-        debug!("unknown sector encoding {} in sector {}",encoding_code,self.header.id);
+        debug!("unknown encoding {} in cyl {} sec {}",encoding_code,self.header.cylinder,self.header.id);
         Err(Box::new(super::Error::SectorAccess))
     }
 }
@@ -355,7 +358,7 @@ impl Track {
         let head = (track_num % layout.sides[zone]) as u8;
         let sector_map: Vec<u8> = match *layout {
             super::names::CPM_1 => (1..27).collect(),
-            super::names::AMSTRAD_184K => (1..10).collect(),
+            super::names::AMSTRAD_SS => (1..10).collect(),
             super::names::KAYPROII => (0..10).collect(),
             super::names::KAYPRO4 => match track_num%2 {
                 0 => (0..10).collect(),
@@ -484,6 +487,7 @@ impl Td0 {
     pub fn create(kind: img::DiskKind) -> Self {
         let comment_string = "created by a2kit v".to_string() + env!("CARGO_PKG_VERSION");
         let layout = match kind {
+            img::DiskKind::D3(layout) => layout,
             img::DiskKind::D525(layout) => layout,
             img::DiskKind::D8(layout) => layout,
             _ => panic!("cannot create this kind of disk in TD0 format")
@@ -504,6 +508,8 @@ impl Td0 {
             }
         };
         let drive_type = match kind {
+            img::DiskKind::D3(_) => 3,
+            img::DiskKind::D35(_) => 4,
             img::DiskKind::D525(_) => 1,
             img::DiskKind::D8(_) => 5,
             _ => panic!("cannot create this kind of disk in TD0 format")
@@ -519,7 +525,7 @@ impl Td0 {
                 signature: [b'T',b'D'],
                 sequence: 0,
                 check_sequence: 0,
-                version: 2*16+23,
+                version: 1*16+5,
                 data_rate: encoded_rate,
                 drive_type,
                 stepping: 0x80,
@@ -579,7 +585,7 @@ impl Td0 {
     fn get_skew(&self,head: usize) -> Result<Vec<u8>,DYNERR> {
         match (self.kind,head) {
             (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
-            (super::names::AMSTRAD_184K_KIND,_) => Ok((1..10).collect()),
+            (super::names::AMSTRAD_SS_KIND,_) => Ok((1..10).collect()),
             (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
             (super::names::OSBORNE1_DD_KIND,_) => Ok(vec![1,2,3,4,5]),
             (super::names::KAYPROII_KIND,_) => Ok((0..10).collect()),
@@ -755,10 +761,10 @@ impl img::DiskImage for Td0 {
         while expanded[ptr]!=0xff {
             let header = TrackHeader::from_bytes(&optional_get_slice!(expanded,ptr,4,"track header").to_vec());
             // CRC of track header
+            // We will not stop for bad track CRC, but do warn
             let expected_track_crc = crc16(0,&header.to_bytes()[0..3]);
             if header.crc != (expected_track_crc & 0xff) as u8{
                 warn!("track header CRC mismatch at cyl {} head {}",header.cylinder,header.head);
-                return None;
             }
             let mut trk = Track {
                 header,
@@ -803,7 +809,7 @@ impl img::DiskImage for Td0 {
         ans.kind = match (ans.byte_capacity(),ans.tracks[0].header.sectors) {
             (256256,26) => img::names::IBM_CPM1_KIND,
             (102400,10) => img::names::OSBORNE1_SD_KIND,
-            (184320,9) => img::names::AMSTRAD_184K_KIND,
+            (184320,9) => img::names::AMSTRAD_SS_KIND,
             (204800,5) => img::names::OSBORNE1_DD_KIND,
             (204800,10) => img::names::KAYPROII_KIND,
             (409600,10) => img::names::KAYPRO4_KIND,
@@ -835,6 +841,12 @@ impl img::DiskImage for Td0 {
             ans.append(&mut trk.to_bytes());
         }
         ans.push(self.end);
+        // Real teledisks have several trailing bytes, and some decoders will choke if
+        // they are missing (notably MAME).  The value of the bytes is not important,
+        // but they do need to be chosen to produce enough bits in the Huffman code so
+        // that the decoder will not give up before the end of disk marker.  The following
+        // is nothing special, just 7 randomly chosen bytes.
+        ans.append(&mut vec![0x27,0x09,0xe1,0xc5,0x89,0x05,0x76]);
         // apply the advanced compression
         retrocompressor::td0::compress_slice(&ans).expect("advanced compression failed")
     }
@@ -888,13 +900,13 @@ impl img::DiskImage for Td0 {
         getByteEx!(root,td0,self.header.drive_type);
         root[&td0]["header"]["drive_type"]["_pretty"] = json::JsonValue::String(
             match self.header.drive_type {
-                0 => "5.25 96 tpi disk in 48 tpi drive".to_string(),
-                1 => "5.25".to_string(),
-                2 => "5.25 48 tpi".to_string(),
-                3 => "3.5".to_string(),
-                4 => "3.5".to_string(),
-                5 => "8-inch".to_string(),
-                6 => "3.5".to_string(),
+                0 => "5.25in".to_string(),
+                1 => "5.25in".to_string(),
+                2 => "5.25in".to_string(),
+                3 => "3.0in".to_string(),
+                4 => "3.5in".to_string(),
+                5 => "8.0in".to_string(),
+                6 => "3.5in".to_string(),
                 _ => "unexpected value".to_string()
             }
         );

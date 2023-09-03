@@ -65,7 +65,7 @@ pub const CPM_1: TrackLayout = TrackLayout {
     data_rate: [DataRate::R500Kbps;5]
 };
 
-pub const AMSTRAD_184K: TrackLayout = TrackLayout {
+pub const AMSTRAD_SS: TrackLayout = TrackLayout {
     cylinders: uni!(40),
     sides: uni!(1),
     sector_size: uni!(512),
@@ -154,7 +154,7 @@ pub const IBM_CPM1_KIND: DiskKind = DiskKind::D8(CPM_1);
 pub const A2_HD_MAX: DiskKind = DiskKind::LogicalBlocks(BlockLayout {block_count: 65535, block_size: 512});
 
 /// This kind might contain CP/M
-pub const AMSTRAD_184K_KIND: DiskKind = DiskKind::D525(AMSTRAD_184K);
+pub const AMSTRAD_SS_KIND: DiskKind = DiskKind::D3(AMSTRAD_SS);
 
 /// This kind might contain CP/M
 pub const OSBORNE1_SD_KIND: DiskKind = DiskKind::D525(OSBORNE1_SD);

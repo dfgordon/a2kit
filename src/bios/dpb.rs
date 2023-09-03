@@ -156,7 +156,7 @@ pub const DSDD_525_OFF1: DiskParameterBlock = DiskParameterBlock {
 
 // This covers Amstrad PCW9512 and maybe PCW8256 (at least 1 image has extra cylinder with 8 sectors)
 // There is a "superblock" at track 0 sector 0 [40 cyl, 9 secs, sector shift 2, off 1, bsh 3, dir blocks 2]
-pub const SSDD_525_AMSTRAD_184K: DiskParameterBlock = DiskParameterBlock {
+pub const SSDD_3: DiskParameterBlock = DiskParameterBlock {
     spt: 36,
     bsh: 3,
     blm: 7,
@@ -213,7 +213,7 @@ impl DiskParameterBlock {
             crate::img::names::OSBORNE1_DD_KIND => SSDD_525_OFF3,
             crate::img::names::KAYPROII_KIND => SSDD_525_OFF1,
             crate::img::names::KAYPRO4_KIND => DSDD_525_OFF1,
-            crate::img::names::AMSTRAD_184K_KIND => SSDD_525_AMSTRAD_184K,
+            crate::img::names::AMSTRAD_SS_KIND => SSDD_3,
             crate::img::names::TRS80_M2_CPM_KIND => TRS80_M2,
             crate::img::names::NABU_CPM_KIND => NABU,
             _ => panic!("Disk kind not supported")
@@ -353,7 +353,7 @@ impl fmt::Display for DiskParameterBlock {
             SSDD_525_OFF1 => write!(f,"IBM 5.25 inch SSDD"),
             SSDD_525_OFF3 => write!(f,"IBM 5.25 inch SSDD"),
             DSDD_525_OFF1 => write!(f,"IBM 5.25 inch DSSD"),
-            SSDD_525_AMSTRAD_184K => write!(f,"IBM 5.25 inch SSDD"),
+            SSDD_3 => write!(f,"IBM 3 inch SSDD"),
             TRS80_M2 => write!(f,"IBM 8 inch SSDD"),
             NABU => write!(f,"IBM 8 inch DSDD"),
             _ => write!(f,"unknown disk")

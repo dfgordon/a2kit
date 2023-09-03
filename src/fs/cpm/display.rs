@@ -386,8 +386,15 @@ fn dir_last40(finfo: &directory::FileInfo) {
         Some(t) => unpack_date(t).format("%m/%d/%y %H:%M").to_string(),
         None => "".to_string()
     };
+    let mut prot = String::new();
+    prot += match finfo.read_pass { true => "R", false => "" };
+    prot += match finfo.write_pass { true => "W", false => "" };
+    prot += match finfo.del_pass { true => "D", false => "" };
     print!("{:6} {:14}  {:14}",
-        "None",
+        match prot.len() {
+            0 => "None",
+            _ => &prot
+        },
         match finfo.update_time {
             Some([0,0,0,0]) => "".to_string(),
             Some(t) => unpack_date(t).format("%m/%d/%y %H:%M").to_string(),

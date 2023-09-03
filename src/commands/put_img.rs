@@ -5,38 +5,13 @@
 
 use clap;
 use std::str::FromStr;
-use log::{debug,info,error};
+use log::{info,error};
 use super::{ItemType,CommandError};
-use crate::{STDRESULT,DYNERR};
+use crate::STDRESULT;
 
 const RCH: &str = "unreachable was reached";
-
-fn parse_sector(farg: &str) -> Result<[usize;3],DYNERR> {
-    let fcopy = String::from(farg);
-    let it: Vec<&str> = fcopy.split(',').collect();
-    if it.len()!=3 {
-        error!("sector specification should be in form `cylinder,head,sector`");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
-    let cyl = usize::from_str(it[0])?;
-    let head = usize::from_str(it[1])?;
-    let sec = usize::from_str(it[2])?;
-    debug!("user requested cyl {} head {} sec {}",cyl,head,sec);
-    Ok([cyl,head,sec])
-}
-
-fn parse_track(farg: &str) -> Result<[usize;2],DYNERR> {
-    let fcopy = String::from(farg);
-    let it: Vec<&str> = fcopy.split(',').collect();
-    if it.len()!=2 {
-        error!("track specification should be in form `cylinder,head`");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
-    let cyl = usize::from_str(it[0])?;
-    let head = usize::from_str(it[1])?;
-    debug!("user requested cyl {} head {}",cyl,head);
-    Ok([cyl,head])
-}
+const RANGED_ACCESS: &str =
+"Writing to multiple sectors is only allowed if the buffers match exactly";
 
 pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     // presence of arguments should already be resolved
@@ -48,11 +23,29 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
         Ok(mut img) => {
             match typ {
                 ItemType::Sector => {
-                    let [cyl,head,sec] = parse_sector(&dest_path)?;
-                    img.write_sector(cyl, head, sec, dat)?
+                    let mut ptr = 0;
+                    let sec_list = super::parse_sector_request(&dest_path)?;
+                    for [cyl,head,sec] in &sec_list {
+                        // read the sector to get its length
+                        let sec_len = img.read_sector(*cyl, *head, *sec)?.len();
+                        if ptr + sec_len > dat.len() && sec_list.len() > 1 {
+                            error!("{}",RANGED_ACCESS);
+                            return Err(Box::new(CommandError::InvalidCommand));
+                        }
+                        if ptr >= dat.len() {
+                            error!("{}",RANGED_ACCESS);
+                            return Err(Box::new(CommandError::InvalidCommand));
+                        }
+                        img.write_sector(*cyl,*head,*sec,&dat[ptr..])?;
+                        ptr += sec_len;
+                    }
+                    if sec_list.len() > 1 && ptr != dat.len() {
+                        error!("{}",RANGED_ACCESS);
+                        return Err(Box::new(CommandError::InvalidCommand));
+                    }
                 },
                 ItemType::RawTrack => {
-                    let [cyl,head] = parse_track(&dest_path)?;
+                    let [cyl,head] = super::parse_track_request(&dest_path)?;
                     img.set_track_buf(cyl, head, dat)?
                 },
                 ItemType::Track => {

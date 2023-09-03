@@ -6,39 +6,12 @@
 use clap;
 use std::io::Write;
 use std::str::FromStr;
-use log::{debug,error};
+use log::error;
 use super::{ItemType,CommandError};
 use crate::img::DiskImage;
-use crate::{STDRESULT,DYNERR};
+use crate::STDRESULT;
 
 const RCH: &str = "unreachable was reached";
-
-fn parse_sector(farg: &str) -> Result<[usize;3],DYNERR> {
-    let fcopy = String::from(farg);
-    let it: Vec<&str> = fcopy.split(',').collect();
-    if it.len()!=3 {
-        error!("sector specification should be in form `cylinder,head,sector`");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
-    let cyl = usize::from_str(it[0])?;
-    let head = usize::from_str(it[1])?;
-    let sec = usize::from_str(it[2])?;
-    debug!("user requested cyl {} head {} sec {}",cyl,head,sec);
-    Ok([cyl,head,sec])
-}
-
-fn parse_track(farg: &str) -> Result<[usize;2],DYNERR> {
-    let fcopy = String::from(farg);
-    let it: Vec<&str> = fcopy.split(',').collect();
-    if it.len()!=2 {
-        error!("track specification should be in form `cylinder,head`");
-        return Err(Box::new(CommandError::InvalidCommand));
-    }
-    let cyl = usize::from_str(it[0])?;
-    let head = usize::from_str(it[1])?;
-    debug!("user requested cyl {} head {}",cyl,head);
-    Ok([cyl,head])
-}
 
 fn output_get(dat: Vec<u8>,typ: ItemType,img: Box<dyn DiskImage>) {
     if atty::is(atty::Stream::Stdout) {
@@ -61,15 +34,19 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         Ok(mut img) => {
             let bytes = match typ {
                 ItemType::Sector => {
-                    let [cyl,head,sec] = parse_sector(&src_path)?;
-                    img.read_sector(cyl, head, sec)?
+                    let mut cum: Vec<u8> = Vec::new();
+                    let sector_list = super::parse_sector_request(&src_path)?;
+                    for [cyl,head,sec] in sector_list {
+                        cum.append(&mut img.read_sector(cyl,head,sec)?);
+                    }
+                    cum
                 },
                 ItemType::Track => {
-                    let [cyl,head] = parse_track(&src_path)?;
+                    let [cyl,head] = super::parse_track_request(&src_path)?;
                     img.get_track_nibbles(cyl, head)?
                 },
                 ItemType::RawTrack => {
-                    let [cyl,head] = parse_track(&src_path)?;
+                    let [cyl,head] = super::parse_track_request(&src_path)?;
                     img.get_track_buf(cyl, head)?
                 },
                 _ => panic!("{}",RCH)

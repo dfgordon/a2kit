@@ -18,6 +18,8 @@ use a2kit::lang::integer;
 use a2kit::lang::merlin;
 
 const RCH: &str = "unreachable was reached";
+const RNG_HELP: &str = "some types support ranges using `..` and `,,` separators,
+e.g., `1..4,,7..10` would mean 1,2,3,7,8,9";
 
 fn main() -> Result<(),Box<dyn std::error::Error>>
 {
@@ -50,7 +52,6 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "8in-trs80",
         "8in-nabu",
         "5.25in",
-        "5.25in-amstrad",
         "5.25in-kayii",
         "5.25in-kay4",
         "5.25in-osb-sd",
@@ -58,10 +59,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "3.5in",
         "3.5in-ss",
         "3.5in-ds",
+        "3in-amstrad",
         "hdmax"
     ];
     let get_put_types = [
-        "atok","itok","mtok","bin","txt","raw","block","sec","track","raw_track","rec","any","meta"
+        "any","bin","txt","raw","rec","atok","itok","mtok","block","sec","track","raw_track","meta"
     ];
 
     let mut main_cmd = Command::new("a2kit")
@@ -140,14 +142,16 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file").required(false))
         .arg(arg!(--trunc "truncate raw at EOF if possible").action(ArgAction::SetTrue))
-        .about("read from local or disk image, write to stdout"));
+        .about("read from local or disk image, write to stdout")
+        .after_help(RNG_HELP));
     main_cmd = main_cmd.subcommand(Command::new("put")
         .arg(arg!(-f --file <PATH> "path, key, or address, maybe inside disk image").required(false))
         .arg(arg!(-t --type <TYPE> "type of the item").required(false).value_parser(get_put_types))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(false))
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
-        .about("read from stdin, write to local or disk image"));
-    main_cmd = main_cmd.subcommand(Command::new("catalog")
+        .about("read from stdin, write to local or disk image")
+        .after_help(RNG_HELP));
+main_cmd = main_cmd.subcommand(Command::new("catalog")
         .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(true))
         .visible_alias("cat")

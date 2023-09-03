@@ -104,7 +104,14 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                         Ok(ItemType::Binary) => disk.bload(&src_path),
                         Ok(ItemType::Text) => disk.read_text(&src_path),
                         Ok(ItemType::Raw) => disk.read_raw(&src_path,trunc),
-                        Ok(ItemType::Block) => disk.read_block(&src_path),
+                        Ok(ItemType::Block) => {
+                            let mut cum: Vec<u8> = Vec::new();
+                            let blocks = super::parse_block_request(&src_path)?;
+                            for b in blocks {
+                                cum.append(&mut disk.read_block(&b.to_string())?.1);
+                            }
+                            Ok((0,cum))
+                        },
                         _ => Err::<(u16,Vec<u8>),DYNERR>(Box::new(CommandError::UnsupportedItemType))
                     };
                     return output_get(maybe_object,typ,Some(disk));

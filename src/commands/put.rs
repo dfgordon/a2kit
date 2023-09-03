@@ -6,6 +6,9 @@ use super::{ItemType,CommandError};
 use crate::fs::{Records,FileImage};
 use crate::{STDRESULT,DYNERR};
 
+const RANGED_ACCESS: &str =
+"Writing to multiple blocks is only allowed if the buffers match exactly";
+
 pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
     if atty::is(atty::Stream::Stdin) {
         error!("cannot use `put` with console input, please pipe something in");
@@ -62,7 +65,29 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
                             }
                         },
                         Ok(ItemType::Raw) => disk.write_text(&dest_path,&file_data),
-                        Ok(ItemType::Block) => disk.write_block(&dest_path,&file_data),
+                        Ok(ItemType::Block) => {
+                            let mut ptr = 0;
+                            let blocks = super::parse_block_request(&dest_path)?;
+                            for b in &blocks {
+                                // read the block to get its length
+                                let block_len = disk.read_block(&b.to_string())?.1.len();
+                                if ptr + block_len > file_data.len() && block_len > 1 {
+                                    error!("{}",RANGED_ACCESS);
+                                    return Err(Box::new(CommandError::InvalidCommand));
+                                }
+                                if ptr >= file_data.len() {
+                                    error!("{}",RANGED_ACCESS);
+                                    return Err(Box::new(CommandError::InvalidCommand));
+                                }
+                                disk.write_block(&b.to_string(),&file_data[ptr..ptr+block_len])?;
+                                ptr += block_len;
+                            }
+                            if blocks.len() > 1 && ptr != file_data.len() {
+                                error!("{}",RANGED_ACCESS);
+                                return Err(Box::new(CommandError::InvalidCommand));
+                            }
+                            Ok(ptr)
+                        },
                         Ok(ItemType::Records) => match std::str::from_utf8(&file_data) {
                             Ok(s) => match Records::from_json(s) {
                                 Ok(recs) => disk.write_records(&dest_path,&recs),

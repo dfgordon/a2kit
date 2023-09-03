@@ -48,10 +48,11 @@
 //! A disk image can typically represent some number of disk kinds (defined by mechanical and
 //! encoding characteristics).  The kinds `a2kit` supports include
 //! * Logical ProDOS volumes
+//! * 3 inch CP/M formats (Amstrad 184K)
 //! * 3.5 inch Apple formats (400K/800K)
 //! * 5.25 inch Apple formats (114K/140K)
 //! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
-//! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K, Amstrad 184K)
+//! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K)
 
 pub mod fs;
 pub mod lang;
@@ -100,7 +101,7 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         bios::dpb::SSSD_525,
         bios::dpb::SSDD_525_OFF1,
         bios::dpb::SSDD_525_OFF3,
-        bios::dpb::SSDD_525_AMSTRAD_184K,
+        bios::dpb::SSDD_3,
         bios::dpb::DSDD_525_OFF1,
         bios::dpb::TRS80_M2,
         bios::dpb::NABU,
