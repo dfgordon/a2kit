@@ -1,11 +1,10 @@
 //! ## Support for IMD disk images
 //!
-//! Although this is not an Apple II format, it is included because a lot of
-//! CP/M disk images are available in this format.  By supporting the IMD format
-//! we allow, for instance, transfer of files from 8 inch IBM disks to A2 disks.
-//! 
-//! We cannot read an arbitrary CP/M disk in IMD format.  The problem is, to do so,
-//! we need the DPB and skew tables for every kind of disk we wish to support.
+//! This format provides access to a wide variety of CP/M and FAT file systems.
+//! The FAT support should work with a wide variety of disk layouts since, except
+//! for very early disks, the BPB is always discoverable in the boot sector.
+//! For CP/M, only specific vendors are supported, due to the fact that the DPB
+//! usually has to be supplied for each individual case.
 
 use chrono;
 use num_traits::FromPrimitive;
@@ -127,6 +126,13 @@ impl Track {
                 _ => (1..17).collect(),
             },
             super::names::NABU_CPM => (1..27).collect(),
+            super::names::IBM_SSDD_8 => (1..9).collect(),
+            super::names::IBM_DSDD_8 => (1..9).collect(),
+            //super::names::IBM_SSDD_9 => (1..10).collect(), // same pattern as amstrad
+            super::names::IBM_DSDD_9 => (1..10).collect(),
+            super::names::IBM_SSQD => (1..9).collect(),
+            super::names::IBM_DSQD => (1..9).collect(),
+            super::names::IBM_DSHD => (1..16).collect(),
             _ => panic!("unhandled track layout")
         };
         let cylinder_map: Vec<u8> = Vec::new();
@@ -435,10 +441,10 @@ impl img::DiskImage for Imd {
         trace!("reading {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
-                let sectors = self.tracks[off as usize].sectors;
+                let secs_per_track = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let mut ans: Vec<u8> = Vec::new();
-                let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
+                let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
                 let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 for [cyl,head,lsec] in chs_list {
                     self.check_user_area_up_to_cyl(cyl, off)?;
@@ -451,7 +457,23 @@ impl img::DiskImage for Imd {
                     }
                 }
                 Ok(ans)
-            }
+            },
+            Block::FAT((_sec1,_secs)) => {
+                let secs_per_track = self.tracks[0].sectors;
+                let mut ans: Vec<u8> = Vec::new();
+                let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
+                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                for [cyl,head,lsec] in chs_list {
+                    self.check_user_area_up_to_cyl(cyl, 0)?;
+                    match self.read_sector(cyl,head,lsec) {
+                        Ok(mut slice) => {
+                            ans.append(&mut slice);
+                        },
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(ans)
+            },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
@@ -459,9 +481,9 @@ impl img::DiskImage for Imd {
         trace!("writing {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
-                let sectors = self.tracks[off as usize].sectors;
+                let secs_per_track = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
-                let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
+                let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
                 let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 let mut src_offset = 0;
                 let psec_size = SECTOR_SIZE_BASE << sector_shift;
@@ -475,7 +497,24 @@ impl img::DiskImage for Imd {
                     }
                 }
                 Ok(())
-            }
+            },
+            Block::FAT((_sec1,_secs)) => {
+                // TODO: do we need to handle variable sectors per track
+                let secs_per_track = self.tracks[0].sectors;
+                let sec_size = 128 << self.tracks[0].sector_shift as usize;
+                let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
+                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                let mut src_offset = 0;
+                let padded = super::quantize_block(dat, chs_list.len()*sec_size);
+                for [cyl,head,lsec] in chs_list {
+                    self.check_user_area_up_to_cyl(cyl, 0)?;
+                    match self.write_sector(cyl,head,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
+                        Ok(_) => src_offset += sec_size,
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(())
+            },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }

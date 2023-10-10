@@ -534,7 +534,7 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
                 },
                 (_,_,false) => {
                     // No timestamps or protection, 2 files per row
-                    for (i,v) in files.iter().enumerate() {
+                    for v in files.iter() {
                         if is_displayed(*user, v, &options) {
                             if user_stats.file_count==0 {
                                 println!("{} {}",first40_heading,first40_heading);
@@ -542,7 +542,7 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
                                 println!();
                             }
                             dir_first40(dir,v,&mut user_stats,options.att);
-                            if i%2==0 {
+                            if user_stats.file_count%2==1 {
                                 print!(" ");
                             } else {
                                 println!();

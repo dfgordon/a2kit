@@ -84,7 +84,8 @@ impl img::DiskImage for DO {
                     ans.append(&mut self.data[offset..offset+CPM_RECORD].to_vec());
                 }
                 Ok(ans)
-            }
+            },
+            Block::FAT((_s1,_secs)) => Err(Box::new(super::Error::ImageTypeMismatch))
         }
     }
     fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT {
@@ -121,7 +122,8 @@ impl img::DiskImage for DO {
                     src_offset += CPM_RECORD;
                 }
                 Ok(())
-            }
+            },
+            Block::FAT((_s1,_secs)) => Err(Box::new(super::Error::ImageTypeMismatch))
         }
     }
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {

@@ -135,6 +135,128 @@ pub const KAYPRO4: TrackLayout = TrackLayout {
     data_rate: [DataRate::R250Kbps;5]
 };
 
+// TODO: verify the data rates on these IBM disks
+
+pub const IBM_SSDD_8: TrackLayout = TrackLayout {
+    cylinders: uni!(40),
+    sides: uni!(1),
+    sector_size: uni!(512),
+    sectors: uni!(8),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_DSDD_8: TrackLayout = TrackLayout {
+    cylinders: uni!(40),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(8),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_SSDD_9: TrackLayout = TrackLayout {
+    cylinders: uni!(40),
+    sides: uni!(1),
+    sector_size: uni!(512),
+    sectors: uni!(9),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_DSDD_9: TrackLayout = TrackLayout {
+    cylinders: uni!(40),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(9),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_SSQD: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(1),
+    sector_size: uni!(512),
+    sectors: uni!(8),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_DSQD: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(8),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_DSHD: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(15),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_720: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(9),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_1440: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(18),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_1680: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(21),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_1720: TrackLayout = TrackLayout {
+    cylinders: uni!(82),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(21),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
+pub const IBM_2880: TrackLayout = TrackLayout {
+    cylinders: uni!(80),
+    sides: uni!(2),
+    sector_size: uni!(512),
+    sectors: uni!(36),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R250Kbps;5]
+};
+
 // This kind might contain DOS 3.0, 3.1, or 3.2.
 pub const A2_DOS32_KIND: DiskKind = DiskKind::D525(A2_DOS32);
 

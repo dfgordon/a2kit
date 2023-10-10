@@ -7,7 +7,7 @@
 use crate::img;
 use crate::fs::Block;
 
-use log::{trace,error};
+use log::{trace,debug,error};
 use super::BlockLayout;
 use crate::{STDRESULT,DYNERR};
 
@@ -73,11 +73,11 @@ impl img::DiskImage for PO {
         }
     }
     fn read_sector(&mut self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,DYNERR> {
-        error!("logical disk cannot access sectors");
+        debug!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
     fn write_sector(&mut self,_cyl: usize,_head: usize,_sec: usize,_dat: &[u8]) -> STDRESULT {
-        error!("logical disk cannot access sectors");
+        debug!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {

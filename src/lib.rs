@@ -64,14 +64,14 @@ use img::DiskImage;
 use fs::DiskFS;
 use std::io::Read;
 use std::fmt::Write;
-use log::{warn,info};
+use log::{warn,info,debug};
 use regex::Regex;
 use hex;
 
 type DYNERR = Box<dyn std::error::Error>;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
-const KNOWN_FILE_EXTENSIONS: &str = "2mg,2img,dsk,d13,do,nib,po,woz,imd,td0";
+const KNOWN_FILE_EXTENSIONS: &str = "2mg,2img,dsk,d13,do,nib,po,woz,imd,td0,img,ima";
 
 /// Save the image file (make changes permanent)
 pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
@@ -93,6 +93,10 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
     if fs::pascal::Disk::test_img(&mut img) {
         info!("identified Pascal file system");
         return Some(Box::new(fs::pascal::Disk::from_img(img)));
+    }
+    if fs::fat::Disk::test_img(&mut img) {
+        info!("identified FAT file system");
+        return Some(Box::new(fs::fat::Disk::from_img(img,None)));
     }
     // For CP/M we have to try all these DPB heuristically
     let dpb_list = vec![
@@ -123,6 +127,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
     };
+    debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
             info!("identified IMD image");
@@ -190,6 +195,14 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
             info!("Possible PO image");
+            if let Some(disk) = try_img(Box::new(img)) {
+                return Ok(disk);
+            }
+        }
+    }
+    if img::dsk_img::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
+            info!("Possible IMG image");
             if let Some(disk) = try_img(Box::new(img)) {
                 return Ok(disk);
             }
@@ -207,6 +220,7 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
     };
+    debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
             info!("identified IMD image");
@@ -261,6 +275,12 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
             return Ok(Box::new(img));
         }
     }
+    if img::dsk_img::file_extensions().contains(&ext) || ext=="" {
+        if let Some(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
+            info!("Possible IMG image");
+            return Ok(Box::new(img));
+        }
+    }
     warn!("cannot match any image format");
     return Err(Box::new(img::Error::ImageTypeMismatch));
 }
@@ -274,7 +294,7 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR>
         Ok(disk_img_data) => {
             let mut maybe_ext = img_path.split('.').last();
             if let Some(ext) = maybe_ext {
-                if !KNOWN_FILE_EXTENSIONS.contains(ext) {
+                if !KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) {
                     maybe_ext = None;
                 }
             }
@@ -303,7 +323,7 @@ pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
         Ok(disk_img_data) => {
             let mut maybe_ext = img_path.split('.').last();
             if let Some(ext) = maybe_ext {
-                if !KNOWN_FILE_EXTENSIONS.contains(ext) {
+                if !KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) {
                     maybe_ext = None;
                 }
             }

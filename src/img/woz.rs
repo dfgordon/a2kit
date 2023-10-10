@@ -155,7 +155,8 @@ fn get_ts_list(addr: Block,kind: &super::DiskKind) -> Result<(Vec<[usize;2]>,usi
 				}
 			}
 			Ok((ans,256))
-		}
+		},
+		Block::FAT((_s1,_secs)) => Err(Box::new(super::Error::ImageTypeMismatch))
 	}
 }
 

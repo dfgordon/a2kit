@@ -21,6 +21,7 @@ pub mod dos3x;
 pub mod prodos;
 pub mod pascal;
 pub mod cpm;
+pub mod fat;
 
 use std::fmt;
 use std::str::FromStr;
@@ -57,14 +58,16 @@ pub enum Block {
     /// value is block number
     PO(usize),
     /// value is (absolute block number, BSH, OFF); see cpm::types
-    CPM((usize,u8,u16))
+    CPM((usize,u8,u16)),
+    /// value is (first logical sector,num sectors)
+    FAT((u64,u8))
 }
 
 impl Block {
     /// At this level we can only take sectors per track, and return a track-sector list,
     /// where a simple monotonically increasing relationship is assumed between blocks and sectors.
-    /// Any further skewing must be handled by the caller.  CP/M track offset is accounted for,
-    /// and CP/M sector numbering starts at 1.
+    /// Any further skewing must be handled by the caller.  CP/M and FAT offsets are accounted for.
+    /// CP/M logical sectors are numbered from 1.
     pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
         match self {
             Self::D13([t,s]) => vec![[*t,*s]],
@@ -77,6 +80,13 @@ impl Block {
                     ans.push([*off as usize + sec_count/secs_per_track , 1 + sec_count%secs_per_track]);
                 }
                 ans
+            },
+            Self::FAT((sec1,secs)) => {
+                let mut ans: Vec<[usize;2]> = Vec::new();
+                for sec in (*sec1 as usize)..(*sec1 as usize)+(*secs as usize) {
+                    ans.push([sec/secs_per_track , sec%secs_per_track]);
+                }
+                ans
             }
         }
     }
@@ -87,7 +97,8 @@ impl fmt::Display for Block {
             Self::D13([t,s]) => write!(f,"D13 track {} sector {}",t,s),
             Self::DO([t,s]) => write!(f,"DOS track {} sector {}",t,s),
             Self::PO(b) => write!(f,"ProDOS block {}",b),
-            Self::CPM((b,s,o)) => write!(f,"CPM block {} shift {} offset {}",b,s,o)
+            Self::CPM((b,s,o)) => write!(f,"CPM block {} shift {} offset {}",b,s,o),
+            Self::FAT((s1,secs)) => write!(f,"FAT cluster sec1 {} secs {}",s1,secs)
         }
     }
 }

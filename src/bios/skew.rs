@@ -6,7 +6,7 @@
 //! The sector skews are kept separate from file systems and disk images because multiple
 //! submodules of either can use the same tables.
 
-use log::{trace,info,error};
+use log::{trace,debug,info,error};
 use crate::img::disk35;
 use crate::img::{names,DiskKind};
 use crate::DYNERR;
@@ -105,7 +105,7 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2
             Ok(vec![[track,sector]])
         },
         _ => {
-            error!("cannot map ProDOS block to {}",*kind);
+            debug!("cannot map ProDOS block to {}",*kind);
             Err(Box::new(super::Error::IncompatibleDiskKind))
         }
     }
@@ -140,6 +140,26 @@ pub fn cpm_blocking(ts_list: Vec<[usize;2]>,sec_shift: u8,heads: usize) -> Resul
             info!("CP/M blocking failed, sector crossed track {}",track);
             return Err(super::Error::SectorAccess);
         }
+    }
+    trace!("ts list {:?} (logical blocked)",ans);
+    return Ok(ans);
+}
+
+/// Take a logical track-sector list and produce a hybrid cylinder-head-sector list.
+/// Hybrid means the sector order is logical while the size is physical.
+/// This assumes the mapping track = cyl*heads + head.
+pub fn fat_blocking(ts_list: Vec<[usize;2]>,heads: usize) -> Result<Vec<[usize;3]>,super::Error> {
+    trace!("ts list {:?} (logical deblocked)",ts_list);
+    if heads<1 {
+        error!("FAT blocking was passed 0 heads");
+        return Err(super::Error::SectorAccess);
+    }
+    let mut ans: Vec<[usize;3]> = Vec::new();
+    for i in 0..ts_list.len() {
+        let cyl = ts_list[i][0]/heads;
+        let head = match heads { 1 => 0, _ => ts_list[i][0]%heads };
+        let lsec = ts_list[i][1];
+        ans.push([cyl,head,1+lsec]);
     }
     trace!("ts list {:?} (logical blocked)",ans);
     return Ok(ans);

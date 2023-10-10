@@ -41,6 +41,7 @@ pub mod disk525;
 pub mod dsk_d13;
 pub mod dsk_do;
 pub mod dsk_po;
+pub mod dsk_img;
 pub mod dot2mg;
 pub mod nib;
 pub mod woz;
@@ -149,6 +150,7 @@ pub enum DiskImageType {
     D13,
     DO,
     PO,
+    IMG,
     WOZ1,
     WOZ2,
     IMD,
@@ -168,6 +170,14 @@ impl TrackLayout {
     pub fn sides(&self) -> usize {
         *self.sides.iter().max().unwrap()
     }
+    pub fn zones(&self) -> usize {
+        for i in 0..5 {
+            if self.cylinders[i]==0 {
+                return i;
+            }
+        }
+        5
+    }
     pub fn zone(&self,track_num: usize) -> usize {
         let mut tcount: [usize;5] = [0;5];
         tcount[0] = self.cylinders[0] * self.sides[0];
@@ -182,6 +192,13 @@ impl TrackLayout {
             _ => 4
         }
     }
+    pub fn byte_capacity(&self) -> usize {
+        let mut ans = 0;
+        for i in 0..5 {
+            ans += self.cylinders[i] * self.sides[i] * self.sectors[i] * self.sector_size[i];
+        }
+        ans
+    }
 }
 
 /// Allows the track layout to be displayed to the console using `println!`.  This also
@@ -192,7 +209,7 @@ impl fmt::Display for TrackLayout {
         for c in self.cylinders {
             cyls += c;
         }
-        write!(f,"{} cylinders",cyls)
+        write!(f,"{}/{}/{}/{}",cyls,self.sides(),self.sectors[0],self.sector_size[0])
     }
 }
 
@@ -203,17 +220,10 @@ impl fmt::Display for DiskKind {
         match *self {
             DiskKind::LogicalBlocks(lay) => write!(f,"Logical disk, {} blocks",lay.block_count),
             DiskKind::LogicalSectors(lay) => write!(f,"Logical disk, {}",lay),
-            names::AMSTRAD_SS_KIND => write!(f,"IBM 3 inch SSDD"),
             names::A2_400_KIND => write!(f,"Apple 3.5 inch 400K"),
             names::A2_800_KIND => write!(f,"Apple 3.5 inch 800K"),
             names::A2_DOS32_KIND => write!(f,"Apple 5.25 inch 13 sector"),
             names::A2_DOS33_KIND => write!(f,"Apple 5.25 inch 16 sector"),
-            names::IBM_CPM1_KIND => write!(f,"IBM 8 inch SSSD"),
-            names::OSBORNE1_SD_KIND => write!(f,"IBM 5.25 inch SSSD"),
-            names::OSBORNE1_DD_KIND | names::KAYPROII_KIND => write!(f,"IBM 5.25 inch SSDD"),
-            names::KAYPRO4_KIND => write!(f,"IBM 5.25 inch DSDD"),
-            names::TRS80_M2_CPM_KIND => write!(f,"IBM 8 inch SSDD"),
-            names::NABU_CPM_KIND => write!(f,"IBM 8 inch DSDD"),
             DiskKind::D3(lay) => write!(f,"3.0 inch {}",lay),
             DiskKind::D35(lay) => write!(f,"3.5 inch {}",lay),
             DiskKind::D525(lay) => write!(f,"5.25 inch {}",lay),
@@ -232,6 +242,13 @@ impl FromStr for DiskKind {
             "8in-trs80" => Ok(names::TRS80_M2_CPM_KIND),
             "8in-nabu" => Ok(names::NABU_CPM_KIND),
             "3in-amstrad" => Ok(names::AMSTRAD_SS_KIND),
+            "5.25in-ibm-ssdd8" => Ok(Self::D525(names::IBM_SSDD_8)),
+            "5.25in-ibm-ssdd9" => Ok(Self::D525(names::IBM_SSDD_9)),
+            "5.25in-ibm-dsdd8" => Ok(Self::D525(names::IBM_DSDD_8)),
+            "5.25in-ibm-dsdd9" => Ok(Self::D525(names::IBM_DSDD_9)),
+            "5.25in-ibm-ssqd" => Ok(Self::D525(names::IBM_SSQD)),
+            "5.25in-ibm-dsqd" => Ok(Self::D525(names::IBM_DSQD)),
+            "5.25in-ibm-dshd" => Ok(Self::D525(names::IBM_DSHD)),
             "5.25in-osb-sd" => Ok(names::OSBORNE1_SD_KIND),
             "5.25in-osb-dd" => Ok(names::OSBORNE1_DD_KIND),
             "5.25in-kayii" => Ok(names::KAYPROII_KIND),
@@ -253,6 +270,7 @@ impl FromStr for DiskImageType {
             "d13" => Ok(Self::D13),
             "do" => Ok(Self::DO),
             "po" => Ok(Self::PO),
+            "img" => Ok(Self::IMG),
             "woz1" => Ok(Self::WOZ1),
             "woz2" => Ok(Self::WOZ2),
             "imd" => Ok(Self::IMD),
@@ -271,6 +289,7 @@ impl fmt::Display for DiskImageType {
             Self::D13 => write!(f,"d13"),
             Self::DO => write!(f,"do"),
             Self::PO => write!(f,"po"),
+            Self::IMG => write!(f,"img"),
             Self::WOZ1 => write!(f,"woz1"),
             Self::WOZ2 => write!(f,"woz2"),
             Self::IMD => write!(f,"imd"),
