@@ -23,8 +23,6 @@ pub const DIR_ENTRY_SIZE: usize = 32;
 const FREE: u8 = 0xe5;
 /// first name byte for a free entry, but also indicating no more entries to follow.
 const FREE_AND_NO_MORE: u8 = 0x00;
-/// first name byte is 0xe5, but entry is used.
-const KANJI: u8 = 0x05;
 
 pub const READ_ONLY: u8 = 1;
 pub const HIDDEN: u8 = 2;
@@ -41,6 +39,7 @@ pub const LONG_NAME_SUB: u8 = 63;
 #[derive(Clone)]
 pub struct FileInfo {
     pub is_root: bool,
+    pub wildcard: String,
     pub idx: usize,
     pub name: String,
     pub typ: String,
@@ -90,7 +89,7 @@ pub struct Entry {
     /// If this is a directory, file_size=0.
     attr: u8,
     nt_res: u8,
-    /// tenths of a second, 0-199
+    /// tenths of a second, 0-199 according to MS (typo?)
     creation_tenth: u8,
     /// to the nearest 2 secs
     creation_time: [u8;2],
@@ -115,6 +114,7 @@ impl FileInfo {
     pub fn create_root(cluster1: usize) -> Self {
         Self {
             is_root: true,
+            wildcard: String::new(),
             idx: 0,
             name: "".to_string(),
             typ: "".to_string(),
@@ -138,10 +138,36 @@ impl FileInfo {
             }
         }
     }
+    /// represent file info as a wildcard pattern
+    pub fn create_wildcard(pattern: &str) -> Self {
+        Self {
+            is_root: false,
+            wildcard: String::from(pattern),
+            idx: 0,
+            name: "".to_string(),
+            typ: "".to_string(),
+            read_only: false,
+            hidden: false,
+            system: false,
+            volume_id: false,
+            directory: true,
+            archived: false,
+            long_name: false,
+            long_name_sub: false,
+            create_date: None,
+            create_time: None,
+            write_date: None,
+            write_time: None,
+            access_date: None,
+            eof: 0,
+            cluster1: None
+        }
+    }
 }
 
 impl Entry {
-    /// create an entry with given name and all timestamps set using the system clock
+    /// Create an entry with given name and timestamp (time==None means use current time).
+    /// Not to be used to create a label entry.
     pub fn create(name: &str, time: Option<chrono::NaiveDateTime>) -> Self {
         let now = match time {
             Some(t) => t,
@@ -155,6 +181,32 @@ impl Entry {
             name: base,
             ext,
             attr: 0,
+            nt_res: 0,
+            creation_tenth: tenths,
+            creation_time: time,
+            creation_date: date,
+            access_date: date,
+            cluster1_high: [0,0],
+            write_time: time,
+            write_date: date,
+            cluster1_low: [0,0],
+            file_size: [0,0,0,0]
+        }
+    }
+    /// Create a label entry with given name and timestamp (time==None means use current time).
+    pub fn create_label(name: &str, time: Option<chrono::NaiveDateTime>) -> Self {
+        let now = match time {
+            Some(t) => t,
+            None => chrono::Local::now().naive_local()
+        };
+        let tenths = super::pack::pack_tenths(Some(now));
+        let time = super::pack::pack_time(Some(now));
+        let date = super::pack::pack_date(Some(now));
+        let (base,ext) = super::pack::string_to_label_name(name);
+        Self {
+            name: base,
+            ext,
+            attr: VOLUME_ID,
             nt_res: 0,
             creation_tenth: tenths,
             creation_time: time,
@@ -222,39 +274,35 @@ impl Entry {
         fimg.min_version = vec![];
     }
     /// access date is set to modified date
-    pub fn fimg_to_metadata(&mut self,fimg: &FileImage) -> STDRESULT {
+    pub fn fimg_to_metadata(&mut self,fimg: &FileImage,use_fimg_time: bool) -> STDRESULT {
         self.file_size = match fimg.eof[0..4].try_into() {
             Ok(x) => x,
             Err(e) => return Err(Box::new(e))
         };
-        self.attr = match fimg.access[0].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.creation_tenth = match fimg.created[0].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.creation_time = match fimg.created[1..3].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.creation_date = match fimg.created[3..5].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.write_time = match fimg.modified[0..2].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.write_date = match fimg.modified[2..4].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
-        self.access_date = match fimg.modified[2..4].try_into() {
-            Ok(x) => x,
-            Err(e) => return Err(Box::new(e))
-        };
+        self.attr = fimg.access[0];
+        if use_fimg_time {
+            self.creation_tenth =fimg.created[0];
+            self.creation_time = match fimg.created[1..3].try_into() {
+                Ok(x) => x,
+                Err(e) => return Err(Box::new(e))
+            };
+            self.creation_date = match fimg.created[3..5].try_into() {
+                Ok(x) => x,
+                Err(e) => return Err(Box::new(e))
+            };
+            self.write_time = match fimg.modified[0..2].try_into() {
+                Ok(x) => x,
+                Err(e) => return Err(Box::new(e))
+            };
+            self.write_date = match fimg.modified[2..4].try_into() {
+                Ok(x) => x,
+                Err(e) => return Err(Box::new(e))
+            };
+            self.access_date = match fimg.modified[2..4].try_into() {
+                Ok(x) => x,
+                Err(e) => return Err(Box::new(e))
+            };
+        }
         Ok(())
     }
     pub fn get_attr(&self,mask: u8) -> bool {
@@ -267,6 +315,12 @@ impl Entry {
     /// set bits low wherever mask is high (attr & !mask)
     pub fn clear_attr(&mut self,mask: u8) {
         self.attr &= !mask;
+    }
+    pub fn standardize(offset: usize) -> Vec<usize> {
+        // relative to the entry start
+        // creation date, access date, write date
+        let ans = vec![13,14,15,16,17,18,19,22,23,24,25];
+        ans.iter().map(|x| x + offset).collect()
     }
     // pub fn cluster1(&self) -> usize {
     //     u32::from_le_bytes([self.cluster1_low[0],self.cluster1_low[1],self.cluster1_high[0],self.cluster1_high[1]]) as usize
@@ -385,7 +439,7 @@ impl Directory {
                 debug!("after {} bad file names rejecting disk",bad_names);
                 return Err(Box::new(Error::Syntax));
             }
-            trace!("found file {}",key);
+            trace!("entry in use: {}",key);
             if ans.contains_key(&key) {
                 debug!("duplicate file {} in directory",key);
                 return Err(Box::new(Error::DuplicateFile));
@@ -394,6 +448,7 @@ impl Directory {
                 (u16::MAX as usize) * (u16::from_le_bytes(entry.cluster1_high) as usize));
             let finfo: FileInfo = FileInfo {
                 is_root: false,
+                wildcard: String::new(),
                 idx: i,
                 name,
                 typ,
@@ -430,12 +485,17 @@ impl Directory {
 
 /// Search for a file in the map produced by `Directory::build_files`.
 /// This will try with the given case, and then with upper case.
-pub fn get_file<'a>(subdir: &str,files: &'a BTreeMap<String,FileInfo>) -> Option<&'a FileInfo> {
+/// This will also handle empty extensions reliably.
+pub fn get_file<'a>(name: &str,files: &'a BTreeMap<String,FileInfo>) -> Option<&'a FileInfo> {
+    let mut trimmed = name.trim_end().to_string();
+    if !name.contains(".") {
+        trimmed += ".";
+    }
     // the order of these attempts is significant
-    if let Some(finfo) = files.get(subdir) {
+    if let Some(finfo) = files.get(&trimmed) {
         return Some(finfo);
     }
-    if let Some(finfo) = files.get(&subdir.to_uppercase()) {
+    if let Some(finfo) = files.get(&trimmed.to_uppercase()) {
         return Some(finfo);
     }
     return None;

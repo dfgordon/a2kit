@@ -126,6 +126,26 @@ TEST3.TEXT\s+4.*TEXT
     Ok(())
 }
 
+#[test]
+fn catalog_msdos() -> STDRESULT {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected =
+r#" Volume in drive A is NEW DISK 1
+ Directory of A:\\
+
+DSKBLD\s+BAT\s+378.*
+DSKBLD\s+BAS\s+99.*
+DIR1\s+<DIR>.*
+DIR3\s+<DIR>.*
+\s+4 File\(s\)\s+135168 bytes free"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("msdos-ren-del.img"))
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(expected).expect("regex err"));
+    Ok(())
+}
+
 // N.b. extensive tokenization tests are in the language modules
 #[test]
 fn tokenize_stdin() -> STDRESULT {

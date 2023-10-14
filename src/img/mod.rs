@@ -241,7 +241,6 @@ impl FromStr for DiskKind {
             "8in" => Ok(names::IBM_CPM1_KIND),
             "8in-trs80" => Ok(names::TRS80_M2_CPM_KIND),
             "8in-nabu" => Ok(names::NABU_CPM_KIND),
-            "3in-amstrad" => Ok(names::AMSTRAD_SS_KIND),
             "5.25in-ibm-ssdd8" => Ok(Self::D525(names::IBM_SSDD_8)),
             "5.25in-ibm-ssdd9" => Ok(Self::D525(names::IBM_SSDD_9)),
             "5.25in-ibm-dsdd8" => Ok(Self::D525(names::IBM_DSDD_8)),
@@ -255,9 +254,13 @@ impl FromStr for DiskKind {
             "5.25in-kay4" => Ok(names::KAYPRO4_KIND),
             "5.25in" => Ok(names::A2_DOS33_KIND), // mkdsk will change it if DOS 3.2 requested
             "3.5in" => Ok(names::A2_800_KIND),
-            "hdmax" => Ok(names::A2_HD_MAX),
             "3.5in-ss" => Ok(names::A2_400_KIND),
             "3.5in-ds" => Ok(names::A2_800_KIND),
+            "3.5in-ibm-720" => Ok(Self::D35(names::IBM_720)),
+            "3.5in-ibm-1440" => Ok(Self::D35(names::IBM_1440)),
+            "3.5in-ibm-2880" => Ok(Self::D35(names::IBM_2880)),
+            "3in-amstrad" => Ok(names::AMSTRAD_SS_KIND),
+            "hdmax" => Ok(names::A2_HD_MAX),
             _ => Err(Error::UnknownDiskKind)
         }
     }

@@ -5,6 +5,7 @@
 //! "FAT: General Overview of On-Disk Format,"" Dec. 6, 2000.
 
 use log::debug;
+use crate::{STDRESULT,DYNERR};
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
@@ -44,7 +45,13 @@ pub struct BPBFoundation {
     /// 0xf0,0xf8,0xf9,0xfa,0xfb,0xfc,0xfd,0xfe,0xff.
     /// Value should also be put in FAT[0] in the low 8 bits.
     /// typical values are 0xf0 (removable) and 0xf8 (fixed).
-    /// based on 86BOX : 0xf9 = 1200K, 0xfc = 180K, 0xfe = 160K, 0xfd = 360K, 0xff = 320K
+    /// based on 86BOX :
+    /// 0xf9 = 1200K
+    /// 0xfb = 640K
+    /// 0xfc = 180K
+    /// 0xfd = 360K
+    /// 0xfe = 160K
+    /// 0xff = 320K
     pub media: u8,
     /// count of sectors occupied by one FAT, should be 0 for FAT32
     pub fat_size_16: [u8;2],
@@ -265,7 +272,23 @@ impl DiskStruct for BootSector {
 }
 
 impl BootSector {
-    pub fn create1216(bpb: BPBFoundation) -> Self {
+    pub fn create(kind: &crate::img::DiskKind) -> Result<Self,DYNERR> {
+        use crate::img::names;
+        use crate::img::DiskKind::{D35,D525};
+        match kind {
+            D525(names::IBM_SSDD_8) => Ok(Self::create1216(SSDD_525_8)),
+            D525(names::IBM_SSDD_9) =>  Ok(Self::create1216(SSDD_525_9)),
+            D525(names::IBM_DSDD_8) =>  Ok(Self::create1216(DSDD_525_8)),
+            D525(names::IBM_DSDD_9) =>  Ok(Self::create1216(DSDD_525_9)),
+            D525(names::IBM_DSQD) =>  Ok(Self::create1216(DSQD_525)),
+            D525(names::IBM_DSHD) =>  Ok(Self::create1216(DSHD_525)),
+            D35(names::IBM_720) =>  Ok(Self::create1216(D35_720)),
+            D35(names::IBM_1440) =>  Ok(Self::create1216(D35_1440)),
+            D35(names::IBM_2880) =>  Ok(Self::create1216(D35_2880)),
+            _ => Err(Box::new(super::Error::UnsupportedDiskKind))
+        }
+    }
+    fn create1216(bpb: BPBFoundation) -> Self {
         let tail = BPBTail::new();
         let sec_size = bpb.sec_size() as usize;
         let used = JMP_BOOT.len() + OEM_NAME.len() + bpb.len() + tail.len();
@@ -281,10 +304,12 @@ impl BootSector {
             remainder 
         }
     }
-    /// This replaces the BPB foundation fields with the provided ones.
+    /// This replaces the BPB foundation fields with a tabulated one.
     /// This is used when we detect a 160K or 180K disk, where the BPB data cannot be relied on.
-    pub fn replace_foundation(&mut self,bpb: BPBFoundation) {
-        self.foundation = bpb;
+    pub fn replace_foundation(&mut self,kind: &crate::img::DiskKind) -> STDRESULT {
+        let lookup = Self::create(kind)?;
+        self.foundation = lookup.foundation;
+        Ok(())
     }
     /// Verify that the sector data is a valid boot sector,
     /// should be called before unpacking with from_bytes.
@@ -320,7 +345,7 @@ impl BootSector {
         ans
     }
     pub fn label(&self) -> Option<[u8;11]> {
-        if self.tail.boot_sig==0x29 {
+        if self.tail.boot_sig==0x29 && self.tail.vol_lab!=[0x20;11] {
             Some(self.tail.vol_lab)
         } else {
             None
@@ -347,6 +372,9 @@ impl BootSector {
     pub fn secs_per_clus(&self) -> u8 {
         self.foundation.sec_per_clus()
     }
+    pub fn media_byte(&self) -> u8 {
+        self.foundation.media
+    }
     /// only meaningful for FAT32
     pub fn root_dir_cluster1(&self) -> u64 {
         u32::from_le_bytes(self.extension32.root_cluster) as u64
@@ -358,6 +386,9 @@ impl BootSector {
     /// sectors used by the root directory, rounding up, zero for FAT32
     pub fn root_dir_secs(&self) -> u64 {
         self.foundation.root_dir_secs()
+    }
+    pub fn num_fats(&self) -> u64 {
+        self.foundation.num_fats as u64
     }
     /// sectors occupied by 1 FAT
     pub fn fat_secs(&self) -> u64 {
@@ -419,12 +450,12 @@ impl BootSector {
     }
 }
 
-pub const SSDD_525_8: BPBFoundation = BPBFoundation {
+const SSDD_525_8: BPBFoundation = BPBFoundation {
     bytes_per_sec: [0,2],
     sec_per_clus: 1,
     reserved_sectors: [1,0],
     num_fats: 2,
-    root_ent_cnt: u16::to_le_bytes(4*512/32),
+    root_ent_cnt: u16::to_le_bytes(0x40),
     tot_sec_16: u16::to_le_bytes(320),
     media: 0xfe,
     fat_size_16: [1,0],
@@ -434,12 +465,12 @@ pub const SSDD_525_8: BPBFoundation = BPBFoundation {
     tot_sec_32: [0,0,0,0]
 };
 
-pub const SSDD_525_9: BPBFoundation = BPBFoundation {
+const SSDD_525_9: BPBFoundation = BPBFoundation {
     bytes_per_sec: [0,2],
     sec_per_clus: 1,
     reserved_sectors: [1,0],
     num_fats: 2,
-    root_ent_cnt: u16::to_le_bytes(4*512/32),
+    root_ent_cnt: u16::to_le_bytes(0x40),
     tot_sec_16: u16::to_le_bytes(360),
     media: 0xfc,
     fat_size_16: [1,0],
@@ -449,12 +480,12 @@ pub const SSDD_525_9: BPBFoundation = BPBFoundation {
     tot_sec_32: [0,0,0,0]
 };
 
-pub const DSDD_525_8: BPBFoundation = BPBFoundation {
+const DSDD_525_8: BPBFoundation = BPBFoundation {
     bytes_per_sec: [0,2],
     sec_per_clus: 2,
     reserved_sectors: [1,0],
     num_fats: 2,
-    root_ent_cnt: u16::to_le_bytes(7*512/32),
+    root_ent_cnt: u16::to_le_bytes(0x70),
     tot_sec_16: u16::to_le_bytes(640),
     media: 0xff,
     fat_size_16: [1,0],
@@ -464,17 +495,92 @@ pub const DSDD_525_8: BPBFoundation = BPBFoundation {
     tot_sec_32: [0,0,0,0]
 };
 
-pub const DSDD_525_9: BPBFoundation = BPBFoundation {
+const DSDD_525_9: BPBFoundation = BPBFoundation {
     bytes_per_sec: [0,2],
     sec_per_clus: 2,
     reserved_sectors: [1,0],
     num_fats: 2,
-    root_ent_cnt: u16::to_le_bytes(7*512/32),
+    root_ent_cnt: u16::to_le_bytes(0x70),
     tot_sec_16: u16::to_le_bytes(720),
     media: 0xfd,
     fat_size_16: [2,0],
     sec_per_trk: [9,0],
     num_heads: [1,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const DSQD_525: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [0,2],
+    sec_per_clus: 2,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(0x70),
+    tot_sec_16: u16::to_le_bytes(1280),
+    media: 0xfb,
+    fat_size_16: [2,0],
+    sec_per_trk: [8,0],
+    num_heads: [2,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const DSHD_525: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [0,2],
+    sec_per_clus: 1,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(0xe0),
+    tot_sec_16: u16::to_le_bytes(2400),
+    media: 0xf9,
+    fat_size_16: [7,0],
+    sec_per_trk: [15,0],
+    num_heads: [2,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const D35_720: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [0,2],
+    sec_per_clus: 2,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(0x70),
+    tot_sec_16: u16::to_le_bytes(1440),
+    media: 0xf9,
+    fat_size_16: [3,0],
+    sec_per_trk: [9,0],
+    num_heads: [2,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const D35_1440: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [0,2],
+    sec_per_clus: 1,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(0xe0),
+    tot_sec_16: u16::to_le_bytes(2880),
+    media: 0xf0,
+    fat_size_16: [9,0],
+    sec_per_trk: [12,0],
+    num_heads: [2,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const D35_2880: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [0,2],
+    sec_per_clus: 2,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(0xf0),
+    tot_sec_16: u16::to_le_bytes(5760),
+    media: 0xf0,
+    fat_size_16: [9,0],
+    sec_per_trk: [24,0],
+    num_heads: [2,0],
     hidd_sec: [0,0,0,0],
     tot_sec_32: [0,0,0,0]
 };

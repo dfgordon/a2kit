@@ -16,6 +16,8 @@ pub mod fat;
 /// Enumerates bios errors.  The `Display` trait will print equivalent long message.
 #[derive(thiserror::Error,Debug)]
 pub enum Error {
+    #[error("unsupported disk kind")]
+    UnsupportedDiskKind,
     #[error("incompatible disk kind")]
     IncompatibleDiskKind,
     #[error("problem accessing sector")]

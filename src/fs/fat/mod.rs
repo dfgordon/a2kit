@@ -36,16 +36,25 @@ pub struct Disk {
 }
 
 impl Disk {
-    fn new_fimg(chunk_len: usize) -> super::FileImage {
+    fn new_fimg(chunk_len: usize,set_time: bool) -> super::FileImage {
+        let now = chrono::Local::now().naive_local();
+        let created = match set_time {
+            true => [
+                vec![pack::pack_tenths(Some(now))],
+                pack::pack_time(Some(now)).to_vec(),
+                pack::pack_date(Some(now)).to_vec()
+            ].concat(),
+            false => vec![0;5]
+        };
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
             file_system: String::from("fat"),
             fs_type: vec![0;3],
             aux: vec![],
             eof: vec![0;4],
-            created: vec![0;4],
-            modified: vec![0;4],
-            access: vec![0;2], // only date
+            created: created.clone(),
+            modified: vec![created[1],created[2],created[3],created[4]],
+            access: vec![0], // attributes, do not confuse with access time
             version: vec![12],
             min_version: vec![12],
             chunk_len,
@@ -70,10 +79,10 @@ impl Disk {
         };
         match img.kind() {
             img::DiskKind::D525(img::names::IBM_SSDD_8) => {
-                boot_sector.replace_foundation(bpb::SSDD_525_8);
+                boot_sector.replace_foundation(&img.kind()).expect("intrinsic BPB missing");
             }
             img::DiskKind::D525(img::names::IBM_SSDD_9) => {
-                boot_sector.replace_foundation(bpb::SSDD_525_9);
+                boot_sector.replace_foundation(&img.kind()).expect("intrinsic BPB missing");
             }
             _ => {}
         }
@@ -94,7 +103,11 @@ impl Disk {
         debug!("FAT boot sector was not readable");
         return false;
     }
-    fn lsec_to_chs(&self,lsec: usize) -> Result<[usize;3],DYNERR> {
+    fn get_chs(&self,ptr: &Ptr) -> Result<[usize;3],DYNERR> {
+        let lsec = match ptr {
+            Ptr::LogicalSector(s) => *s,
+            _ => panic!("wrong pointer type")
+        };
         let psec = lsec % self.boot_sector.secs_per_track() as usize;
         let trk = lsec / self.boot_sector.secs_per_track() as usize;
         if trk >= self.img.track_count() {
@@ -107,15 +120,18 @@ impl Disk {
     fn export_clus(&self,block: usize) -> Block {
         Block::FAT((self.boot_sector.first_cluster_sec(block as u64),self.boot_sector.secs_per_clus()))
     }
+    fn clus_in_rng(&self,block: usize) -> bool {
+        block >= fat::FIRST_DATA_CLUSTER as usize && block < fat::FIRST_DATA_CLUSTER as usize + self.boot_sector.cluster_count() as usize
+    }
     /// Open buffer if not already present.  Will usually be called indirectly.
-    /// TODO: which FAT are we using?
+    /// The backup FAT will be written when the buffer is written back.
     fn open_fat_buffer(&mut self) -> STDRESULT {
         if self.maybe_fat==None {
             let fat_secs = self.boot_sector.fat_secs();
             let mut ans = Vec::new();
             let sec1 = self.boot_sector.res_secs() as u64;
             for isec in sec1..sec1+fat_secs {
-                let [cyl,head,sec] = self.lsec_to_chs(isec as usize)?;
+                let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
                 let mut buf = self.img.read_sector(cyl,head,sec)?;
                 ans.append(&mut buf);
             }
@@ -133,19 +149,23 @@ impl Disk {
     }
     /// Buffer needs to be written back when an external caller
     /// asks, directly or indirectly, for the underlying image.
-    /// TODO: which FAT are we writing back?
     fn writeback_fat_buffer(&mut self) -> STDRESULT {
         let buf = match self.maybe_fat.as_ref() {
             Some(fat) => fat.clone(),
             None => return Ok(())
         };
+        let num_fats = self.boot_sector.num_fats();
         let fat_secs = self.boot_sector.fat_secs();
-        let sec1 = self.boot_sector.res_secs() as u64;
+        let mut sec1 = self.boot_sector.res_secs() as u64;
         let mut offset = 0;
-        for isec in sec1..sec1+fat_secs {
-            let [cyl,head,sec] = self.lsec_to_chs(isec as usize)?;
-            self.img.write_sector(cyl,head,sec,&buf[offset..])?;
-            offset += self.boot_sector.sec_size() as usize;
+        for _fat in 0..num_fats {
+            for isec in sec1..sec1+fat_secs {
+                let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
+                self.img.write_sector(cyl,head,sec,&buf[offset..])?;
+                offset += self.boot_sector.sec_size() as usize;
+            }
+            offset = 0;
+            sec1 += fat_secs;
         }
         Ok(())
     }
@@ -155,7 +175,8 @@ impl Disk {
     }
     fn num_free_blocks(&mut self) -> Result<usize,DYNERR> {
         let mut free: usize = 0;
-        for i in 0..self.boot_sector.cluster_count() as usize {
+        let beg = fat::FIRST_DATA_CLUSTER as usize;
+        for i in beg..beg+self.boot_sector.cluster_count() as usize {
             if self.is_block_free(i)? {
                 free += 1;
             }
@@ -229,70 +250,94 @@ impl Disk {
         return Ok(None);
     }
     /// Format a disk with the FAT file system, by this point the boot sector is presumed to be buffered.
-    /// TODO: implement
     pub fn format(&mut self, vol_name: &str, time: Option<chrono::NaiveDateTime>) -> STDRESULT {
-        if !pack::is_name_valid(vol_name) {
+        if !pack::is_label_valid(vol_name) && vol_name.len()>0 {
             error!("FAT volume name invalid");
             return Err(Box::new(Error::Syntax));
         }
+        let block_size = self.boot_sector.block_size() as usize;
         let sec_size = self.boot_sector.sec_size() as usize;
-        let tracks = self.img.track_count();
-        let heads = self.boot_sector.heads() as usize;
-        let secs = self.boot_sector.secs_per_track() as usize;
-        // make sure we start with all 0.
+        let media = self.boot_sector.media_byte() as u32;
+        // Start with 0 in reserved/FAT/root, f6 in data region
         // n.b. blocks can only access the data region.
-        trace!("formatting: zero all");
+        trace!("fill sectors with 0x00 and 0xf6");
         let zeroes: Vec<u8> = vec![0;sec_size];
-        for cyl in 0..tracks/heads {
-            for head in 0..heads {
-                for sec in 1..secs+1 {
-                    self.img.write_sector(cyl,head,sec,&zeroes)?;
-                }
+        let f6: Vec<u8> = vec![0xf6;sec_size];
+        for lsec in 0..self.boot_sector.tot_sec() as usize {
+            let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec))?;
+            if lsec < self.boot_sector.first_data_sec() as usize {
+                self.img.write_sector(c,h,s,&zeroes)?;
+            } else {
+                self.img.write_sector(c,h,s,&f6)?;
             }
         }
-        // write the boot sector (perhaps rewriting)
+        // write the boot sector (perhaps rewriting).
+        // may be written again if FAT32.
+        trace!("write boot sector");
         self.img.write_sector(0,0,1,&self.boot_sector.to_bytes())?;
 
         // FAT entry one is the media type
+        trace!("setup the first FAT");
         let (typ,buf) = self.get_fat_buffer()?;
-        fat::set_cluster(0, 0xf0, typ, buf);
+        fat::set_cluster(0, media + 0xf00, typ, buf);
         // FAT entry two is EOC
         fat::mark_last(1, typ, buf);
 
-        // Create root directory appropriate for FAT type
+        // Create root directory appropriate for FAT type.
+        // For FAT32 we expect the first root directory cluster to be in the BPB already.
         match typ {
             32 => {
-                // TODO: implement
+                trace!("create FAT32 root directory");
+                let root_cluster = self.boot_sector.root_dir_cluster1() as usize;
+                let mut dir = Directory::new();
+                dir.expand(block_size/directory::DIR_ENTRY_SIZE);
+                self.write_block(&vec![0;block_size], 0, root_cluster,0)?;
+                if vol_name.len()>0 {
+                    let mut label = Entry::create_label(vol_name,time);
+                    label.set_attr(directory::VOLUME_ID | directory::ARCHIVE);
+                    let mut loc = EntryLocation {
+                        cluster1: Some(Ptr::Cluster(root_cluster)),
+                        entry: Ptr::Entry(0),
+                        dir
+                    };
+                    self.writeback_directory_entry(&mut loc,&label)?;
+                }
             },
             _ => {
-                let mut dir = Directory::new();
-                dir.expand(self.boot_sector.root_dir_entries() as usize);
-                let mut label = Entry::create(vol_name,time);
-                label.set_attr(directory::VOLUME_ID);
-                let loc = EntryLocation {
-                    cluster1: None,
-                    entry: Ptr::Entry(0),
-                    dir
-                };
-                self.writeback_directory_entry(&loc)?;
+                trace!("create FAT{} root directory",typ);
+                // unless there is a label, there is actually nothing to do
+                if vol_name.len()>0 {
+                    let mut dir = Directory::new();
+                    dir.expand(self.boot_sector.root_dir_entries() as usize);
+                    let mut label = Entry::create_label(vol_name,time);
+                    label.set_attr(directory::VOLUME_ID | directory::ARCHIVE);
+                    let mut loc = EntryLocation {
+                        cluster1: None,
+                        entry: Ptr::Entry(0),
+                        dir
+                    };
+                    self.writeback_directory_entry(&mut loc,&label)?;
+                }
             }
         }
-
+        trace!("write FAT buffer to all FAT sectors");
         self.writeback_fat_buffer()
     }
     /// given any cluster, return the next cluster, or None if this is the last one.
-    /// panics if the current cluster is damaged or free.
+    /// return error if the current cluster is damaged or out of range.
     fn next_cluster(&mut self,curr: &Ptr) -> Result<Option<Ptr>,DYNERR> {
         let n = *match curr {
             Ptr::Cluster(n) => n,
             _ => panic!("wrong pointer type")
         };
+        if !self.clus_in_rng(n) {
+            error!("cluster {} out of range",n);
+            return Err(Box::new(Error::BadFAT));
+        }
         let (typ,fat_buf) = self.get_fat_buffer()?;
         if fat::is_damaged(n, typ, fat_buf) {
-            panic!("cluster link at {} points to damaged cluster",n);
-        }
-        if fat::is_free(n, typ, fat_buf) {
-            panic!("cluster link at {} points to free cluster",n);
+            error!("damaged cluster in chain");
+            return Err(Box::new(Error::BadFAT))
         }
         match fat::is_last(n,typ,fat_buf) {
             true => Ok(None),
@@ -300,7 +345,6 @@ impl Disk {
         }
     }
     /// given any cluster, return the last cluster in its chain.
-    /// panics if any damaged or free cluster is found in the chain.
     fn last_cluster(&mut self,initial: &Ptr) -> Result<Ptr,DYNERR> {
         let mut curr = *initial;
         let max_clusters = self.boot_sector.cluster_count() as usize;
@@ -316,6 +360,14 @@ impl Disk {
     /// all the clusters in the chain.
     fn get_cluster_chain_data(&mut self,initial: &Ptr) -> Result<Vec<u8>,DYNERR> {
         let mut ans: Vec<u8> = Vec::new();
+        match initial.unwrap() {
+            0 => return Ok(ans),
+            c => {
+                if !self.clus_in_rng(c) {
+                    return Err(Box::new(Error::FirstClusterInvalid));
+                }
+            }
+        }
         let mut curr = *initial;
         let max_clusters = self.boot_sector.cluster_count() as usize;
         for _i in 0..max_clusters {
@@ -329,8 +381,16 @@ impl Disk {
         }
         Err(Box::new(Error::BadFAT))
     }
-    /// given an initial cluster, follow the chain to free fall clusters in the chain.
+    /// given an initial cluster, follow the chain to free all clusters in the chain.
     fn deallocate_cluster_chain_data(&mut self,initial: &Ptr) -> STDRESULT {
+        match initial.unwrap() {
+            0 => return Ok(()),
+            c => {
+                if !self.clus_in_rng(c) {
+                    return Err(Box::new(Error::FirstClusterInvalid));
+                }
+            }
+        }
         let mut curr = *initial;
         let max_clusters = self.boot_sector.cluster_count() as usize;
         for _i in 0..max_clusters {
@@ -372,7 +432,7 @@ impl Disk {
                 let sec_rng = self.boot_sector.root_dir_sec_rng();
                 debug!("get FAT{} root at logical sector {}",self.typ,sec_rng[0]);
                 for lsec in (sec_rng[0] as usize)..(sec_rng[1] as usize) {
-                    let [cyl,head,sec] = self.lsec_to_chs(lsec)?;
+                    let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(lsec))?;
                     buf.append(&mut self.img.read_sector(cyl, head, sec)?);
                 }
                 Directory::from_bytes(&buf)
@@ -431,9 +491,10 @@ impl Disk {
     /// Write a changed entry back to disk using the directory buffer.
     /// This zaps only the cluster/sector in which the entry resides, the FAT buffer is assumed already correct.
     /// FAT12 and FAT16 root directories are signaled by loc.cluster1==None.
-    fn writeback_directory_entry(&mut self,loc: &EntryLocation) -> STDRESULT {
+    fn writeback_directory_entry(&mut self,loc: &mut EntryLocation,entry: &Entry) -> STDRESULT {
         let entries_per_cluster = self.boot_sector.block_size() as usize / directory::DIR_ENTRY_SIZE;
         let entries_per_sector = self.boot_sector.sec_size() as usize / directory::DIR_ENTRY_SIZE;
+        loc.dir.set_entry(&loc.entry, entry);
         match loc.cluster1 {
             Some(cluster1) => {
                 let mut data: Vec<u8> = Vec::new();
@@ -453,7 +514,7 @@ impl Disk {
                 for i in entry_beg..entry_beg+entries_per_cluster {
                     data.append(&mut loc.dir.get_raw_entry(&Ptr::Entry(i)).to_vec());
                 }
-                let [cyl,head,sec] = self.lsec_to_chs(lsec)?;
+                let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(lsec))?;
                 self.img.write_sector(cyl, head, sec, &data)
             }
         }
@@ -474,71 +535,86 @@ impl Disk {
         }
         Err(Box::new(Error::DirectoryFull))
     }
-    /// Put path as [volume,subdir,subdir,...,last] where last could be an empty string,
-    /// which indicates this is a directory.  If last is not empty, it could be either directory or file.
+    /// Put path as [subdir,subdir,...,last] where last could be an empty string,
+    /// which indicates this is a directory (if path is "/" we get [""]).
+    /// If last is not empty, it could be either directory or file.
+    /// Path is always absolute, starting slash is optional.
     /// Also check that the path is not too long.
-    fn normalize_path(&mut self,vol_name: &str,path: &str) -> Result<Vec<String>,DYNERR> {
-        let mut path_nodes: Vec<String> = path.split("/").map(|s| s.to_string().to_uppercase()).collect();
-        if &path[0..1]!="/" {
-            path_nodes.insert(0,vol_name.to_string());
-        } else {
-            path_nodes = path_nodes[1..].to_vec();
+    fn normalize_path(&mut self,path: &str) -> Result<Vec<String>,DYNERR> {
+        let mut normalized = path.to_string();
+        if normalized.len()==0 {
+            normalized = "/".to_string();
         }
-        // check path length
-        let mut len = 0;
-        for s in path_nodes.iter() {
-            len += 1 + s.len();
+        if &normalized[0..1]!="/" {
+            normalized.insert(0,'/');
         }
-        if len>63 {
-            error!("MS-DOS path too long {}",len);
+        if normalized.len()>63 {
+            error!("MS-DOS path too long {}",normalized.len());
             return Err(Box::new(Error::Syntax));
         }
-        return Ok(path_nodes);
+        let path_nodes: Vec<String> = normalized.split("/").map(|s| s.to_string().to_uppercase()).collect();
+
+        // check empty nodes
+        for i in 1..path_nodes.len() {
+            if path_nodes[i].len()==0 && i!=path_nodes.len()-1 {
+                error!("empty path node not allowed");
+                return Err(Box::new(Error::Syntax));
+            }
+        }
+        return Ok(path_nodes[1..].to_vec());
     }
     /// split the path into the last node (file or directory) and its parent path
     fn split_path(&mut self,path: &str) -> Result<[String;2],DYNERR> {
-        let (vol_name,_root) = self.get_root_dir()?;
-        let mut path_nodes = self.normalize_path(&vol_name,path)?;
+        let mut path_nodes = self.normalize_path(path)?;
+        if path_nodes.len()==0 {
+            error!("cannot resolve path {}",path);
+            return Err(Box::new(Error::FileNotFound));
+        }
         // if last node is empty, remove it (means we have a directory)
         if path_nodes[path_nodes.len()-1].len()==0 {
             path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
         }
         let name = path_nodes[path_nodes.len()-1].clone();
-        if path_nodes.len()<2 {
-            return Err(Box::new(Error::FileNotFound));
-        } else {
-            path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
-        }
+        path_nodes = path_nodes[0..path_nodes.len()-1].to_vec();
         let parent_path: String = path_nodes.iter().map(|s| "/".to_string() + s).collect::<Vec<String>>().concat();
         return Ok([parent_path,name]);
     }
-    /// will return (parent directory,file/dir), or (None,file/dir), in case file/dir is root directory
+    /// Goto the specified path and return tuple (maybe_parent,file).
+    /// * if file is the root directory, maybe_parent==None
+    /// * if the path contains a wildcard in the last node, the returned file contains the pattern, not the matches
     fn goto_path(&mut self,path: &str) -> Result<(Option<FileInfo>,FileInfo),DYNERR> {
-        let (vol_name,root) = self.get_root_dir()?;
+        let (_vol_name,root) = self.get_root_dir()?;
         let mut parent_info: Option<FileInfo> = None;
         let root_info: FileInfo = FileInfo::create_root(match self.typ {
             12 | 16 => 0,
             32 => self.boot_sector.root_dir_cluster1() as usize,
             _ => panic!("unexpected FAT type")
         });
-        let path_nodes = self.normalize_path(&vol_name,path)?;
-        // path_nodes = [volume,dir,dir,...,dir|file|empty]
+        let path_nodes = self.normalize_path(path)?;
+        debug!("search path {:?}",path_nodes);
+        // path_nodes = [dir,dir,...,dir|file|empty]
         let n = path_nodes.len();
         // if this is the root directory, return special FileInfo
-        if n<3 && path_nodes[n-1]=="" {
+        if n==1 && path_nodes[0]=="" {
+            debug!("goto root directory");
             return Ok((parent_info,root_info));
         }
         // walk the tree
         let mut files = root.build_files()?;
         parent_info = Some(root_info);
-        for level in 1..n {
+        for level in 0..n {
+            debug!("searching level {}: {}",level,parent_info.clone().unwrap().name);
             let subdir = path_nodes[level].clone();
+            let terminus = level+1 == n;
+            let null_terminus = level+2 == n && path_nodes[n-1] == "";
+            let wildcard_terminus = level+1 == n && (subdir.contains("*") || subdir.contains("?"));
+            if wildcard_terminus {
+                return Ok((parent_info,FileInfo::create_wildcard(&subdir)));
+            }
             let curr = match directory::get_file(&subdir, &files) {
                 Some(finfo) => finfo.clone(),
                 None => return Err(Box::new(Error::FileNotFound))
             };
-            let terminus = level == n-1;
-            let null_terminus = level == n-2 && path_nodes[n-1] == "";
             if terminus || null_terminus {
                 return Ok((parent_info,curr));
             }
@@ -550,7 +626,7 @@ impl Disk {
     }
     /// Read any file into a file image
     fn read_file(&mut self,parent: &FileInfo,finfo: &FileInfo) -> Result<super::FileImage,DYNERR> {
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize);
+        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,false);
         // TODO: eliminate redundancy, by this time the directory as already been read at least once
         let dir = self.get_directory(&parent.cluster1)?;
         let entry = dir.get_entry(&Ptr::Entry(finfo.idx));
@@ -570,12 +646,10 @@ impl Disk {
             if let Some(parent) = maybe_parent {
                 let search_dir = self.get_directory(&parent.cluster1)?;
                 let files = search_dir.build_files()?;
-                if !files.contains_key(new_name) {
-                    return Ok(EntryLocation { cluster1: parent.cluster1, entry: Ptr::Entry(file_info.idx), dir: search_dir })
-                } else {
-                    // TODO: this check did not work
-                    return Err(Box::new(Error::DuplicateFile));
-                }
+                return match directory::get_file(new_name, &files) {
+                    Some(_) => Err(Box::new(Error::DuplicateFile)),
+                    None => Ok(EntryLocation { cluster1: parent.cluster1, entry: Ptr::Entry(file_info.idx), dir: search_dir })
+                };
             } else {
                 error!("cannot rename root");
                 return Err(Box::new(Error::General));
@@ -591,13 +665,13 @@ impl Disk {
             error!("invalid MS-DOS name {}",&new_name);
             return Err(Box::new(Error::Syntax));
         }
+        debug!("write {} to {}",new_name,parent_path);
         if let Ok((_maybe_grandparent,parent)) = self.goto_path(&parent_path) {
             let mut search_dir = self.get_directory(&parent.cluster1)?;
             let files = search_dir.build_files()?;
-            if files.contains_key(&new_name) {
-                return Err(Box::new(Error::DuplicateFile));
-            } else {
-                return match self.get_available_entry(&mut search_dir, &parent.cluster1) {
+            return match directory::get_file(&new_name, &files) {
+                Some(_) => Err(Box::new(Error::DuplicateFile)),
+                None => match self.get_available_entry(&mut search_dir, &parent.cluster1) {
                     Ok(ptr) => Ok((new_name,EntryLocation { cluster1: parent.cluster1, entry: ptr, dir: search_dir})),
                     Err(e) => Err(e)
                 } 
@@ -606,11 +680,10 @@ impl Disk {
         return Err(Box::new(Error::FileNotFound));
     }
     /// Write any file.  Use `FileImage::desequence` to load sequential data into the file image.
-    /// The entry must already exist and point to the next available block.
+    /// The entry must already exist, but cluster1 pointer will be set herein.
     /// Also writes back changes to the directory (but FAT remains in buffer).
     fn write_file(&mut self,loc: &mut EntryLocation,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         let mut entry = loc.dir.get_entry(&loc.entry);
-        entry.fimg_to_metadata(fimg)?;
         if self.num_free_blocks()? < fimg.end() {
             return Err(Box::new(Error::DiskFull));
         }
@@ -619,6 +692,9 @@ impl Disk {
             if let Some(data) = fimg.chunks.get(&count) {
                 if let Some(curr) = self.get_available_block()? {
                     self.write_block(data, prev, curr, 0)?;
+                    if count==0 {
+                        entry.set_cluster(curr);
+                    }
                     prev = curr;
                 } else {
                     panic!("unexpectedly ran out of disk space");
@@ -629,8 +705,7 @@ impl Disk {
             }
         }
         entry.set_attr(directory::ARCHIVE);
-        loc.dir.set_entry(&loc.entry, &entry);
-        self.writeback_directory_entry(loc)?;
+        self.writeback_directory_entry(loc,&entry)?;
         return Ok(entry.eof());
     }
     /// modify a file entry, optionally change attributes, rename; attempt to rename read-only file will fail.
@@ -653,41 +728,65 @@ impl Disk {
             }
         }
         entry.set_attr(directory::ARCHIVE);
-        loc.dir.set_entry(&loc.entry, &entry);
-        self.writeback_directory_entry(&loc)
+        self.writeback_directory_entry(loc,&entry)
     }
 }
 
 impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len)
+        Disk::new_fimg(chunk_len,true)
     }
-    fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT {
-        // TODO: resolve path into directory, wildcard spec, and /w option
-        let (_maybe_parent,dir_info) = self.goto_path(path)?;
-        if !dir_info.directory {
-            error!("directory flag not set");
-            return Err(Box::new(Error::ReadFault));
-        }
+    fn catalog_to_stdout(&mut self, path_and_options: &str) -> STDRESULT {
+        let items: Vec<&str> = path_and_options.split_whitespace().collect();
+        let (path,opt) = match items.len() {
+            1 => (items[0],""),
+            2 => (items[0],items[1]),
+            _ => return Err(Box::new(Error::Syntax))
+        };
+        let (dir_info,pattern) = match self.goto_path(path)? {
+            (Some(parent),dir) => {
+                match (dir.wildcard.len(),dir.directory) {
+                    (0,true) => (dir,"".to_string()),
+                    (0,false) => (parent,[dir.name,".".to_string(),dir.typ].concat()),
+                    _ => (parent,dir.wildcard)
+                }
+            },
+            (None,dir) => {
+                match (dir.wildcard.len(),dir.directory) {
+                    (0,true) => (dir,"".to_string()),
+                    _ => return Err(Box::new(Error::Syntax)),
+                }
+            }
+        };
         let dir = self.get_directory(&dir_info.cluster1)?;
-        display::dir(&dir,&self.boot_sector,"")
+        let (vol_lab,_) = self.get_root_dir()?;
+        let free = self.num_free_blocks()? as u64 * self.boot_sector.sec_size() * self.boot_sector.secs_per_clus() as u64;
+        match opt.to_lowercase().as_str() {
+            "" => display::dir(&path,&vol_lab,&dir,&pattern,false,free),
+            "/w" => display::dir(&path,&vol_lab,&dir,&pattern,true,free),
+            _ => Err(Box::new(Error::InvalidSwitch))
+        }
     }
     fn create(&mut self,path: &str) -> STDRESULT {
-        let (name,loc) = self.prepare_to_write(path)?;
+        let (name,mut loc) = self.prepare_to_write(path)?;
         if let Some(new_cluster) = self.get_available_block()? {
             let parent_cluster = match loc.cluster1 {
                 Some(c) => c.unwrap(),
                 None => 0 // this holds even for FAT32
             };
-            let (_entry, dir_data) = Entry::create_subdir(&name,parent_cluster,new_cluster,self.boot_sector.block_size() as usize,None);
+            let (entry, dir_data) = Entry::create_subdir(&name,parent_cluster,new_cluster,self.boot_sector.block_size() as usize,None);
             self.write_block(&dir_data, 0, new_cluster, 0)?;
-            self.writeback_directory_entry(&loc)    
+            self.writeback_directory_entry(&mut loc,&entry)    
         } else {
             Err(Box::new(Error::DiskFull))
         }
     }
     fn delete(&mut self,path: &str) -> STDRESULT {
         let (maybe_parent,finfo) = self.goto_path(path)?;
+        if finfo.wildcard.len()>0 {
+            error!("wildcards are not allowed here");
+            return Err(Box::new(Error::Syntax));
+        }
         // files and directories can be delete the same way, except for a directory we
         // need some additional checks first:
         if finfo.directory {
@@ -708,11 +807,12 @@ impl super::DiskFS for Disk {
                 let entry_ptr = Ptr::Entry(finfo.idx);
                 let mut entry = dir.get_entry(&entry_ptr);
                 entry.erase(false);
-                self.writeback_directory_entry(&EntryLocation {
+                self.writeback_directory_entry(&mut EntryLocation {
                     cluster1: parent.cluster1,
                     entry: entry_ptr,
                     dir
-                })?;
+                }, &entry)?;
+                debug!("erased entry {:?}",entry.to_bytes());
                 if let Some(cluster1) = finfo.cluster1 {
                     self.deallocate_cluster_chain_data(&cluster1)?;
                 }
@@ -823,7 +923,7 @@ impl super::DiskFS for Disk {
             Some(v) => [dat.to_vec(),v.to_vec()].concat(),
             None => dat.to_vec()
         };
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize);
+        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,true);
         fimg.desequence(&padded);
         return self.write_any(path,&fimg);
     }
@@ -850,7 +950,7 @@ impl super::DiskFS for Disk {
         Err(Box::new(Error::ReadFault))
     }
     fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize);
+        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,true);
         fimg.desequence(dat);
         return self.write_any(path,&fimg);
     }
@@ -914,7 +1014,8 @@ impl super::DiskFS for Disk {
             Ok((name,mut loc)) => {
                 // create the entry
                 let mut entry = Entry::create(&name,None);
-                entry.fimg_to_metadata(fimg)?;
+                entry.fimg_to_metadata(fimg,true)?;
+                debug!("create entry {:?}",entry.to_bytes());
                 loc.dir.set_entry(&loc.entry, &entry);
                 // write blocks
                 match self.write_file(&mut loc,fimg) {
@@ -940,12 +1041,73 @@ impl super::DiskFS for Disk {
         }
     }
     fn standardize(&mut self,ref_con: u16) -> HashMap<Block,Vec<usize>> {
+        // We have to ignore timestamps and the unused bytes in the last cluster of any chain.
+        // Initial ref_con should be 0.  Not meant for FAT32.
         let mut ans: HashMap<Block,Vec<usize>> = HashMap::new();
+        let cluster1 = match ref_con {
+            0 => None,
+            _ => Some(Ptr::Cluster(ref_con as usize))
+        };
+        let dir = self.get_directory(&cluster1).expect("disk error");
+        let files = dir.build_files().expect("could not build files");
+        for finfo in files.values() {
+            // recursion into subdirectory
+            if finfo.directory && finfo.name!="." && finfo.name!=".." {
+                let sub_map = self.standardize(finfo.cluster1.unwrap().unwrap() as u16);
+                super::combine_ignorable_offsets(&mut ans, sub_map);
+            }
+            // ignore timestamps
+            if ref_con>0 {
+                let links = finfo.idx*32/self.boot_sector.block_size() as usize;
+                let offset = finfo.idx*32%self.boot_sector.block_size() as usize;
+                let mut curr = Ptr::Cluster(cluster1.unwrap().unwrap());
+                for _i in 0..links {
+                    curr = self.next_cluster(&curr).expect("could not link cluster").unwrap();
+                }
+                let offsets = Entry::standardize(offset);
+                super::add_ignorable_offsets(&mut ans,self.export_clus(curr.unwrap()),offsets);
+            }
+            // ignore trailing bytes in the last cluster
+            if let Some(c1) = finfo.cluster1 {
+                if !finfo.directory && !finfo.volume_id {
+                    let block_size = self.boot_sector.block_size() as usize;
+                    let last = self.last_cluster(&c1).expect("could not link cluster");
+                    let ignore1 = finfo.eof % block_size;
+                    let offsets = (ignore1..block_size).collect();
+                    super::add_ignorable_offsets(&mut ans, self.export_clus(last.unwrap()), offsets);
+                }
+            }
+        }
         return ans;
     }
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
+        // Not meant for FAT32
         self.writeback_fat_buffer().expect("disk error");
         let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        // compare the FATs
+        for lsec in self.boot_sector.res_secs() as usize..self.boot_sector.root_dir_sec_rng()[0] as usize {
+            let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec)).expect("bad sector access");
+            let actual = self.img.read_sector(c,h,s).expect("bad sector access");
+            let expected = emulator_disk.get_img().read_sector(c, h, s).expect("bad sector access");
+            assert_eq!(actual,expected," at sector {}",lsec)
+        }
+        // compare root directory
+        let [beg,end] = self.boot_sector.root_dir_sec_rng();
+        for lsec in beg..end {
+            let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec as usize)).expect("bad sector access");
+            let mut actual = self.img.read_sector(c,h,s).expect("bad sector access");
+            let mut expected = emulator_disk.get_img().read_sector(c, h, s).expect("bad sector access");
+            let offsets = Entry::standardize(0);
+            for i in 0..self.boot_sector.sec_size() as usize {
+                let rel_offset = i%32;
+                if offsets.contains(&rel_offset) {
+                    actual[i] = 0;
+                    expected[i] = 0;
+                }
+            }
+            assert_eq!(actual,expected," at sector {}",lsec)
+        }
+        // compare clusters in the data region
         for block in 2..2+self.boot_sector.cluster_count() {
             let addr = self.export_clus(block as usize);
             let mut actual = self.img.read_block(addr).expect("bad sector access");
@@ -974,27 +1136,28 @@ impl super::DiskFS for Disk {
 
 #[test]
 fn test_path_normalize() {
-    let img = Box::new(crate::img::imd::Imd::create(img::DiskKind::D525(img::names::IBM_SSDD_9)));
-    let boot_sec = bpb::BootSector::create1216(bpb::SSDD_525_9);
+    let kind = img::DiskKind::D525(img::names::IBM_SSDD_9);
+    let img = Box::new(crate::img::imd::Imd::create(kind));
+    let boot_sec = bpb::BootSector::create(&kind).expect("can't create boot sector");
     let mut disk = Disk::from_img(img,Some(boot_sec));
     disk.format(&String::from("DISK 1"),None).expect("disk error");
-    match disk.normalize_path("DISK 1","DIR1") {
-        Ok(res) => assert_eq!(res,["DISK 1","DIR1"]),
+    match disk.normalize_path("/") {
+        Ok(res) => assert_eq!(res,[""]),
         Err(e) => panic!("{}",e)
     }
-    match disk.normalize_path("DISK 1","dir1/") {
-        Ok(res) => assert_eq!(res,["DISK 1","DIR1",""]),
+    match disk.normalize_path("dir1/") {
+        Ok(res) => assert_eq!(res,["DIR1",""]),
         Err(e) => panic!("{}",e)
     }
-    match disk.normalize_path("DISK 1","dir1/sub2") {
-        Ok(res) => assert_eq!(res,["DISK 1","DIR1","SUB2"]),
+    match disk.normalize_path("dir1/sub2") {
+        Ok(res) => assert_eq!(res,["DIR1","SUB2"]),
         Err(e) => panic!("{}",e)
     }
-    match disk.normalize_path("DISK 1","/disk 2/dir1/sub2") {
-        Ok(res) => assert_eq!(res,["DISK 2","DIR1","SUB2"]),
+    match disk.normalize_path("/dir1/sub2/sub3") {
+        Ok(res) => assert_eq!(res,["DIR1","SUB2","SUB3"]),
         Err(e) => panic!("{}",e)
     }
-    match disk.normalize_path("DISK 1","abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno") {
+    match disk.normalize_path("abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno/abcdefghijklmno") {
         Ok(_res) => panic!("normalize_path should have failed with path too long"),
         Err(e) => assert_eq!(e.to_string(),"syntax")
     }

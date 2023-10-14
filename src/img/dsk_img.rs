@@ -159,7 +159,7 @@ impl img::DiskImage for Img {
         })
     }
     fn what_am_i(&self) -> img::DiskImageType {
-        img::DiskImageType::DO
+        img::DiskImageType::IMG
     }
     fn file_extensions(&self) -> Vec<String> {
         file_extensions()
@@ -174,18 +174,18 @@ impl img::DiskImage for Img {
         return self.data.clone();
     }
     fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
-        error!("DO images have no track bits");
+        error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
-        error!("DO images have no track bits");
+        error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
-        error!("DO images have no track bits");
+        error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
     fn display_track(&self,_bytes: &[u8]) -> String {
-        String::from("DO images have no track bits to display")
+        String::from("IMG images have no track bits to display")
     }
 }

@@ -44,14 +44,21 @@ Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
                            | a2kit put -f prog -t atok -d myimg.dsk`
 Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
 
-    let img_types = ["d13","do","po","woz1","woz2","imd","2mg","nib","td0"];
+    let img_types = ["d13","do","po","woz1","woz2","imd","img","2mg","nib","td0"];
     let wrap_types = ["do","po","nib"];
-    let os_names = ["cpm2","cpm3","dos32","dos33","prodos","pascal"];
+    let os_names = ["cpm2","cpm3","dos32","dos33","prodos","pascal","fat"];
     let disk_kinds = [
         "8in",
         "8in-trs80",
         "8in-nabu",
         "5.25in",
+        "5.25in-ibm-ssdd8",
+        "5.25in-ibm-ssdd9",
+        "5.25in-ibm-dsdd8",
+        "5.25in-ibm-dsdd9",
+        "5.25in-ibm-ssqd",
+        "5.25in-ibm-dsqd",
+        "5.25in-ibm-dshd",
         "5.25in-kayii",
         "5.25in-kay4",
         "5.25in-osb-sd",
@@ -59,6 +66,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "3.5in",
         "3.5in-ss",
         "3.5in-ds",
+        "3.5in-ibm-720",
+        "3.5in-ibm-1440",
+        "3.5in-ibm-2880",
         "3in-amstrad",
         "hdmax"
     ];

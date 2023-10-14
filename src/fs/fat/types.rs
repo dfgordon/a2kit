@@ -1,11 +1,14 @@
+use std::str::FromStr;
+use std::fmt;
+use a2kit_macro::DiskStruct;
+use super::super::TextEncoder;
+
 /// Enumerates MS-DOS 3.3 errors.  The `Display` trait will print the long message.
 /// Some have been paraphrased, many omitted.
 #[derive(thiserror::Error,Debug)]
 pub enum Error {
     #[error("general")]
     General,
-    #[error("non-DOS disk")]
-    NonDOSDisk,
     #[error("read fault")]
     ReadFault,
     #[error("sector not found")]
@@ -35,11 +38,6 @@ pub enum Error {
     #[error("incorrect DOS version")]
     IncorrectDOS
 }
-
-// MS-DOS handles text just like CP/M, so we simply make the CP/M
-// handlers available from here.
-type Encoder = crate::fs::cpm::types::Encoder;
-pub type SequentialText = crate::fs::cpm::types::SequentialText;
 
 /// Pointers to the various levels of FAT disk structures.
 /// This may help distinguish the various indices we have to work with.
@@ -85,5 +83,82 @@ impl PartialOrd for Ptr {
 impl Ord for Ptr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.unwrap().cmp(&other.unwrap())
+    }
+}
+
+
+// We can directly re-use the CP/M encoder
+type Encoder = crate::fs::cpm::types::Encoder;
+
+/// Structured representation of sequential text files on disk.
+/// MS-DOS text is like CP/M, except no padding to 128 byte boundaries.
+pub struct SequentialText {
+    pub text: Vec<u8>,
+    terminator: u8
+}
+
+/// Allows the structure to be created from string slices using `from_str`.
+/// This replaces LF/CRLF with CR and flips positive ASCII. Negative ASCII is an error.
+impl FromStr for SequentialText {
+    type Err = std::fmt::Error;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        let encoder = Encoder::new(vec![]);
+        if let Some(dat) = encoder.encode(s) {
+            return Ok(Self {
+                text: dat.clone(),
+                terminator: 0x1a
+            });
+        }
+        Err(std::fmt::Error)
+    }
+}
+
+/// Allows the text to be displayed to the console using `println!`.  This also
+/// derives `to_string`, so the structure can be converted to `String`.
+/// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
+impl fmt::Display for SequentialText {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let encoder = Encoder::new(vec![]);
+        if let Some(ans) = encoder.decode(&self.text) {
+            return write!(f,"{}",ans);
+        }
+        write!(f,"err")
+    }
+}
+
+impl DiskStruct for SequentialText {
+    /// Create an empty structure
+    fn new() -> Self {
+        Self {
+            text: Vec::new(),
+            terminator: 0x1a
+        }
+    }
+    /// Create structure using flattened bytes (typically from disk)
+    fn from_bytes(dat: &Vec<u8>) -> Self {
+        Self {
+            text: match dat.split(|x| *x==0x1a).next() {
+                Some(v) => v.to_vec(),
+                _ => dat.clone()
+            },
+            terminator: 0x1a
+        }
+    }
+    /// Return flattened bytes (typically written to disk)
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut ans: Vec<u8> = Vec::new();
+        ans.append(&mut self.text.clone());
+        ans.push(self.terminator);
+        return ans;
+    }
+    /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
+    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
+        let temp = SequentialText::from_bytes(&dat);
+        self.text = temp.text.clone();
+        self.terminator = 0x1a;
+    }
+    /// Length of the flattened structure
+    fn len(&self) -> usize {
+        self.text.len() + 1
     }
 }

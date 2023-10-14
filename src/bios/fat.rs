@@ -18,9 +18,12 @@
 //! that with FAT32 the high 2 bits are really 26 and 27.
 
 // end of cluster chain (EOC), if FAT entry is >= the value it is EOC.
-const EOC12: u32 = 0xff8;
-const EOC16: u32 = 0xfff8;
-const EOC32: u32 = 0xffffff8; // remember FAT32 is really 28 bits
+const EOC12_MIN: u32 = 0xff8;
+const EOC16_MIN: u32 = 0xfff8;
+const EOC32_MIN: u32 = 0xffffff8; // remember FAT32 is really 28 bits
+const EOC12_SET: u32 = 0xfff;
+const EOC16_SET: u32 = 0xffff;
+const EOC32_SET: u32 = 0xfffffff; // remember FAT32 is really 28 bits
 
 const BAD_CLUSTER12: u32 = 0xff7;
 const BAD_CLUSTER16: u32 = 0xfff7;
@@ -109,9 +112,9 @@ pub fn is_free(n: usize,typ: usize,buf: &Vec<u8>) -> bool {
 
 pub fn is_last(n: usize,typ: usize,buf: &Vec<u8>) -> bool {
     match typ {
-        12 => EOC12<=get_cluster(n,typ,buf),
-        16 => EOC16<=get_cluster(n,typ,buf),
-        32 => EOC32<=get_cluster(n,typ,buf),
+        12 => EOC12_MIN<=get_cluster(n,typ,buf),
+        16 => EOC16_MIN<=get_cluster(n,typ,buf),
+        32 => EOC32_MIN<=get_cluster(n,typ,buf),
         _ => panic!("unexpected FAT type {}",typ)
     }
 }
@@ -131,9 +134,9 @@ pub fn mark_damaged(n: usize,typ: usize,buf: &mut Vec<u8>) {
 
 pub fn mark_last(n: usize,typ: usize,buf: &mut Vec<u8>) {
     match typ {
-        12 => set_cluster(n,EOC12,typ,buf),
-        16 => set_cluster(n,EOC16,typ,buf),
-        32 => set_cluster(n,EOC12,typ,buf),
+        12 => set_cluster(n,EOC12_SET,typ,buf),
+        16 => set_cluster(n,EOC16_SET,typ,buf),
+        32 => set_cluster(n,EOC32_SET,typ,buf),
         _ => panic!("unexpected FAT type {}",typ)
     }
 }

@@ -21,3 +21,7 @@ No builders.  Pascal test disks only contain short Pascal programs.  These were 
 ## CP/M
 
 No builders.  CP/M test disks only contain short text files produced using `ED.COM`.
+
+## MS-DOS
+
+There is a batch file that works in conjunction with a BASIC program to create a directory structure and some text files.  The batch file expects to find an MS-BASIC interpreter at `C:\UTIL\BASIC`.  The BASIC program needs to be in ASCII form.  Before running the batch file the disk should be labeled as `NEW DISK 1`.

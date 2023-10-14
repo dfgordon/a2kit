@@ -1,8 +1,8 @@
 use clap;
 use std::str::FromStr;
 use log::{error,warn,info};
-use crate::bios::dpb;
-use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal};
+use crate::bios::{bpb,dpb};
+use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal,fat};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType,names};
 use super::CommandError;
@@ -11,6 +11,35 @@ use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 const BOOT_MESS: &str = "omit boot flag; for this OS you will need to copy boot files after formatting";
 const BOOT_MESS_CPM: &str = "omit boot flag; for this OS you will need to copy reserved tracks after formatting";
+const BOOT_MESS_FAT: &str = "omit boot flag; for this OS copy reserved sectors and boot files after formatting";
+
+macro_rules! ibm_patterns {
+    () => {
+        DiskKind::D525(names::IBM_SSDD_8) |
+        DiskKind::D525(names::IBM_SSDD_9) |
+        DiskKind::D525(names::IBM_DSDD_8) |
+        DiskKind::D525(names::IBM_DSDD_9) |
+        DiskKind::D525(names::IBM_SSQD) |
+        DiskKind::D525(names::IBM_DSQD) |
+        DiskKind::D525(names::IBM_DSHD) |
+        DiskKind::D35(names::IBM_720) |
+        DiskKind::D35(names::IBM_1440) |
+        DiskKind::D35(names::IBM_2880)
+    };
+}
+
+macro_rules! cpm_patterns {
+    () => {
+        names::IBM_CPM1_KIND |
+        names::OSBORNE1_SD_KIND |
+        names::OSBORNE1_DD_KIND |
+        names::KAYPROII_KIND |
+        names::KAYPRO4_KIND |
+        names::TRS80_M2_CPM_KIND |
+        names::NABU_CPM_KIND |
+        names::AMSTRAD_SS_KIND
+    };
+}
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
@@ -53,22 +82,11 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::DOT2MG,names::A2_HD_MAX) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
         (DiskImageType::NIB,names::A2_DOS32_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
         (DiskImageType::NIB,names::A2_DOS33_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
-        (DiskImageType::IMD,names::IBM_CPM1_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::OSBORNE1_SD_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::OSBORNE1_DD_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::KAYPROII_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::KAYPRO4_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::NABU_CPM_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::IMD,names::AMSTRAD_SS_KIND) => Ok(Box::new(img::imd::Imd::create(*kind))),
-        (DiskImageType::TD0,names::IBM_CPM1_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::OSBORNE1_SD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::OSBORNE1_DD_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::KAYPROII_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::KAYPRO4_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::TRS80_M2_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::NABU_CPM_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
-        (DiskImageType::TD0,names::AMSTRAD_SS_KIND) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::IMD,cpm_patterns!()) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::TD0,cpm_patterns!()) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::IMD,ibm_patterns!()) => Ok(Box::new(img::imd::Imd::create(*kind))),
+        (DiskImageType::TD0,ibm_patterns!()) => Ok(Box::new(img::td0::Td0::create(*kind))),
+        (DiskImageType::IMG,ibm_patterns!()) => Ok(Box::new(img::dsk_img::Img::create(*kind))),
         _ => {
             error!("pairing of image type and disk kind is not supported");
             Err(Box::new(CommandError::UnsupportedItemType))
@@ -186,10 +204,27 @@ fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>
     }
 }
 
+fn mkfat(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
+    if boot {
+        error!("{}",BOOT_MESS_FAT);
+        return Err(Box::new(CommandError::UnsupportedItemType));
+    }
+    let boot_sector = bpb::BootSector::create(&img.kind())?;
+    let mut disk = Box::new(fat::Disk::from_img(img,Some(boot_sector)));
+    let vol_name = match vol {
+        Some(nm) => nm.as_str(),
+        None => ""
+    };
+    match disk.format(vol_name,None) {
+        Ok(()) => Ok(disk.get_img().to_bytes()),
+        Err(e) => return Err(e)
+    }
+}
+
 pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     let dest_path= cmd.get_one::<String>("dimg").expect(RCH);
     let which_fs = cmd.get_one::<String>("os").expect(RCH);
-    if !["cpm2","cpm3","dos32","dos33","prodos","pascal"].contains(&which_fs.as_str()) {
+    if !["cpm2","cpm3","dos32","dos33","prodos","pascal","fat"].contains(&which_fs.as_str()) {
         return Err(Box::new(CommandError::UnknownItemType));
     }
     // First make sure destination is OK
@@ -251,6 +286,7 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
                 "dos33" => mkdos3x(maybe_vol,boot,img),
                 "prodos" => mkprodos(maybe_vol,boot,img),
                 "pascal" => mkpascal(maybe_vol,boot,img),
+                "fat" => mkfat(maybe_vol,boot,img),
                 _ => panic!("unreachable")
             };
             match result {

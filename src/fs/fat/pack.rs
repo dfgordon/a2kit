@@ -8,6 +8,9 @@ use log::{debug,info,warn};
 pub const INVALID_CHARS: &str = "\"*+,./:;<=>?[\\]|";
 pub const DOT: ([u8;8],[u8;3]) = ([b'.',32,32,32,32,32,32,32],[32,32,32]);
 pub const DOTDOT: ([u8;8],[u8;3]) = ([b'.',b'.',32,32,32,32,32,32],[32,32,32]);
+// TODO: how do we support old style extended character sets?
+// For Kanji, if first name byte is 0x05 replace with extended character 0xe5.
+//const KANJI: u8 = 0x05;
 
 /// pack the date into the FAT format, if the year is not between 1980
 /// and 2107 it will be pegged to the nearest representable date.
@@ -51,6 +54,9 @@ pub fn pack_tenths(time: Option<chrono::NaiveDateTime>) -> u8 {
 }
 
 pub fn unpack_date(fat_date: [u8;2]) -> Option<chrono::NaiveDate> {
+    if fat_date==[0,0] {
+        return None;
+    }
     let date16 = u16::from_le_bytes(fat_date);
     let year = 1980 + (date16 >> 9) as i32;
     let month = ((date16 & 0b0000_0001_1110_0000) >> 5) as u32;
@@ -92,6 +98,22 @@ pub fn is_name_valid(s: &str) -> bool {
     if ext.len()>3 {
         info!("extension name too long, max 3");
         return false;
+    }
+    true
+}
+
+/// Same as is_name_valid except dot is not needed or allowed
+pub fn is_label_valid(s: &str) -> bool {
+    if s.len()<1 || s.len()>11 {
+        info!("label length {} out of range",s.len());
+        return false;
+    }
+    // TODO: handle extended chars like KANJI
+    for char in s.chars() {
+        if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
+            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
+            return false;
+        }
     }
     true
 }
@@ -179,6 +201,28 @@ pub fn string_to_file_name(s: &str) -> ([u8;8],[u8;3]) {
             ans.1[i] = ext[i];
         } else {
             ans.1[i] = 0x20;
+        }
+    }
+    return ans;
+}
+
+/// Convert label string to name and type bytes for directory.
+/// Assumes string contains a valid label name.
+pub fn string_to_label_name(s: &str) -> ([u8;8],[u8;3]) {
+    let mut ans: ([u8;8],[u8;3]) = ([0;8],[0;3]);
+    let upper = s.to_uppercase().as_bytes().to_vec();
+    for i in 0..8 {
+        if i<upper.len() {
+            ans.0[i] = upper[i];
+        } else {
+            ans.0[i] = 0x20;
+        }
+    }
+    for i in 8..11 {
+        if i<upper.len() {
+            ans.1[i-8] = upper[i];
+        } else {
+            ans.1[i-8] = 0x20;
         }
     }
     return ans;

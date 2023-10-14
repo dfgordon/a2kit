@@ -59,23 +59,25 @@ fn parse_opt_vals(curs: &mut usize,opt: &str) -> Result<Vec<String>,DYNERR> {
 fn extend_fragment(short: &str,len: usize) -> Result<String,DYNERR> {
     let mut ans = String::new();
     let mut curs: usize = 0;
-    loop {
-        match &short[curs..curs+1] {
-            "*" => {
-                if curs+1!=short.len() {
-                    error!("wildcard in illegal position");
-                    return Err(Box::new(types::Error::BadFormat));
+    if short.len() > 0 {
+        loop {
+            match &short[curs..curs+1] {
+                "*" => {
+                    if curs+1!=short.len() {
+                        error!("wildcard in illegal position");
+                        return Err(Box::new(types::Error::BadFormat));
+                    }
+                    for _i in curs..len {
+                        ans += "?";
+                    }
+                    return Ok(ans);
                 }
-                for _i in curs..len {
-                    ans += "?";
-                }
-                return Ok(ans);
+                c => ans += c
             }
-            c => ans += c
-        }
-        curs += 1;
-        if curs >= short.len() || curs >= len {
-            break;
+            curs += 1;
+            if curs >= short.len() || curs >= len {
+                break;
+            }
         }
     }
     for _i in curs..len {

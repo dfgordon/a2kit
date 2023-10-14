@@ -125,3 +125,17 @@ fn mk_pascal() -> STDRESULT {
         .success();
     Ok(())
 }
+
+#[test]
+fn mk_fat_imd() -> STDRESULT {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("fat.imd");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("imd").arg("-o").arg("fat")
+        .arg("-k").arg("5.25in-ibm-ssdd8")
+        .arg("-d").arg(dimg_path)
+        .assert()
+        .success();
+    Ok(())
+}

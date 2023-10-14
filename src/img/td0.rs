@@ -62,6 +62,7 @@ macro_rules! optional_get_slice {
     };
 }
 
+/// from Dunfield's notes, never used
 pub enum DriveType {
     D525in96tpi48tpi = 0x00,
     D525in360k = 0x01,
