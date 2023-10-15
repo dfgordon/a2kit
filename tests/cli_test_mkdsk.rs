@@ -139,3 +139,18 @@ fn mk_fat_imd() -> STDRESULT {
         .success();
     Ok(())
 }
+
+#[test]
+fn mk_fat_td0() -> STDRESULT {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("fat.td0");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("td0").arg("-o").arg("fat")
+        .arg("-k").arg("3.5in-ibm-720")
+        .arg("-d").arg(dimg_path)
+        .arg("-v").arg("volume 1")
+        .assert()
+        .success();
+    Ok(())
+}

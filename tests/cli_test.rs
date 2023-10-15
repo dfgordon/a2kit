@@ -51,6 +51,28 @@ A: POLARIS  BAK : POLARIS  TXT
 }
 
 #[test]
+fn catalog_cpm_wildcard_full() -> STDRESULT {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected = 
+r#"Directory for Drive A: User 0
+
+    Name     Bytes   Recs   Attributes      Name     Bytes   Recs   Attributes\s*
+------------ ------ ------ ------------ ------------ ------ ------ ------------
+
+POLARIS  TXT     1k      4 Dir RW\s*
+
+Total Bytes     =      1k  Total Records =       4  Files Found =    1
+Total 1k Blocks =      1   Occupied/Tot Entries For Drive A:    2/  48"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("cpm-smallfiles.dsk"))
+        .arg("-f").arg("*.txt[full]")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(expected).expect("regex error"));
+    Ok(())
+}
+
+#[test]
 fn catalog_dos32() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
     let expected = 
@@ -140,6 +162,24 @@ DIR3\s+<DIR>.*
 \s+4 File\(s\)\s+135168 bytes free"#;
     cmd.arg("catalog")
         .arg("-d").arg(Path::new("tests").join("msdos-ren-del.img"))
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match(expected).expect("regex err"));
+    Ok(())
+}
+
+#[test]
+fn catalog_msdos_wildcard() -> STDRESULT {
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let expected =
+r#" Volume in drive A is NEW DISK 1
+ Directory of A:\\DIR1\\SUB\*\.\*
+
+SUBDIR1\s+<DIR>.*
+\s+1 File\(s\)\s+135168 bytes free"#;
+    cmd.arg("catalog")
+        .arg("-d").arg(Path::new("tests").join("msdos-ren-del.img"))
+        .arg("-f").arg("/dir1/sub*.*")
         .assert()
         .success()
         .stdout(predicate::str::is_match(expected).expect("regex err"));

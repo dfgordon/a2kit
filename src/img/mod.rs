@@ -114,7 +114,8 @@ pub enum NibbleCode {
 pub enum DataRate {
     R250Kbps,
     R300Kbps,
-    R500Kbps
+    R500Kbps,
+    R1000Kbps
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]

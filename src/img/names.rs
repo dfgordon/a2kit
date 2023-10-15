@@ -135,7 +135,7 @@ pub const KAYPRO4: TrackLayout = TrackLayout {
     data_rate: [DataRate::R250Kbps;5]
 };
 
-// TODO: verify the data rates on these IBM disks
+// data rates are from ImageDisk by Dave Dunfield, except 2.88 where we are guessing
 
 pub const IBM_SSDD_8: TrackLayout = TrackLayout {
     cylinders: uni!(40),
@@ -204,7 +204,7 @@ pub const IBM_DSHD: TrackLayout = TrackLayout {
     sectors: uni!(15),
     flux_code: [FluxCode::MFM;5],
     nib_code: [NibbleCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    data_rate: [DataRate::R500Kbps;5]
 };
 
 pub const IBM_720: TrackLayout = TrackLayout {
@@ -224,7 +224,7 @@ pub const IBM_1440: TrackLayout = TrackLayout {
     sectors: uni!(18),
     flux_code: [FluxCode::MFM;5],
     nib_code: [NibbleCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    data_rate: [DataRate::R500Kbps;5]
 };
 
 pub const IBM_1680: TrackLayout = TrackLayout {
@@ -234,7 +234,7 @@ pub const IBM_1680: TrackLayout = TrackLayout {
     sectors: uni!(21),
     flux_code: [FluxCode::MFM;5],
     nib_code: [NibbleCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    data_rate: [DataRate::R500Kbps;5]
 };
 
 pub const IBM_1720: TrackLayout = TrackLayout {
@@ -244,7 +244,7 @@ pub const IBM_1720: TrackLayout = TrackLayout {
     sectors: uni!(21),
     flux_code: [FluxCode::MFM;5],
     nib_code: [NibbleCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    data_rate: [DataRate::R500Kbps;5]
 };
 
 pub const IBM_2880: TrackLayout = TrackLayout {
@@ -254,7 +254,7 @@ pub const IBM_2880: TrackLayout = TrackLayout {
     sectors: uni!(36),
     flux_code: [FluxCode::MFM;5],
     nib_code: [NibbleCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    data_rate: [DataRate::R1000Kbps;5]
 };
 
 // This kind might contain DOS 3.0, 3.1, or 3.2.

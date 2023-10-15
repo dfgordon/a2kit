@@ -14,8 +14,8 @@ use crate::{STDRESULT,DYNERR};
 use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
 
-const JMP_BOOT: [u8;3] = [0xeb,0x00,0x90];
-const OEM_NAME: [u8;8] = *b"MSWIN4.1";
+const JMP_BOOT: [u8;3] = [0xeb,0x58,0x90];
+const OEM_NAME: [u8;8] = *b"A2KITX.X";
 const BOOT_SIGNATURE: [u8;2] = [0x55,0xaa]; // goes in boot[510..512]
 const RCH: &str = "unreachable was reached";
 
@@ -295,9 +295,11 @@ impl BootSector {
         let mut remainder: Vec<u8> = vec![0;sec_size - used];
         remainder[510-used] = BOOT_SIGNATURE[0];
         remainder[511-used] = BOOT_SIGNATURE[1];
+        let mut oem = OEM_NAME;
+        oem[5..8].copy_from_slice(&env!("CARGO_PKG_VERSION").as_bytes()[0..3]);
         Self {
             jmp: JMP_BOOT,
-            oem: OEM_NAME,
+            oem,
             foundation: bpb,
             extension32: BPBExtension32::new(),
             tail,
@@ -564,7 +566,7 @@ const D35_1440: BPBFoundation = BPBFoundation {
     tot_sec_16: u16::to_le_bytes(2880),
     media: 0xf0,
     fat_size_16: [9,0],
-    sec_per_trk: [12,0],
+    sec_per_trk: [18,0],
     num_heads: [2,0],
     hidd_sec: [0,0,0,0],
     tot_sec_32: [0,0,0,0]
@@ -579,7 +581,7 @@ const D35_2880: BPBFoundation = BPBFoundation {
     tot_sec_16: u16::to_le_bytes(5760),
     media: 0xf0,
     fat_size_16: [9,0],
-    sec_per_trk: [24,0],
+    sec_per_trk: [36,0],
     num_heads: [2,0],
     hidd_sec: [0,0,0,0],
     tot_sec_32: [0,0,0,0]

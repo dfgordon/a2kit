@@ -357,22 +357,18 @@ impl Track {
     fn create(track_num: usize, layout: &super::TrackLayout) -> Self {
         let zone = layout.zone(track_num);
         let head = (track_num % layout.sides[zone]) as u8;
+        let default_map: Vec<u8> = (1..layout.sectors[0] as u8 + 1).collect();
         let sector_map: Vec<u8> = match *layout {
-            super::names::CPM_1 => (1..27).collect(),
-            super::names::AMSTRAD_SS => (1..10).collect(),
             super::names::KAYPROII => (0..10).collect(),
             super::names::KAYPRO4 => match track_num%2 {
                 0 => (0..10).collect(),
                 _ => (10..20).collect(),
             },
-            super::names::OSBORNE1_SD => (1..11).collect(),
-            super::names::OSBORNE1_DD => [1,2,3,4,5].to_vec(),
             super::names::TRS80_M2_CPM => match track_num {
                 0 => (1..27).collect(),
                 _ => (1..17).collect(),
             },
-            super::names::NABU_CPM => (1..27).collect(),
-            _ => panic!("unhandled track layout")
+            _ => default_map
         };
         let head_map: Vec<u8> = match *layout {
             super::names::KAYPRO4 => match track_num%2 {
@@ -489,6 +485,7 @@ impl Td0 {
         let comment_string = "created by a2kit v".to_string() + env!("CARGO_PKG_VERSION");
         let layout = match kind {
             img::DiskKind::D3(layout) => layout,
+            img::DiskKind::D35(layout) => layout,
             img::DiskKind::D525(layout) => layout,
             img::DiskKind::D8(layout) => layout,
             _ => panic!("cannot create this kind of disk in TD0 format")
@@ -505,7 +502,7 @@ impl Td0 {
             (super::DataRate::R300Kbps,super::FluxCode::MFM) => 0x01,
             (super::DataRate::R500Kbps,super::FluxCode::MFM) => 0x02,
             _ => {
-                panic!("unsupported flux encoding");
+                panic!("unsupported data rate and flux encoding");
             }
         };
         let drive_type = match kind {
@@ -623,10 +620,10 @@ impl img::DiskImage for Td0 {
         trace!("reading {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
-                let sectors = self.tracks[off as usize].sectors.len();
+                let secs_per_track = self.tracks[off as usize].sectors.len();
                 let sector_shift = self.tracks[off as usize].sectors[0].header.sector_shift;
                 let mut ans: Vec<u8> = Vec::new();
-                let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
+                let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
                 let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 for [cyl,head,lsec] in chs_list {
                     self.check_user_area_up_to_cyl(cyl, off)?;
@@ -639,7 +636,23 @@ impl img::DiskImage for Td0 {
                     }
                 }
                 Ok(ans)
-            }
+            },
+            Block::FAT((_sec1,_secs)) => {
+                let secs_per_track = self.tracks[0].sectors.len();
+                let mut ans: Vec<u8> = Vec::new();
+                let deblocked_ts_list = addr.get_lsecs(secs_per_track);
+                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                for [cyl,head,lsec] in chs_list {
+                    self.check_user_area_up_to_cyl(cyl, 0)?;
+                    match self.read_sector(cyl,head,lsec) {
+                        Ok(mut slice) => {
+                            ans.append(&mut slice);
+                        },
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(ans)
+            },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
@@ -647,9 +660,9 @@ impl img::DiskImage for Td0 {
         trace!("writing {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
-                let sectors = self.tracks[off as usize].sectors.len();
+                let secs_per_track = self.tracks[off as usize].sectors.len();
                 let sector_shift = self.tracks[off as usize].sectors[0].header.sector_shift;
-                let deblocked_ts_list = addr.get_lsecs((sectors << sector_shift) as usize);
+                let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
                 let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 let mut src_offset = 0;
                 let psec_size = SECTOR_SIZE_BASE << sector_shift;
@@ -663,7 +676,25 @@ impl img::DiskImage for Td0 {
                     }
                 }
                 Ok(())
-            }
+            },
+            Block::FAT((_sec1,_secs)) => {
+                // TODO: do we need to handle variable sectors per track
+                let secs_per_track = self.tracks[0].sectors.len();
+                let sector_shift = self.tracks[0].sectors[0].header.sector_shift;
+                let sec_size = 128 << sector_shift;
+                let deblocked_ts_list = addr.get_lsecs(secs_per_track);
+                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                let mut src_offset = 0;
+                let padded = super::quantize_block(dat, chs_list.len()*sec_size);
+                for [cyl,head,lsec] in chs_list {
+                    self.check_user_area_up_to_cyl(cyl, 0)?;
+                    match self.write_sector(cyl,head,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
+                        Ok(_) => src_offset += sec_size,
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(())
+            },
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }

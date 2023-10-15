@@ -111,29 +111,18 @@ impl Track {
             (super::FluxCode::MFM,super::DataRate::R500Kbps) => Mode::Mfm500Kbps,
             _ => panic!("unhandled track mode")
         };
+        let default_map: Vec<u8> = (1..layout.sectors[0] as u8 + 1).collect();
         let sector_map: Vec<u8> = match *layout {
-            super::names::CPM_1 => (1..27).collect(),
-            super::names::AMSTRAD_SS => (1..10).collect(),
             super::names::KAYPROII => (0..10).collect(),
             super::names::KAYPRO4 => match track_num%2 {
                 0 => (0..10).collect(),
                 _ => (10..20).collect(),
             },
-            super::names::OSBORNE1_SD => (1..11).collect(),
-            super::names::OSBORNE1_DD => [1,2,3,4,5].to_vec(),
             super::names::TRS80_M2_CPM => match track_num {
                 0 => (1..27).collect(),
                 _ => (1..17).collect(),
             },
-            super::names::NABU_CPM => (1..27).collect(),
-            super::names::IBM_SSDD_8 => (1..9).collect(),
-            super::names::IBM_DSDD_8 => (1..9).collect(),
-            //super::names::IBM_SSDD_9 => (1..10).collect(), // same pattern as amstrad
-            super::names::IBM_DSDD_9 => (1..10).collect(),
-            super::names::IBM_SSQD => (1..9).collect(),
-            super::names::IBM_DSQD => (1..9).collect(),
-            super::names::IBM_DSHD => (1..16).collect(),
-            _ => panic!("unhandled track layout")
+            _ => default_map
         };
         let cylinder_map: Vec<u8> = Vec::new();
         let head_map: Vec<u8> = match *layout {
@@ -351,6 +340,7 @@ impl Imd {
         debug!("header {}",header);
         let (heads,tracks) = match kind {
             img::DiskKind::D3(layout) |
+            img::DiskKind::D35(layout) |
             img::DiskKind::D525(layout) |
             img::DiskKind::D8(layout) => {
                 let mut ans: Vec<Track> = Vec::new();

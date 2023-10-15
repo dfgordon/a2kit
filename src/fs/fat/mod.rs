@@ -261,6 +261,7 @@ impl Disk {
         // Start with 0 in reserved/FAT/root, f6 in data region
         // n.b. blocks can only access the data region.
         trace!("fill sectors with 0x00 and 0xf6");
+        trace!("disk has {} tracks {} sectors",self.img.track_count(),self.boot_sector.secs_per_track());
         let zeroes: Vec<u8> = vec![0;sec_size];
         let f6: Vec<u8> = vec![0xf6;sec_size];
         for lsec in 0..self.boot_sector.tot_sec() as usize {

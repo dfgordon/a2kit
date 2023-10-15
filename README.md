@@ -6,11 +6,12 @@ Command line interface and library for manipulating retro disk images, file syst
 * Languages - Applesoft, Integer BASIC, Merlin Assembly
     - full syntax comprehension
     - tokenization, detokenization
-* File Systems - DOS 3.x, ProDOS, CP/M, Pascal
+* File Systems - Apple DOS 3.x, ProDOS, CP/M, Pascal, FAT (such as MS-DOS)
     - full read and write access
     - high or low level manipulations
-    - interface for handling sparse (random access) files
-* Disk Images - 2MG, D13, DO, DSK, IMD, NIB, PO, TD0, WOZ
+    - interface for handling sparse and random access files
+* Disk Images - 2MG, D13, DO, DSK, IMD, IMG, NIB, PO, TD0, WOZ
+    - create, read, and write with all types
 
 ## Documentation
 
