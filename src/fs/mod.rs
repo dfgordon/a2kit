@@ -215,7 +215,8 @@ impl FileImage {
         }
         return ans;
     }
-    /// use any byte stream as the file image data; internally this organizes the data into chunks
+    /// Use any byte stream as the file image data.  The eof is set to the length of the data.
+    /// The last chunk is not padded.
     pub fn desequence(&mut self, dat: &[u8]) {
         let mut mark = 0;
         let mut idx = 0;

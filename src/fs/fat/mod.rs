@@ -121,12 +121,13 @@ impl Disk {
         Block::FAT((self.boot_sector.first_cluster_sec(block as u64),self.boot_sector.secs_per_clus()))
     }
     fn clus_in_rng(&self,block: usize) -> bool {
-        block >= fat::FIRST_DATA_CLUSTER as usize && block < fat::FIRST_DATA_CLUSTER as usize + self.boot_sector.cluster_count() as usize
+        block >= fat::FIRST_DATA_CLUSTER as usize && block < fat::FIRST_DATA_CLUSTER as usize + self.boot_sector.cluster_count_usable() as usize
     }
     /// Open buffer if not already present.  Will usually be called indirectly.
     /// The backup FAT will be written when the buffer is written back.
     fn open_fat_buffer(&mut self) -> STDRESULT {
         if self.maybe_fat==None {
+            trace!("buffering first FAT");
             let fat_secs = self.boot_sector.fat_secs();
             let mut ans = Vec::new();
             let sec1 = self.boot_sector.res_secs() as u64;
@@ -176,7 +177,7 @@ impl Disk {
     fn num_free_blocks(&mut self) -> Result<usize,DYNERR> {
         let mut free: usize = 0;
         let beg = fat::FIRST_DATA_CLUSTER as usize;
-        for i in beg..beg+self.boot_sector.cluster_count() as usize {
+        for i in beg..beg+self.boot_sector.cluster_count_usable() as usize {
             if self.is_block_free(i)? {
                 free += 1;
             }
@@ -242,14 +243,15 @@ impl Disk {
         self.img.write_block(cluster, &data[offset..offset+actual_len].to_vec())
     }
     fn get_available_block(&mut self) -> Result<Option<usize>,DYNERR> {
-        for block in fat::FIRST_DATA_CLUSTER as usize..self.boot_sector.cluster_count() as usize {
+        for block in fat::FIRST_DATA_CLUSTER as usize..self.boot_sector.cluster_count_usable() as usize {
             if self.is_block_free(block)? {
                 return Ok(Some(block));
             }
         }
         return Ok(None);
     }
-    /// Format a disk with the FAT file system, by this point the boot sector is presumed to be buffered.
+    /// Format a disk with the FAT file system, by this point the boot sector is presumed to be buffered,
+    /// and must at least contain a valid BPB foundation.  If there is a BPB tail it is overwritten.
     pub fn format(&mut self, vol_name: &str, time: Option<chrono::NaiveDateTime>) -> STDRESULT {
         if !pack::is_label_valid(vol_name) && vol_name.len()>0 {
             error!("FAT volume name invalid");
@@ -272,6 +274,18 @@ impl Disk {
                 self.img.write_sector(c,h,s,&f6)?;
             }
         }
+        // Create a BPB tail
+        let boot_label: [u8;11] = match vol_name.len()>0 {
+            true => {
+                let (nm,x) = pack::string_to_label_name(vol_name);
+                [nm.to_vec(),x.to_vec()].concat().try_into().expect("label mismatch")
+            }
+            false => *b"NO NAME    "
+        };
+        // Using nanos gives us about 30 bits of resolution.
+        // This avoids issues with the FAT datestamp after the year 2107.
+        let id = u32::to_le_bytes(chrono::Local::now().naive_local().timestamp_subsec_nanos());
+        self.boot_sector.create_tail(0x00, id, boot_label);
         // write the boot sector (perhaps rewriting).
         // may be written again if FAT32.
         trace!("write boot sector");
@@ -348,7 +362,7 @@ impl Disk {
     /// given any cluster, return the last cluster in its chain.
     fn last_cluster(&mut self,initial: &Ptr) -> Result<Ptr,DYNERR> {
         let mut curr = *initial;
-        let max_clusters = self.boot_sector.cluster_count() as usize;
+        let max_clusters = self.boot_sector.cluster_count_usable() as usize;
         for _i in 0..max_clusters {
             curr = match self.next_cluster(&curr)? {
                 None => return Ok(curr),
@@ -370,7 +384,7 @@ impl Disk {
             }
         }
         let mut curr = *initial;
-        let max_clusters = self.boot_sector.cluster_count() as usize;
+        let max_clusters = self.boot_sector.cluster_count_usable() as usize;
         for _i in 0..max_clusters {
             let mut data: Vec<u8> = vec![0;self.boot_sector.block_size() as usize];
             self.read_block(&mut data, curr.unwrap(), 0)?;
@@ -393,7 +407,7 @@ impl Disk {
             }
         }
         let mut curr = *initial;
-        let max_clusters = self.boot_sector.cluster_count() as usize;
+        let max_clusters = self.boot_sector.cluster_count_usable() as usize;
         for _i in 0..max_clusters {
             let maybe_next = self.deallocate_block(curr.unwrap())?;
             curr = match maybe_next {
@@ -631,9 +645,9 @@ impl Disk {
         // TODO: eliminate redundancy, by this time the directory as already been read at least once
         let dir = self.get_directory(&parent.cluster1)?;
         let entry = dir.get_entry(&Ptr::Entry(finfo.idx));
-        entry.metadata_to_fimg(&mut fimg);
         let all_data = self.get_cluster_chain_data(&finfo.cluster1.unwrap())?;
         fimg.desequence(&all_data);
+        entry.metadata_to_fimg(&mut fimg); // must come after desequence or eof is spoiled
         Ok(fimg)
     }
     /// If the new name does not already exist, return an EntryLocation with entry pointer set to existing file.
@@ -973,7 +987,7 @@ impl super::DiskFS for Disk {
         match usize::from_str(num) {
             Ok(block) => {
                 let mut buf: Vec<u8> = vec![0;self.boot_sector.block_size() as usize];
-                if block >= 2 + self.boot_sector.cluster_count() as usize {
+                if block >= 2 + self.boot_sector.cluster_count_usable() as usize {
                     return Err(Box::new(Error::SectorNotFound));
                 }
                 self.read_block(&mut buf,block,0)?;
@@ -985,7 +999,7 @@ impl super::DiskFS for Disk {
     fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         match usize::from_str(num) {
             Ok(block) => {
-                if dat.len() > self.boot_sector.block_size() as usize || block >= 2 + self.boot_sector.cluster_count() as usize {
+                if dat.len() > self.boot_sector.block_size() as usize || block >= 2 + self.boot_sector.cluster_count_usable() as usize {
                     return Err(Box::new(Error::SectorNotFound));
                 }
                 self.zap_block(dat,block,0)?;
@@ -1109,7 +1123,7 @@ impl super::DiskFS for Disk {
             assert_eq!(actual,expected," at sector {}",lsec)
         }
         // compare clusters in the data region
-        for block in 2..2+self.boot_sector.cluster_count() {
+        for block in 2..2+self.boot_sector.cluster_count_usable() {
             let addr = self.export_clus(block as usize);
             let mut actual = self.img.read_block(addr).expect("bad sector access");
             let mut expected = emulator_disk.get_img().read_block(addr).expect("bad sector access");

@@ -102,21 +102,21 @@ impl img::DiskImage for Img {
     }
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
         let track = cyl*self.heads + head;
-        if track>=self.track_count() || head>=self.heads || sec<1 || sec>self.sectors as usize {
-            error!("chs range should be 0-{}/0-{}/1-{}",self.track_count()-1,self.heads-1,self.sectors);
+        trace!("reading {}/{}/{}",cyl,head,sec);
+        if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
+            error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
             return Err(Box::new(img::Error::SectorAccess));
         }
-        trace!("reading {}/{}/{}",cyl,head,sec);
         let offset = (track*self.sectors as usize + sec - 1)*self.sec_size;
         Ok(self.data[offset..offset+self.sec_size].to_vec())
     }
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         let track = cyl*self.heads + head;
-        if track>=self.track_count() || head>=self.heads || sec<1 || sec>self.sectors as usize {
-            error!("chs range should be 0-{}/0-{}/1-{}",self.track_count()-1,self.heads-1,self.sectors);
+        trace!("writing {}/{}/{}",cyl,head,sec);
+        if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
+            error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
             return Err(Box::new(img::Error::SectorAccess));
         }
-        trace!("writing {}/{}/{}",cyl,head,sec);
         let offset = (track*self.sectors as usize + sec - 1)*self.sec_size;
         let padded = super::quantize_block(dat, self.sec_size);
         self.data[offset..offset+self.sec_size].copy_from_slice(&padded);

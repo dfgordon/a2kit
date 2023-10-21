@@ -1,7 +1,8 @@
 // test of prodos disk image module
 use std::path::Path;
 use std::fmt::Write;
-use a2kit::fs::{fat,DiskFS};
+use a2kit::fs::{fat,DiskFS,Block};
+use std::collections::HashMap;
 
 fn get_builder(filename: &str,disk: &fat::Disk) -> Vec<u8> {
     let s = std::fs::read_to_string(&Path::new("tests").
@@ -10,16 +11,7 @@ fn get_builder(filename: &str,disk: &fat::Disk) -> Vec<u8> {
     disk.encode_text(&s).expect("could not encode")
 }
 
-#[test]
-fn rename_delete() {
-    // Reference disk was created using 86Box.
-    // test delete and rename of sparse tree files and directories inside a large subdirectory
-    let kind = a2kit::img::DiskKind::D525(a2kit::img::names::IBM_SSDD_8);
-    let boot_sector = a2kit::bios::bpb::BootSector::create(&kind).expect("could not create boot sector");
-    let img = a2kit::img::dsk_img::Img::create(kind);
-    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector));
-    disk.format(&String::from("NEW DISK 1"),None).expect("failed to format");
-
+fn build_ren_del(disk: &mut fat::Disk) -> HashMap<Block,Vec<usize>> {
     // make the same text that the BASIC program makes
     let mut txt_string = String::new();
     for i in 1..1025 {
@@ -51,5 +43,35 @@ fn rename_delete() {
     disk.delete("DIR2/ASCEND.TXT").expect("dimg error");
     disk.delete("DIR2").expect("dimg error");
 
+    ignore
+}
+
+#[test]
+fn rename_delete_img() {
+    // Reference disk was created using 86Box.
+    // test delete and rename of text files and directories inside a large subdirectory
+    let kind = a2kit::img::DiskKind::D525(a2kit::img::names::IBM_SSDD_8);
+    let boot_sector = a2kit::bios::bpb::BootSector::create(&kind).expect("could not create boot sector");
+    let img = a2kit::img::dsk_img::Img::create(kind);
+    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector));
+    disk.format(&String::from("NEW DISK 1"),None).expect("failed to format");
+
+    let ignore = build_ren_del(&mut disk);
+
     disk.compare(&Path::new("tests").join("msdos-ren-del.img"),&ignore);
+}
+
+#[test]
+fn rename_delete_imd() {
+    // Reference disk was created using 86Box, converted to imd using a2kit sector copy.
+    // test delete and rename of text files and directories inside a large subdirectory
+    let kind = a2kit::img::DiskKind::D525(a2kit::img::names::IBM_DSDD_9);
+    let boot_sector = a2kit::bios::bpb::BootSector::create(&kind).expect("could not create boot sector");
+    let img = a2kit::img::imd::Imd::create(kind);
+    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector));
+    disk.format(&String::from("NEW DISK 1"),None).expect("failed to format");
+
+    let ignore = build_ren_del(&mut disk);
+
+    disk.compare(&Path::new("tests").join("msdos-ren-del.imd"),&ignore);
 }

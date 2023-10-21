@@ -128,12 +128,20 @@ fn mk_pascal() -> STDRESULT {
 
 #[test]
 fn mk_fat_imd() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
     let dir = tempfile::tempdir()?;
-    let dimg_path = dir.path().join("fat.imd");
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut dimg_path = dir.path().join("fat8.imd");
     cmd.arg("mkdsk")
         .arg("-t").arg("imd").arg("-o").arg("fat")
         .arg("-k").arg("5.25in-ibm-ssdd8")
+        .arg("-d").arg(dimg_path)
+        .assert()
+        .success();
+    cmd = Command::cargo_bin("a2kit")?;
+    dimg_path = dir.path().join("fat9.imd");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("imd").arg("-o").arg("fat")
+        .arg("-k").arg("5.25in-ibm-ssdd9")
         .arg("-d").arg(dimg_path)
         .assert()
         .success();
@@ -142,14 +150,45 @@ fn mk_fat_imd() -> STDRESULT {
 
 #[test]
 fn mk_fat_td0() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
     let dir = tempfile::tempdir()?;
-    let dimg_path = dir.path().join("fat.td0");
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut dimg_path = dir.path().join("fat720.td0");
     cmd.arg("mkdsk")
         .arg("-t").arg("td0").arg("-o").arg("fat")
         .arg("-k").arg("3.5in-ibm-720")
         .arg("-d").arg(dimg_path)
         .arg("-v").arg("volume 1")
+        .assert()
+        .success();
+    cmd = Command::cargo_bin("a2kit")?;
+    dimg_path = dir.path().join("fat1440.td0");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("td0").arg("-o").arg("fat")
+        .arg("-k").arg("3.5in-ibm-1440")
+        .arg("-d").arg(dimg_path)
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
+fn mk_fat_img() -> STDRESULT {
+    let dir = tempfile::tempdir()?;
+    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut dimg_path = dir.path().join("fat8.img");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("img").arg("-o").arg("fat")
+        .arg("-k").arg("5.25in-ibm-dsdd8")
+        .arg("-d").arg(dimg_path)
+        .arg("-v").arg("volume 1")
+        .assert()
+        .success();
+    cmd = Command::cargo_bin("a2kit")?;
+    dimg_path = dir.path().join("fat9.img");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("img").arg("-o").arg("fat")
+        .arg("-k").arg("5.25in-ibm-dsdd9")
+        .arg("-d").arg(dimg_path)
         .assert()
         .success();
     Ok(())

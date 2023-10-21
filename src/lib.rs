@@ -28,7 +28,8 @@
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
 //! As of this writing `a2kit` supports
 //! * CP/M 1,2,3
-//! * DOS 3.x
+//! * Apple DOS 3.x
+//! * FAT (e.g. MS-DOS)
 //! * ProDOS
 //! * Pascal File System
 //! 
@@ -36,12 +37,18 @@
 //! 
 //! In order to manipulate tracks and sectors, `a2kit` must understand the way the track data is packed
 //! into a disk image.  As of this writing `a2kit` supports
-//! * 2MG
-//! * DSK, D13, DO, PO
-//! * IMD
-//! * NIB
-//! * TD0
-//! * WOZ (1 and 2)
+//! 
+//! format | platforms | aliases
+//! -------|-----------|--------
+//! 2MG | Apple II |
+//! D13 | Apple II |
+//! DO | Apple II | DSK
+//! PO | Apple II | DSK
+//! IMD | CP/M, FAT |
+//! IMG | FAT | DSK, IMA
+//! NIB | Apple II |
+//! TD0 | CP/M, FAT |
+//! WOZ | Apple II |
 //! 
 //! ## Disk Kinds
 //! 
@@ -50,9 +57,11 @@
 //! * Logical ProDOS volumes
 //! * 3 inch CP/M formats (Amstrad 184K)
 //! * 3.5 inch Apple formats (400K/800K)
+//! * 3.5 inch IBM formats(720K through 2880K)
 //! * 5.25 inch Apple formats (114K/140K)
-//! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
+//! * 5.25 inch IBM formats (160K through 1200K)
 //! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K)
+//! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
 
 pub mod fs;
 pub mod lang;
@@ -72,6 +81,7 @@ type DYNERR = Box<dyn std::error::Error>;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
 const KNOWN_FILE_EXTENSIONS: &str = "2mg,2img,dsk,d13,do,nib,po,woz,imd,td0,img,ima";
+const MAX_FILE_SIZE: u64 = 1 << 26;
 
 /// Save the image file (make changes permanent)
 pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
@@ -285,12 +295,27 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     return Err(Box::new(img::Error::ImageTypeMismatch));
 }
 
+/// buffer a file if its EOF < `max`, otherwise return an error
+fn buffer_file(path: &str,max: u64) -> Result<Vec<u8>,DYNERR> {
+    match std::fs::OpenOptions::new().read(true).open(path) {
+        Ok(mut f) => match f.metadata()?.len() <= max {
+            true => {
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf)?;
+                Ok(buf)
+            },
+            false => Err(Box::new(img::Error::ImageSizeMismatch))
+        },
+        Err(e) => Err(Box::new(e))
+    }
+}
+
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
 /// File extension will be used to restrict image types that are tried,
 /// unless the extension is unknown, in which case all will be tried.
 pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR> {
-    match std::fs::read(img_path) {
+    match buffer_file(img_path,MAX_FILE_SIZE) {
         Ok(disk_img_data) => {
             let mut maybe_ext = img_path.split('.').last();
             if let Some(ext) = maybe_ext {
@@ -300,7 +325,7 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR>
             }
             create_img_from_bytestream(&disk_img_data,maybe_ext)
         },
-        Err(e) => Err(Box::new(e))
+        Err(e) => Err(e)
     }
 }
 
@@ -319,7 +344,7 @@ pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
 /// File extension will be used to restrict image types that are tried,
 /// unless the extension is unknown, in which case all will be tried.
 pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
-    match std::fs::read(img_path) {
+    match buffer_file(img_path,MAX_FILE_SIZE) {
         Ok(disk_img_data) => {
             let mut maybe_ext = img_path.split('.').last();
             if let Some(ext) = maybe_ext {
@@ -329,7 +354,7 @@ pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
             }
             create_fs_from_bytestream(&disk_img_data,maybe_ext)
         },
-        Err(e) => Err(Box::new(e))
+        Err(e) => Err(e)
     }
 }
 

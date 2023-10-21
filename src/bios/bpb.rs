@@ -14,6 +14,8 @@ use crate::{STDRESULT,DYNERR};
 use a2kit_macro::DiskStruct;
 use a2kit_macro_derive::DiskStruct;
 
+use super::fat::FIRST_DATA_CLUSTER;
+
 const JMP_BOOT: [u8;3] = [0xeb,0x58,0x90];
 const OEM_NAME: [u8;8] = *b"A2KITX.X";
 const BOOT_SIGNATURE: [u8;2] = [0x55,0xaa]; // goes in boot[510..512]
@@ -342,7 +344,7 @@ impl BootSector {
             ans = false;
         }
         if ans {
-            debug!("BPB counts: {}({}) FAT, {} tot, {} res, {} root",fat_secs,bpb.num_fats,bpb.tot_sec(),bpb.res_secs(),bpb.root_dir_secs());
+            debug!("BPB counts: {} tot, {} res, {}x{} FAT, {} root",bpb.tot_sec(),fat_secs,bpb.num_fats,bpb.res_secs(),bpb.root_dir_secs());
         }
         ans
     }
@@ -408,14 +410,23 @@ impl BootSector {
     pub fn data_rgn_secs(&self) -> u64 {
         self.tot_sec() - (self.res_secs() as u64 + (self.foundation.num_fats as u64 * self.fat_secs()) + self.root_dir_secs())
     }
-    /// total clusters used, rounding down (remainder partial-cluster is not used)
-    pub fn cluster_count(&self) -> u64 {
+    /// number of clusters possible in the data region rounding down,
+    /// this is used to determine the FAT type.
+    pub fn cluster_count_abstract(&self) -> u64 {
         self.data_rgn_secs()/self.foundation.sec_per_clus() as u64
+    }
+    /// smaller of (clusters possible in the data region , clusters possible in the FAT)
+    pub fn cluster_count_usable(&self) -> u64 {
+        let typ = self.fat_type() as u64;
+        u64::min(
+            self.data_rgn_secs()/self.foundation.sec_per_clus() as u64,
+            self.fat_secs() * self.sec_size() * 8 / typ - FIRST_DATA_CLUSTER as u64
+        )
     }
     /// FAT type determination based on the cluster count.
     /// These peculiar cutoffs are correct according to MS.
     pub fn fat_type(&self) -> usize {
-        match self.cluster_count() {
+        match self.cluster_count_abstract() {
             x if x < 4085 => 12,
             x if x < 65525 => 16,
             _ => 32
@@ -449,6 +460,19 @@ impl BootSector {
     }
     pub fn first_cluster_sec(&self,n: u64) -> u64 {
         (n-2)*self.foundation.sec_per_clus() as u64 + self.first_data_sec()
+    }
+    pub fn create_tail(&mut self,drv_num: u8,id: [u8;4],label: [u8;11]) {
+        self.tail.boot_sig = 0x29;
+        self.tail.drv_num = drv_num;
+        self.tail.fil_sys_type = match self.fat_type() {
+            12 => *b"FAT12   ",
+            16 => *b"FAT16   ",
+            32 => *b"FAT32   ",
+            _ => panic!("unexpected FAT type")
+        };
+        self.tail.reserved1 = 0x00;
+        self.tail.vol_id = id;
+        self.tail.vol_lab = label;
     }
 }
 
@@ -492,7 +516,7 @@ const DSDD_525_8: BPBFoundation = BPBFoundation {
     media: 0xff,
     fat_size_16: [1,0],
     sec_per_trk: [8,0],
-    num_heads: [1,0],
+    num_heads: [2,0],
     hidd_sec: [0,0,0,0],
     tot_sec_32: [0,0,0,0]
 };
@@ -507,7 +531,7 @@ const DSDD_525_9: BPBFoundation = BPBFoundation {
     media: 0xfd,
     fat_size_16: [2,0],
     sec_per_trk: [9,0],
-    num_heads: [1,0],
+    num_heads: [2,0],
     hidd_sec: [0,0,0,0],
     tot_sec_32: [0,0,0,0]
 };
