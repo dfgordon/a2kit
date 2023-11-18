@@ -276,8 +276,10 @@ impl DiskStruct for BootSector {
 impl BootSector {
     pub fn create(kind: &crate::img::DiskKind) -> Result<Self,DYNERR> {
         use crate::img::names;
-        use crate::img::DiskKind::{D35,D525};
+        use crate::img::DiskKind::{D35,D525,D8};
         match kind {
+            D8(names::CPM_1) => Ok(Self::create1216(SSSD_8)),
+            D8(names::DSDD_77) => Ok(Self::create1216(DSDD_8)),
             D525(names::IBM_SSDD_8) => Ok(Self::create1216(SSDD_525_8)),
             D525(names::IBM_SSDD_9) =>  Ok(Self::create1216(SSDD_525_9)),
             D525(names::IBM_DSDD_8) =>  Ok(Self::create1216(DSDD_525_8)),
@@ -295,8 +297,10 @@ impl BootSector {
         let sec_size = bpb.sec_size() as usize;
         let used = JMP_BOOT.len() + OEM_NAME.len() + bpb.len() + tail.len();
         let mut remainder: Vec<u8> = vec![0;sec_size - used];
-        remainder[510-used] = BOOT_SIGNATURE[0];
-        remainder[511-used] = BOOT_SIGNATURE[1];
+        if sec_size>=512 {
+            remainder[510-used] = BOOT_SIGNATURE[0];
+            remainder[511-used] = BOOT_SIGNATURE[1];
+        }
         let mut oem = OEM_NAME;
         oem[5..8].copy_from_slice(&env!("CARGO_PKG_VERSION").as_bytes()[0..3]);
         Self {
@@ -475,6 +479,36 @@ impl BootSector {
         self.tail.vol_lab = label;
     }
 }
+
+const SSSD_8: BPBFoundation = BPBFoundation {
+    bytes_per_sec: [128,0],
+    sec_per_clus: 4,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(68),
+    tot_sec_16: u16::to_le_bytes(2002),
+    media: 0xfe,
+    fat_size_16: [6,0],
+    sec_per_trk: [26,0],
+    num_heads: [1,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
+
+const DSDD_8: BPBFoundation = BPBFoundation {
+    bytes_per_sec: u16::to_le_bytes(1024),
+    sec_per_clus: 1,
+    reserved_sectors: [1,0],
+    num_fats: 2,
+    root_ent_cnt: u16::to_le_bytes(192),
+    tot_sec_16: u16::to_le_bytes(1232),
+    media: 0xfe,
+    fat_size_16: [2,0],
+    sec_per_trk: [8,0],
+    num_heads: [2,0],
+    hidd_sec: [0,0,0,0],
+    tot_sec_32: [0,0,0,0]
+};
 
 const SSDD_525_8: BPBFoundation = BPBFoundation {
     bytes_per_sec: [0,2],

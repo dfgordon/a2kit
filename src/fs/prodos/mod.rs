@@ -861,6 +861,30 @@ impl Disk {
         self.write_entry(loc, &entry)?;
         return Ok(());
     }
+    /// Output ProDOS directory as a JSON object, calls itself recursively
+    fn tree_node(&mut self,dir_block: u16,include_meta: bool) -> Result<json::JsonValue,DYNERR> {
+        let mut files = json::JsonValue::new_object();
+        let mut curr = dir_block;
+        while curr>0 {
+            let dir = self.get_directory(curr as usize)?;
+            for loc in dir.entry_locations(curr) {
+                let entry = dir.get_entry(&loc);
+                if entry.is_active() {
+                    let key = entry.name();
+                    files[&key] = json::JsonValue::new_object();
+                    if entry.storage_type()==StorageType::SubDirEntry {
+                        trace!("descend into directory {}",key);
+                        files[&key]["files"] = self.tree_node(entry.get_ptr(),include_meta)?;
+                    }
+                    if include_meta {
+                        files[&key]["meta"] = entry.meta_to_json();
+                    }
+                }
+                curr = dir.next();
+            }
+        }
+        Ok(files)
+    }
 }
 
 impl super::DiskFS for Disk {
@@ -868,40 +892,46 @@ impl super::DiskFS for Disk {
         Disk::new_fimg(chunk_len)
     }
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT {
-        match self.find_dir_key_block(path) {
-            Ok(b) => {
-                let mut dir = self.get_directory(b as usize)?;
-                println!();
-                if b==2 {
-                    println!("{}{}","/".bright_blue().bold(),dir.name().bright_blue().bold());
-                } else {
-                    println!("{}",dir.name().bright_blue().bold());
-                }
-                println!();
-                println!(" {:15} {:4} {:6} {:16} {:16} {:7} {:7}",
-                    "NAME".bold(),"TYPE".bold(),"BLOCKS".bold(),
-                    "MODIFIED".bold(),"CREATED".bold(),"ENDFILE".bold(),"SUBTYPE".bold());
-                println!();
-                let mut curr = b;
-                while curr>0 {
-                    dir = self.get_directory(curr as usize)?;
-                    for loc in dir.entry_locations(curr) {
-                        let entry = dir.get_entry(&loc);
-                        if entry.is_active() {
-                            println!("{}",entry);
-                        }
-                    }
-                    curr = dir.next();
-                }
-                println!();
-                let free = self.num_free_blocks()? as usize;
-                let used = self.total_blocks-free;
-                println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,self.total_blocks);
-                println!();
-                Ok(())
-            },
-            Err(e) => Err(e)
+        let b = self.find_dir_key_block(path)?;
+        let mut dir = self.get_directory(b as usize)?;
+        println!();
+        if b==2 {
+            println!("{}{}","/".bright_blue().bold(),dir.name().bright_blue().bold());
+        } else {
+            println!("{}",dir.name().bright_blue().bold());
         }
+        println!();
+        println!(" {:15} {:4} {:6} {:16} {:16} {:7} {:7}",
+            "NAME".bold(),"TYPE".bold(),"BLOCKS".bold(),
+            "MODIFIED".bold(),"CREATED".bold(),"ENDFILE".bold(),"SUBTYPE".bold());
+        println!();
+        let mut curr = b;
+        while curr>0 {
+            dir = self.get_directory(curr as usize)?;
+            for loc in dir.entry_locations(curr) {
+                let entry = dir.get_entry(&loc);
+                if entry.is_active() {
+                    println!("{}",entry);
+                }
+            }
+            curr = dir.next();
+        }
+        println!();
+        let free = self.num_free_blocks()? as usize;
+        let used = self.total_blocks-free;
+        println!("BLOCKS FREE: {}  BLOCKS USED: {}  TOTAL BLOCKS: {}",free,used,self.total_blocks);
+        println!();
+        Ok(())
+    }
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+        let vhdr = self.get_vol_header()?;
+        let dir_block = self.find_dir_key_block("/")?;
+        let mut tree = json::JsonValue::new_object();
+        tree["file_system"] = json::JsonValue::String("prodos".to_string());
+        tree["files"] = self.tree_node(dir_block,include_meta)?;
+        tree["label"] = json::JsonValue::new_object();
+        tree["label"]["name"] = json::JsonValue::String(vhdr.name());
+        Ok(json::stringify_pretty(tree, 4))
     }
     fn create(&mut self,path: &str) -> STDRESULT {
         match self.prepare_to_write(path) {

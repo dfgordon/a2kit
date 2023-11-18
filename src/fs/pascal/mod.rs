@@ -224,7 +224,8 @@ impl Disk
                 return true;
             },
             Err(e) => {
-                debug!("pascal directory was not readable; {}",e);
+                debug!("{}",e);
+                debug!("pascal directory was not readable");
                 return false;
             }
         }
@@ -554,6 +555,40 @@ impl super::DiskFS for Disk {
         println!("{}/{} files<listed/in-dir>, {} blocks used, {} unused, {} in largest",file_count,expected_count,used,free,largest);
         println!();
         Ok(())
+    }
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+        let dir = self.get_directory()?;
+        let total = dir.total_blocks();
+        const TIME_FMT: &str = "%Y/%m/%d %H:%M";
+        let mut tree = json::JsonValue::new_object();
+        tree["file_system"] = json::JsonValue::String("a2 pascal".to_string());
+        tree["files"] = json::JsonValue::new_object();
+        tree["label"] = json::JsonValue::new_object();
+        tree["label"]["name"] = json::JsonValue::String(vol_name_to_string(dir.header.name, dir.header.name_len));
+        tree["label"]["time_created"] = json::JsonValue::String(unpack_date(dir.header.last_set_date).format(TIME_FMT).to_string());
+        tree["label"]["time_modified"] = json::JsonValue::String(unpack_date(dir.header.last_set_date).format(TIME_FMT).to_string());
+        for entry in dir.entries {
+            let beg = u16::from_le_bytes(entry.begin_block);
+            let end = u16::from_le_bytes(entry.end_block);
+            if beg!=0 && end>beg && (end as usize)<total {
+                let key = file_name_to_string(entry.name, entry.name_len);
+                tree["files"][&key] = json::JsonValue::new_object();
+                // file nodes must have no files object at all
+                if include_meta {
+                    let blocks = (end - beg) as usize;
+                    let bytes = blocks*BLOCK_SIZE + u16::from_le_bytes(entry.bytes_remaining) as usize - BLOCK_SIZE;
+                        tree["files"][&key]["meta"] = json::JsonValue::new_object();
+                    let meta = &mut tree["files"][&key]["meta"];
+                    meta["type"] = json::JsonValue::String(hex::encode_upper(entry.file_type.to_vec()));
+                    meta["eof"] = json::JsonValue::Number(bytes.into());
+                    if entry.mod_date!=[0,0] {
+                        meta["time_modified"] = json::JsonValue::String(unpack_date(entry.mod_date).format(TIME_FMT).to_string());
+                    }
+                    meta["blocks"] = json::JsonValue::Number(blocks.into());
+                }
+            }
+        }
+        Ok(json::stringify_pretty(tree, 4))
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");

@@ -1,6 +1,9 @@
 // test of CP/M disk image module
 use std::path::Path;
-use a2kit::fs::{cpm,TextEncoder,DiskFS};
+use std::collections::HashMap;
+use std::fmt::Write;
+
+use a2kit::fs::{cpm,TextEncoder,DiskFS,Block};
 use a2kit::img::{dsk_do,names};
 use a2kit_macro::DiskStruct;
 use a2kit::bios::dpb::DiskParameterBlock;
@@ -97,3 +100,68 @@ fn out_of_space() {
         }
     }
 }
+
+fn get_builder(filename: &str,disk: &cpm::Disk) -> Vec<u8> {
+    let s = std::fs::read_to_string(&Path::new("tests").
+        join("disk_builders").
+        join(filename)).expect("failed to read source code");
+    disk.encode_text(&s).expect("could not encode")
+}
+
+fn build_ren_del(disk: &mut cpm::Disk) -> HashMap<Block,Vec<usize>> {
+    // make the same text that the BASIC program makes
+    let mut txt_string = String::new();
+    for i in 1..1025 {
+        writeln!(txt_string," {} ",i).expect("unreachable");
+    }
+    let txt = disk.encode_text(&txt_string).expect("could not encode");
+
+    let basic = get_builder("msdos_builder.bas",&disk);
+    disk.write_text("DSKBLD.BAS",&basic).expect("dimg error");
+
+    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.rename("ASCEND.TXT","ASCEND1.TXT").expect("dimg error");
+    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.rename("ASCEND.TXT","ASCEND2.TXT").expect("dimg error");
+    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.rename("ASCEND.TXT","ASCEND3.TXT").expect("dimg error");
+    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.rename("ASCEND.TXT","ASCEND4.TXT").expect("dimg error");
+    
+    let ignore = disk.standardize(0);
+
+    disk.delete("ASCEND2.TXT").expect("dimg error");
+
+    ignore
+}
+
+#[test]
+fn rename_delete_dsk() {
+    // Reference disk was created using AppleWin.
+    let img = a2kit::img::dsk_do::DO::create(35,16);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
+    disk.format(&String::from("TEST"),None).expect("could not format");
+
+    let _ignore = build_ren_del(&mut disk);
+
+    // MS-BASIC and PIP seem to put some buffered stuff into the data, so we cannot easily test the entire disk.
+    // For now just see if the directory came out right.
+
+    let mut emulator_disk = a2kit::create_fs_from_file(&Path::new("tests").join("cpm-ren-del.dsk").to_str().unwrap()).expect("read error");
+    for block in 0..1 {
+        let addr = Block::CPM((block,3,3));
+        let actual = disk.get_img().read_block(addr).expect("bad sector access");
+        let expected = emulator_disk.get_img().read_block(addr).expect("bad sector access");
+        for row in 0..16 {
+            let mut fmt_actual = String::new();
+            let mut fmt_expected = String::new();
+            let offset = row*32;
+            write!(&mut fmt_actual,"{:02X?}",&actual[offset..offset+32].to_vec()).expect("format error");
+            write!(&mut fmt_expected,"{:02X?}",&expected[offset..offset+32].to_vec()).expect("format error");
+            assert_eq!(fmt_actual,fmt_expected," at block {}, row {}",block,row)
+        }
+    }
+
+    //disk.compare(&Path::new("tests").join("cpm-ren-del.dsk"),&ignore);
+}
+

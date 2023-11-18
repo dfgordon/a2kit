@@ -7,8 +7,6 @@
 //! This is geared toward FAT volumes containing MS-DOS.
 //! Assumes empty partition table.
 
-// TODO: FAT32 could be huge, impose some limit
-
 mod directory;
 mod pack;
 mod types;
@@ -65,7 +63,8 @@ impl Disk {
     /// The DiskFS takes ownership of the image.
     /// If maybe_boot is None, the FAT boot sector is buffered from the image.
     /// If maybe_boot is Some, the provided boot sector is buffered and written to the image.
-    /// If disk layout matches a 160K or 180K disk, the BPB foundation is overwritten with hard coded values.
+    /// If disk layout matches a 160K or 180K disk, the BPB foundation is overwritten with hard coded values,
+    /// but only in the buffer, i.e., without affecting the boot sector on the image.
     pub fn from_img(mut img: Box<dyn img::DiskImage>,maybe_boot: Option<bpb::BootSector>) -> Self {
         let mut boot_sector = match maybe_boot {
             None => {
@@ -94,14 +93,88 @@ impl Disk {
             typ
         }
     }
+    /// Create an MS-DOS 1.0 file system using the given image as storage.
+    /// The DiskFS takes ownership of the image.
+    pub fn from_img_dos1x(img: Box<dyn img::DiskImage>) -> Self {
+        let boot_sector = bpb::BootSector::create(&img.kind()).expect("boot sector mismatch");
+        let typ = boot_sector.fat_type();
+        Self {
+            img,
+            boot_sector,
+            maybe_fat: None,
+            typ
+        }
+    }
     /// Test an image for the FAT file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         // test the boot sector to see if this is FAT
         if let Ok(boot) = img.read_sector(0,0,1) {
             return bpb::BootSector::verify(&boot);
         }
-        debug!("FAT boot sector was not readable");
+        debug!("boot sector was not readable");
         return false;
+    }
+    /// Test an image for DOS 1.x (no signature, no BPB)
+    pub fn test_img_dos1x(img: &mut Box<dyn img::DiskImage>) -> bool {
+        // We are going to look in the first FAT.
+        // We look in the boot sector only for logging purposes.
+        // By this time layout or size has already been used to create the `DiskImage`.
+        let mut ans = true;
+        // first look at boot sector, but only for logging
+        if let Ok(boot) = img.read_sector(0,0,1) {
+            if boot[0]!=0xeb {
+                debug!("JMP mismatch {}",boot[0]);
+            }
+            let boot_str = String::from_utf8_lossy(&boot);
+            let s1 = "Microsoft";
+            let s2 = "com";
+            let s3 = "dos";
+            if !boot_str.contains(s1) && !boot_str.contains(s2) && !boot_str.contains(s3) {
+                debug!("no string matches");
+            }
+        } else {
+            debug!("boot sector was not readable");
+            ans = false;
+        }
+        // buffer a temporary boot sector for this disk kind.
+        // we only use this to analyze the FAT.
+        if let Ok(boot) = bpb::BootSector::create(&img.kind()) {
+            let mut buf = Vec::new();
+            let sec1 = boot.res_secs() as u64;
+            for isec in sec1..sec1+boot.fat_secs() {
+                debug!("load FAT at sec {}",isec);
+                let mut sec_buf = match img.read_sector(0, 0, 1 + isec as usize) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        debug!("could not read FAT");
+                        return false;
+                    }
+                };
+                buf.append(&mut sec_buf);
+            }
+            if buf[0]!=boot.media_byte() {
+                debug!("wrong media type {} != {}",buf[0],boot.media_byte());
+                ans = false;
+            }
+            let beg = fat::FIRST_DATA_CLUSTER as usize;
+            let end = beg + boot.cluster_count_usable() as usize;
+            for n in beg..end {
+                if fat::is_damaged(n, 12, &buf) || fat::is_free(n, 12, &buf) || fat::is_last(n, 12, &buf) {
+                    continue;
+                }
+                let val = fat::get_cluster(n, 12, &buf) as usize;
+                trace!("cluster link {} -> {}",n,val);
+                if val < beg || val >= end {
+                    debug!("wrong cluster link {} -> {}",n,val);
+                    ans = false;
+                    break;
+                }
+            }
+        } else {
+            debug!("could not guess FAT parameters");
+            ans = false;
+        }
+        ans
     }
     fn get_chs(&self,ptr: &Ptr) -> Result<[usize;3],DYNERR> {
         let lsec = match ptr {
@@ -376,7 +449,7 @@ impl Disk {
     fn get_cluster_chain_data(&mut self,initial: &Ptr) -> Result<Vec<u8>,DYNERR> {
         let mut ans: Vec<u8> = Vec::new();
         match initial.unwrap() {
-            0 => return Ok(ans),
+            0 => return Ok(ans), // empty chain
             c => {
                 if !self.clus_in_rng(c) {
                     return Err(Box::new(Error::FirstClusterInvalid));
@@ -389,6 +462,28 @@ impl Disk {
             let mut data: Vec<u8> = vec![0;self.boot_sector.block_size() as usize];
             self.read_block(&mut data, curr.unwrap(), 0)?;
             ans.append(&mut data);
+            curr = match self.next_cluster(&curr)? {
+                None => return Ok(ans),
+                Some(next) => next
+            };
+        }
+        Err(Box::new(Error::BadFAT))
+    }
+    /// given an initial cluster, follow the chain to the end and return number of clusters.
+    fn get_cluster_chain_length(&mut self,initial: &Ptr) -> Result<usize,DYNERR> {
+        let mut ans: usize = 0;
+        match initial.unwrap() as u32 {
+            0 => return Ok(ans), // empty chain
+            c => {
+                if !self.clus_in_rng(c as usize) {
+                    return Err(Box::new(Error::FirstClusterInvalid));
+                }
+            }
+        }
+        let mut curr = *initial;
+        let max_clusters = self.boot_sector.cluster_count_usable() as usize;
+        for _i in 0..max_clusters {
+            ans += 1;
             curr = match self.next_cluster(&curr)? {
                 None => return Ok(ans),
                 Some(next) => next
@@ -745,6 +840,82 @@ impl Disk {
         entry.set_attr(directory::ARCHIVE);
         self.writeback_directory_entry(loc,&entry)
     }
+    /// Output FAT directory as a JSON object, calls itself recursively
+    fn tree_node(&mut self,dir: &directory::Directory,include_meta: bool) -> Result<json::JsonValue,DYNERR> {
+        const DATE_FMT: &str = "%Y/%m/%d";
+        const TIME_FMT: &str = "%H:%M";
+        let mut files = json::JsonValue::new_object();
+        if let Ok(sorted) = dir.build_files() {
+            for finfo in sorted.values() {
+                if finfo.volume_id {
+                    continue;
+                }
+                if finfo.directory && (finfo.name=="." || finfo.name=="..") {
+                    continue;
+                }
+                let key = match finfo.typ.len() {
+                    0 => finfo.name.clone(),
+                    _ => [finfo.name.clone(),".".to_string(),finfo.typ.clone()].concat()
+                };
+                files[&key] = json::JsonValue::new_object();
+                if finfo.directory && finfo.name!="." && finfo.name!=".." {
+                    if let Some(ptr) = finfo.cluster1 {
+                        trace!("descend into directory {}",key);
+                        let subdir = self.get_directory(&Some(ptr))?;
+                        files[&key]["files"] = self.tree_node(&subdir,include_meta)?;
+                    }
+                }
+                if include_meta {
+                    files[&key]["meta"] = json::JsonValue::new_object();
+                    let meta = &mut files[&key]["meta"];
+                    if finfo.directory {
+                        meta["type"] = json::JsonValue::String("DIR".to_string());
+                    } else {
+                        meta["type"] = json::JsonValue::String(finfo.typ.clone());
+                    }
+                    meta["eof"] = json::JsonValue::Number(finfo.eof.into());
+                    let created = match (finfo.create_date,finfo.create_time) {
+                        (Some(d),Some(t)) => [
+                            d.format(DATE_FMT).to_string(),
+                            " ".to_string(),
+                            t.format(TIME_FMT).to_string()
+                        ].concat(),
+                        _ => "".to_string()
+                    };
+                    let accessed = match finfo.access_date {
+                        Some(d) => d.format(DATE_FMT).to_string(),
+                        None => "".to_string()
+                    };
+                    let modified = match (finfo.write_date,finfo.write_time) {
+                        (Some(d),Some(t)) => [
+                            d.format(DATE_FMT).to_string(),
+                            " ".to_string(),
+                            t.format(TIME_FMT).to_string()
+                        ].concat(),
+                        _ => "".to_string()
+                    };
+                    if created.len()>0 {
+                        meta["time_created"] = json::JsonValue::String(created);
+                    }
+                    if accessed.len()>0 {
+                        meta["time_accessed"] = json::JsonValue::String(accessed);
+                    }
+                    if modified.len()>0 {
+                        meta["time_modified"] = json::JsonValue::String(modified);
+                    }
+                    meta["read_only"] = json::JsonValue::Boolean(finfo.read_only);
+                    meta["system"] = json::JsonValue::Boolean(finfo.system);
+                    meta["hidden"] = json::JsonValue::Boolean(finfo.system);
+                    meta["archived"] = json::JsonValue::Boolean(finfo.archived);
+                    if let Some(cluster1) = finfo.cluster1 {
+                        let blocks = self.get_cluster_chain_length(&cluster1)?;
+                        meta["blocks"] = json::JsonValue::Number(blocks.into());
+                    }
+                }
+            }
+        }
+        Ok(files)
+    }
 }
 
 impl super::DiskFS for Disk {
@@ -781,6 +952,15 @@ impl super::DiskFS for Disk {
             "/w" => display::dir(&path,&vol_lab,&dir,&pattern,true,free),
             _ => Err(Box::new(Error::InvalidSwitch))
         }
+    }
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+        let (vol,dir) = self.get_root_dir()?;
+        let mut tree = json::JsonValue::new_object();
+        tree["file_system"] = json::JsonValue::String("fat".to_string());
+        tree["files"] = self.tree_node(&dir,include_meta)?;
+        tree["label"] = json::JsonValue::new_object();
+        tree["label"]["name"] = json::JsonValue::String(vol);
+        Ok(json::stringify_pretty(tree, 4))
     }
     fn create(&mut self,path: &str) -> STDRESULT {
         let (name,mut loc) = self.prepare_to_write(path)?;
@@ -1144,7 +1324,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage> {
-        self.writeback_fat_buffer().expect("could not write back bitmap buffer");
+        self.writeback_fat_buffer().expect("could not write back FAT buffer");
         &mut self.img
     }
 }

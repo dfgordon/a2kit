@@ -580,6 +580,8 @@ pub trait DiskFS {
     fn new_fimg(&self,chunk_len: usize) -> FileImage;
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT;
+    /// Get the file system tree as a JSON string
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR>;
     /// Create a new directory
     fn create(&mut self,path: &str) -> STDRESULT;
     /// Delete a file or directory

@@ -1,7 +1,7 @@
 //! Module containing the Applesoft minifier
 
 use json;
-
+use log::error;
 use tree_sitter;
 use tree_sitter_applesoft;
 use crate::lang;
@@ -9,13 +9,19 @@ use crate::lang::Visit;
 use super::minify_guards;
 use crate::DYNERR;
 
+/// minify using safe transformations only
+pub const FLAG_SAFE: u64 = 1;
+/// minify variables in ampersand expressions
+pub const FLAG_AMP_VARS: u64 = 2;
+
 /// Handles minification of Applesoft BASIC
 pub struct Minifier
 {
 	line: String,
 	minified_line: String,
     minified_program: String,
-	var_guards: json::JsonValue
+	var_guards: json::JsonValue,
+	flags: u64
 }
 
 impl lang::Visit for Minifier
@@ -64,8 +70,13 @@ impl lang::Visit for Minifier
 					self.minified_line += "REM";
 					return lang::WalkerChoice::GotoSibling;
 				}
-				// for DATA and ampersand keep everything
-				if tok.kind()=="tok_data" || tok.kind()=="tok_amp" {
+				// for DATA always keep everything
+				if tok.kind()=="tok_data" {
+					self.minified_line += &node_str;
+					return lang::WalkerChoice::GotoSibling;
+				}
+				// for ampersand keep everything unless flag is set
+				if tok.kind()=="tok_amp" && (self.flags & FLAG_AMP_VARS == 0) {
 					self.minified_line += &node_str;
 					return lang::WalkerChoice::GotoSibling;
 				}
@@ -127,7 +138,8 @@ impl Minifier
 			line: String::new(),
 			minified_line: String::new(),
 			minified_program: String::new(),
-			var_guards: json::parse(minify_guards::VAR_GUARDS_JSON).expect("json error")
+			var_guards: json::parse(minify_guards::VAR_GUARDS_JSON).expect("json error"),
+			flags: FLAG_SAFE
 		}
     }
 	/// figure out if the short name needs to be guarded against forming a hidden token
@@ -146,8 +158,31 @@ impl Minifier
 		}
 		return false;
 	}
+	/// set the minification flags
+	pub fn set_flags(&mut self,flags: u64) {
+		self.flags = flags;
+	}
+	/// set minification level, 0 means no transformation, higher levels will
+	/// set increasing numbers of flags, the flags are returned
+	pub fn set_level(&mut self,level: usize) -> u64 {
+		self.flags = 0;
+		if level>0 {
+			self.flags |= FLAG_SAFE;
+		}
+		if level>2 {
+			self.flags |= FLAG_AMP_VARS;
+		}
+		self.flags
+	}
 	/// try to reduce the size of a program using simple transformations
 	pub fn minify(&mut self,program: &str) -> Result<String,DYNERR> {
+		if self.flags==0 {
+			return Ok(program.to_string());
+		}
+		if self.flags & FLAG_SAFE == 0 {
+			error!("incompatible flags");
+			return Err(Box::new(crate::commands::CommandError::InvalidCommand));
+		}
 		self.minified_program = String::new();
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
@@ -170,5 +205,4 @@ impl Minifier
 		}
 		Ok(self.minified_program.clone())
 	}
-
 }

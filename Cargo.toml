@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "2.4.1"
+version = "2.5.0"
 edition = "2021"
 readme = "README.md"
 license = "MIT"

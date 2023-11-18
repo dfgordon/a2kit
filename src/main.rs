@@ -3,7 +3,8 @@
 //! Simple subcommands are directly in `main.rs`.
 //! More elaborate subcommands are in the `commands` module.
 
-use clap::{arg,crate_version,Command,ArgAction};
+use clap::{arg,crate_version,Command,ArgAction,ArgGroup};
+use clap::parser::ValueSource;
 use env_logger;
 use std::io::{Read,Write};
 use std::str::FromStr;
@@ -138,6 +139,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .about("read from stdin and error check"));
     main_cmd = main_cmd.subcommand(Command::new("minify")
         .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt"]))
+        .arg(arg!(--level <LEVEL> "set minification level").value_parser(["0","1","2","3"]).default_value("1"))
+        .arg(arg!(--flags <VAL> "set minification flags").default_value("1"))
+        .group(
+            ArgGroup::new("opt").required(false).multiple(false).args(["level","flags"])
+        )
         .about("reduce program size"));
     main_cmd = main_cmd.subcommand(Command::new("renumber")
         .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt"]))
@@ -161,13 +167,17 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
         .about("read from stdin, write to local or disk image")
         .after_help(RNG_HELP));
-main_cmd = main_cmd.subcommand(Command::new("catalog")
+    main_cmd = main_cmd.subcommand(Command::new("catalog")
         .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
         .arg(arg!(-d --dimg <PATH> "path to disk image").required(true))
         .visible_alias("cat")
         .visible_alias("dir")
         .visible_alias("ls")
         .about("write disk image catalog to stdout"));
+    main_cmd = main_cmd.subcommand(Command::new("tree")
+        .arg(arg!(-d --dimg <PATH> "path to disk image").required(true))
+        .arg(arg!(--meta "include metadata").action(ArgAction::SetTrue))
+        .about("write directory tree as a JSON string to stdout"));
     main_cmd = main_cmd.subcommand(Command::new("tokenize")
         .arg(arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)").required(false))
         .arg(arg!(-t --type <TYPE> "type of the file").required(true).value_parser(["atxt","itxt","mtxt"]))
@@ -187,6 +197,7 @@ main_cmd = main_cmd.subcommand(Command::new("catalog")
     }
 
     // Catalog a disk image
+
     if let Some(cmd) = matches.subcommand_matches("catalog") {
         let path_in_img = match cmd.get_one::<String>("file") {
             Some(path) => path,
@@ -201,6 +212,21 @@ main_cmd = main_cmd.subcommand(Command::new("catalog")
         panic!("{}",RCH);
     }
     
+    // Output the directory tree as a JSON string
+
+    if let Some(cmd) = matches.subcommand_matches("tree") {
+        if let Some(path_to_img) = cmd.get_one::<String>("dimg") {
+            return match a2kit::create_fs_from_file(path_to_img) {
+                Ok(mut disk) => {
+                    println!("{}",disk.tree(cmd.get_flag("meta"))?);
+                    Ok(())
+                },
+                Err(e) => Err(e)
+            };
+        }
+        panic!("{}",RCH);
+    }
+
     // Verify
 
     if let Some(cmd) = matches.subcommand_matches("verify") {
@@ -250,6 +276,12 @@ main_cmd = main_cmd.subcommand(Command::new("catalog")
             Ok(ItemType::ApplesoftText) => {
                 lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 let mut minifier = applesoft::minifier::Minifier::new();
+                if cmd.value_source("level").unwrap()==ValueSource::CommandLine {
+                    minifier.set_level(usize::from_str_radix(cmd.get_one::<String>("level").unwrap(),10)?);
+                }
+                if cmd.value_source("flags").unwrap()==ValueSource::CommandLine {
+                    minifier.set_flags(u64::from_str_radix(cmd.get_one::<String>("flags").unwrap(),10)?);
+                }
                 let object = minifier.minify(&program)?;
                 println!("{}",&object);
                 Ok(())

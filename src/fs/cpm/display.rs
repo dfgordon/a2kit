@@ -583,3 +583,66 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
     }
     Ok(())
 }
+
+/// Output CP/M directory "tree" as a JSON string, users are treated as directories.
+pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bool) -> Result<String,DYNERR> {
+    const TIME_FMT: &str = "%Y/%m/%d %H:%M";
+    let mut tree = json::JsonValue::new_object();
+    tree["file_system"] = json::JsonValue::String("cpm".to_string());
+    tree["files"] = json::JsonValue::new_object();
+    tree["label"] = json::JsonValue::new_object();
+    let maybe_lab = dir.find_label();
+    if let Some(lab) = maybe_lab {
+        let (bas,typ) = lab.get_split_string();
+        tree["label"]["name"] = json::JsonValue::String([bas,".".to_string(),typ].concat());
+        tree["label"]["protected"] = json::JsonValue::Boolean(lab.is_protected());
+        if lab.is_timestamped_creation() {
+            tree["label"]["time_created"] = json::JsonValue::String(unpack_date(lab.get_create_time()).format(TIME_FMT).to_string());
+        }
+        if lab.is_timestamped_access() {
+            tree["label"]["time_accessed"] = json::JsonValue::String(unpack_date(lab.get_create_time()).format(TIME_FMT).to_string());
+        }
+        if lab.is_timestamped_update() {
+            tree["label"]["time_modified"] = json::JsonValue::String(unpack_date(lab.get_update_time()).format(TIME_FMT).to_string());
+        }
+    }
+    if let Ok(sorted) = dir.build_files(dpb,[3,1,0]) {
+        let files: Vec<&directory::FileInfo> = sorted.values().collect();
+        for finfo in files {
+            let key = match finfo.typ.len() {
+                0 => finfo.name.clone(),
+                _ => [finfo.name.clone(),".".to_string(),finfo.typ.clone()].concat()
+            };
+            tree["files"][finfo.user.to_string()]["files"][&key] = json::JsonValue::new_object();
+            // file nodes must have no files object at all
+            if include_meta {
+                let bytes = match finfo.entries.last_key_value() {
+                    Some((_k,v))=> {
+                        let fx = dir.get_entry::<directory::Extent>(v).unwrap();
+                        fx.get_eof()
+                    }
+                    None => 0
+                };
+                tree["files"][finfo.user.to_string()]["files"][&key]["meta"] = json::JsonValue::new_object();
+                let meta = &mut tree["files"][finfo.user.to_string()]["files"][&key]["meta"];
+                meta["type"] = json::JsonValue::String(finfo.typ.clone());
+                meta["eof"] = json::JsonValue::Number(bytes.into());
+                if let Some(created) = finfo.create_time {
+                    meta["time_created"] = json::JsonValue::String(unpack_date(created).format(TIME_FMT).to_string());
+                }
+                if let Some(accessed) = finfo.access_time {
+                    meta["time_accessed"] = json::JsonValue::String(unpack_date(accessed).format(TIME_FMT).to_string());
+                }
+                if let Some(modified) = finfo.update_time {
+                    meta["time_modified"] = json::JsonValue::String(unpack_date(modified).format(TIME_FMT).to_string());
+                }
+                meta["read_only"] = json::JsonValue::Boolean(finfo.read_only);
+                meta["system"] = json::JsonValue::Boolean(finfo.system);
+                meta["hidden"] = json::JsonValue::Boolean(finfo.system);
+                meta["archived"] = json::JsonValue::Boolean(finfo.archived);
+                meta["blocks"] = json::JsonValue::Number(finfo.blocks_allocated.into());
+            }
+        }
+    }
+    Ok(json::stringify_pretty(tree, 4))
+}

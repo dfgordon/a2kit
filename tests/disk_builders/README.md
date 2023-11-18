@@ -20,7 +20,7 @@ No builders.  Pascal test disks only contain short Pascal programs.  These were 
 
 ## CP/M
 
-No builders.  CP/M test disks only contain short text files produced using `ED.COM`.
+For CP/M there are short text files produced using `ED.COM`, and larger files created by `SUBMIT.COM` using a script that calls a BASIC program.  Note that `msdos_builder.bas` can run on either MS-DOS or CP/M.
 
 ## MS-DOS
 

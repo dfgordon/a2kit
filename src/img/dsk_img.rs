@@ -125,6 +125,8 @@ impl img::DiskImage for Img {
     fn from_bytes(data: &Vec<u8>) -> Option<Self> {
         // try to match known sizes
         let kind = match data.len() {
+            l if l==CPM_1.byte_capacity() => img::DiskKind::D8(CPM_1),
+            l if l==DSDD_77.byte_capacity() => img::DiskKind::D8(DSDD_77),
             l if l==IBM_SSDD_8.byte_capacity() => img::DiskKind::D525(IBM_SSDD_8),
             l if l==IBM_SSDD_9.byte_capacity() => img::DiskKind::D525(IBM_SSDD_9),
             l if l==IBM_DSDD_8.byte_capacity() => img::DiskKind::D525(IBM_DSDD_8),
@@ -142,6 +144,7 @@ impl img::DiskImage for Img {
         let layout = match kind {
             img::DiskKind::D35(l) => l,
             img::DiskKind::D525(l) => l,
+            img::DiskKind::D8(l) => l,
             _ => panic!("unexpected disk kind")
         };
         debug!("IMG size matches {}",kind);

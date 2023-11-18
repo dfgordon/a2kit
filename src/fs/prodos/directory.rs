@@ -382,6 +382,28 @@ impl Entry {
         }
         ans.iter().map(|x| x + offset).collect()
     }
+    /// put metadata into JSON object, intended for use with TREE
+    pub fn meta_to_json(&self) -> json::JsonValue {
+        const DATE_FMT: &str = "%Y/%m/%d %H:%M";
+        let mut meta = json::JsonValue::new_object();
+        let mut create_time = "<NO DATE>".to_string();
+        let mut mod_time = "<NO DATE>".to_string();
+        if self.create_time!=[0,0,0,0] {
+            create_time = unpack_time(self.create_time).format(DATE_FMT).to_string();
+        }
+        if self.last_mod!=[0,0,0,0] {
+            mod_time = unpack_time(self.last_mod).format(DATE_FMT).to_string();
+        }
+        meta["type"] = json::JsonValue::String(hex::encode_upper(vec![self.file_type]));
+        meta["aux"] = json::JsonValue::String(hex::encode_upper(self.aux_type.to_vec()));
+        meta["eof"] = json::JsonValue::Number(self.eof().into());
+        meta["time_created"] = json::JsonValue::String(create_time);
+        meta["time_modified"] = json::JsonValue::String(mod_time);
+        meta["read_only"] = json::JsonValue::Boolean(self.access & 0x02 == 0);
+        meta["system"] = json::JsonValue::Boolean(self.file_type==FileType::System as u8);
+        meta["blocks"] = json::JsonValue::Number(u16::from_le_bytes(self.blocks_used).into());
+        meta
+    }
 }
 
 /// Allows the entry to be displayed to the console using `println!`.  This also

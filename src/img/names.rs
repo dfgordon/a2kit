@@ -65,6 +65,16 @@ pub const CPM_1: TrackLayout = TrackLayout {
     data_rate: [DataRate::R500Kbps;5]
 };
 
+pub const DSDD_77: TrackLayout = TrackLayout {
+    cylinders: uni!(77),
+    sides: uni!(2),
+    sector_size: uni!(1024),
+    sectors: uni!(8),
+    flux_code: [FluxCode::MFM;5],
+    nib_code: [NibbleCode::None;5],
+    data_rate: [DataRate::R500Kbps;5]
+};
+
 pub const AMSTRAD_SS: TrackLayout = TrackLayout {
     cylinders: uni!(40),
     sides: uni!(1),

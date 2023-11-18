@@ -16,6 +16,7 @@ use crate::img;
 use crate::img::meta;
 use crate::bios::skew;
 use crate::fs::Block;
+use crate::img::names::*;
 use crate::{STDRESULT,DYNERR,putString};
 
 pub enum Mode {
@@ -388,6 +389,7 @@ impl Imd {
         match (self.kind,head) {
             (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
             (super::names::AMSTRAD_SS_KIND,_) => Ok((1..10).collect()),
+            (super::DiskKind::D525(IBM_SSDD_9),_) => Ok((1..10).collect()),
             (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
             (super::names::OSBORNE1_DD_KIND,_) => Ok(vec![1,2,3,4,5]),
             (super::names::KAYPROII_KIND,_) => Ok((0..10).collect()),
@@ -603,6 +605,19 @@ impl img::DiskImage for Imd {
             // TODO: this works for now, but we should have the IMD object set up a pattern
             // that can be explicitly matched against the disk kind.
             ans.kind = match (ans.byte_capacity(),ans.tracks[0].sectors) {
+                (l,8) if l==DSDD_77.byte_capacity() => img::DiskKind::D8(DSDD_77),
+                (l,8) if l==IBM_SSDD_8.byte_capacity() => img::DiskKind::D525(IBM_SSDD_8),
+                (l,9) if l==IBM_SSDD_9.byte_capacity() => img::DiskKind::D525(IBM_SSDD_9),
+                (l,8) if l==IBM_DSDD_8.byte_capacity() => img::DiskKind::D525(IBM_DSDD_8),
+                (l,9) if l==IBM_DSDD_9.byte_capacity() => img::DiskKind::D525(IBM_DSDD_9),
+                (l,8) if l==IBM_SSQD.byte_capacity() => img::DiskKind::D525(IBM_SSQD),
+                (l,8) if l==IBM_DSQD.byte_capacity() => img::DiskKind::D525(IBM_DSQD),
+                (l,15) if l==IBM_DSHD.byte_capacity() => img::DiskKind::D525(IBM_DSHD),
+                (l,9) if l==IBM_720.byte_capacity() => img::DiskKind::D35(IBM_720),
+                (l,18) if l==IBM_1440.byte_capacity() => img::DiskKind::D35(IBM_1440),
+                (l,21) if l==IBM_1680.byte_capacity() => img::DiskKind::D35(IBM_1680),
+                (l,21) if l==IBM_1720.byte_capacity() => img::DiskKind::D35(IBM_1720),
+                (l,36) if l==IBM_2880.byte_capacity() => img::DiskKind::D35(IBM_2880),
                 (256256,26) => img::names::IBM_CPM1_KIND,
                 (102400,10) => img::names::OSBORNE1_SD_KIND,
                 (184320,9) => img::names::AMSTRAD_SS_KIND,

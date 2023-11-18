@@ -7,3 +7,4 @@
 120 RETURN
 130 rem unreachable
 140 if aa123 then 10
+150 & ("ABRACADABRA",ABRACADABRA)

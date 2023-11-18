@@ -702,10 +702,6 @@ impl super::DiskFS for Disk {
                 if entry.tsl_track>0 && entry.tsl_track<255 {
                     let name = file_name_to_string(entry.name);
                     let sectors = u16::from_le_bytes(entry.sectors);
-                    
-                    // TODO: if we actually read the file here we can write out the exact length
-                    // and starting address (if applicable)
-
                     if let Some(typ) = typ_map.get(&entry.file_type) {
                         println!("{} {:03} {}",typ,sectors,name);
                     } else {
@@ -717,6 +713,55 @@ impl super::DiskFS for Disk {
             if ts == [0,0] {
                 println!();
                 return Ok(());
+            }
+        }
+        error!("the disk image directory seems to be damaged");
+        return Err(Box::new(Error::IOError));
+    }
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+        let vconst = self.get_vtoc_constants()?;
+        let mut ts = [vconst.track1,vconst.sector1];
+        let mut buf = vec![0;256];
+        let mut tree = json::JsonValue::new_object();
+        tree["file_system"] = json::JsonValue::String("a2 dos".to_string());
+        tree["files"] = json::JsonValue::new_object();
+        tree["label"] = json::JsonValue::new_object();
+        tree["label"]["name"] = json::JsonValue::String(vconst.vol.to_string());
+        for _try in 0..types::MAX_DIRECTORY_REPS {
+            Self::verify_ts(&vconst,ts[0], ts[1])?;
+            self.read_sector(&mut buf, ts, 0)?;
+            let dir = DirectorySector::from_bytes(&buf);
+            for entry in dir.entries.as_ref() {
+                if entry.tsl_track>0 && entry.tsl_track<255 {
+                    let name = file_name_to_string(entry.name);
+                    tree["files"][&name] = json::JsonValue::new_object();
+                    // file nodes must have no files object at all
+                    if include_meta {
+                        let sectors = u16::from_le_bytes(entry.sectors);
+                        ts = [entry.tsl_track,entry.tsl_sector];
+                        Self::verify_ts(&vconst,ts[0], ts[1])?;
+                        self.read_sector(&mut buf,ts,0)?;
+                        let tslist = TrackSectorList::from_bytes(&buf);
+                        ts = [tslist.pairs[0],tslist.pairs[1]];
+                        Self::verify_ts(&vconst,ts[0], ts[1])?;
+                        self.read_sector(&mut buf,ts,0)?;
+                        let bytes = match entry.file_type & 0x7f {
+                            1 | 2 => u16::from_le_bytes([buf[0],buf[1]]),
+                            4 => u16::from_le_bytes([buf[2],buf[3]]),
+                            _ => sectors*256
+                        };
+                        tree["files"][&name]["meta"] = json::JsonValue::new_object();
+                        let meta = &mut tree["files"][&name]["meta"];
+                        meta["type"] = json::JsonValue::String(hex::encode_upper(vec![entry.file_type & 0x7f]));
+                        meta["eof"] = json::JsonValue::Number(bytes.into());
+                        meta["blocks"] = json::JsonValue::Number(sectors.into());
+                        meta["read_only"] = json::JsonValue::Boolean(entry.file_type & 0x80 > 0);
+                    }
+                }
+            }
+            ts = [dir.next_track,dir.next_sector];
+            if ts == [0,0] {
+                return Ok(json::stringify_pretty(tree, 4));
             }
         }
         error!("the disk image directory seems to be damaged");

@@ -108,6 +108,10 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
         info!("identified FAT file system");
         return Some(Box::new(fs::fat::Disk::from_img(img,None)));
     }
+    if fs::fat::Disk::test_img_dos1x(&mut img) {
+        info!("identified MS-DOS 1.x file system");
+        return Some(Box::new(fs::fat::Disk::from_img_dos1x(img)));
+    }
     // For CP/M we have to try all these DPB heuristically
     let dpb_list = vec![
         bios::dpb::A2_525,

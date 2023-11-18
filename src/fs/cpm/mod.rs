@@ -572,6 +572,10 @@ impl super::DiskFS for Disk {
             _ => display::dir(&dir,&self.dpb,opt)
         }
     }
+    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+        let dir = self.get_directory();
+        display::tree(&dir,&self.dpb,include_meta)
+    }
     fn create(&mut self,_path: &str) -> STDRESULT {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
