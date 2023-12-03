@@ -38,7 +38,7 @@ fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
     return [bytes_date[0],bytes_date[1],bytes_time[0],bytes_time[1]];
 }
 
-fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
+fn unpack_time(prodos_date_time: [u8;4]) -> Option<chrono::NaiveDateTime> {
     let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
     let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
     let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
@@ -46,8 +46,10 @@ fn unpack_time(prodos_date_time: [u8;4]) -> chrono::NaiveDateTime {
     let day = date & 31;
     let hour = (time >> 8) & 255;
     let minute = time & 255;
-    return chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32).unwrap().
-        and_hms_opt(hour as u32,minute as u32,0).unwrap();
+    match chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32) {
+        Some(date) => date.and_hms_opt(hour as u32,minute as u32,0),
+        None => None
+    }
 }
 
 /// Test the string for validity as a ProDOS name.
@@ -386,14 +388,14 @@ impl Entry {
     pub fn meta_to_json(&self) -> json::JsonValue {
         const DATE_FMT: &str = "%Y/%m/%d %H:%M";
         let mut meta = json::JsonValue::new_object();
-        let mut create_time = "<NO DATE>".to_string();
-        let mut mod_time = "<NO DATE>".to_string();
-        if self.create_time!=[0,0,0,0] {
-            create_time = unpack_time(self.create_time).format(DATE_FMT).to_string();
-        }
-        if self.last_mod!=[0,0,0,0] {
-            mod_time = unpack_time(self.last_mod).format(DATE_FMT).to_string();
-        }
+        let create_time = match unpack_time(self.create_time) {
+            Some(date_time) => date_time.format(DATE_FMT).to_string(),
+            None => "".to_string()
+        };
+        let mod_time = match unpack_time(self.last_mod) {
+            Some(date_time) => date_time.format(DATE_FMT).to_string(),
+            None => "".to_string()
+        };
         meta["type"] = json::JsonValue::String(hex::encode_upper(vec![self.file_type]));
         meta["aux"] = json::JsonValue::String(hex::encode_upper(self.aux_type.to_vec()));
         meta["eof"] = json::JsonValue::Number(self.eof().into());
@@ -411,15 +413,16 @@ impl Entry {
 /// Intended use is for CATALOG.
 impl fmt::Display for Entry {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const DATE_FMT: &str = "%d-%b-%y %H:%M";
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
-        let mut create_time = "<NO DATE>".to_string();
-        let mut mod_time = "<NO DATE>".to_string();
-        if self.create_time!=[0,0,0,0] {
-            create_time = unpack_time(self.create_time).format("%d-%b-%y %H:%M").to_string();
-        }
-        if self.last_mod!=[0,0,0,0] {
-            mod_time = unpack_time(self.last_mod).format("%d-%b-%y %H:%M").to_string();
-        }
+        let create_time = match unpack_time(self.create_time) {
+            Some(date_time) => date_time.format(DATE_FMT).to_string(),
+            None => "<NO DATE>".to_string()
+        };
+        let mod_time = match unpack_time(self.last_mod) {
+            Some(date_time) => date_time.format(DATE_FMT).to_string(),
+            None => "<NO DATE>".to_string()
+        };
         let mut write_protect = "*".to_string();
         if self.access & 0x02 == 0x02 {
             write_protect = " ".to_string();

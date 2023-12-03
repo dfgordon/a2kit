@@ -1,0 +1,586 @@
+#compdef a2kit
+
+autoload -U is-at-least
+
+_a2kit() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_a2kit_commands" \
+"*::: :->a2kit" \
+&& ret=0
+    case $state in
+    (a2kit)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:a2kit-command-$line[1]:"
+        case $line[1] in
+            (mkdsk)
+_arguments "${_arguments_options[@]}" \
+'-v+[volume name or number]:VOLUME: ' \
+'--volume=[volume name or number]:VOLUME: ' \
+'-t+[type of disk image to create]:TYPE:(d13 do po woz1 woz2 imd img 2mg nib td0)' \
+'--type=[type of disk image to create]:TYPE:(d13 do po woz1 woz2 imd img 2mg nib td0)' \
+'-o+[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
+'--os=[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
+'-k+[kind of disk]:SIZE:(8in 8in-trs80 8in-nabu 5.25in 5.25in-ibm-ssdd8 5.25in-ibm-ssdd9 5.25in-ibm-dsdd8 5.25in-ibm-dsdd9 5.25in-ibm-ssqd 5.25in-ibm-dsqd 5.25in-ibm-dshd 5.25in-kayii 5.25in-kay4 5.25in-osb-sd 5.25in-osb-dd 3.5in 3.5in-ss 3.5in-ds 3.5in-ibm-720 3.5in-ibm-1440 3.5in-ibm-2880 3in-amstrad hdmax)' \
+'--kind=[kind of disk]:SIZE:(8in 8in-trs80 8in-nabu 5.25in 5.25in-ibm-ssdd8 5.25in-ibm-ssdd9 5.25in-ibm-dsdd8 5.25in-ibm-dsdd9 5.25in-ibm-ssqd 5.25in-ibm-dsqd 5.25in-ibm-dshd 5.25in-kayii 5.25in-kay4 5.25in-osb-sd 5.25in-osb-dd 3.5in 3.5in-ss 3.5in-ds 3.5in-ibm-720 3.5in-ibm-1440 3.5in-ibm-2880 3in-amstrad hdmax)' \
+'-d+[disk image path to create]:PATH:_files' \
+'--dimg=[disk image path to create]:PATH:_files' \
+'-w+[type of disk image to wrap]:TYPE:(do po nib)' \
+'--wrap=[type of disk image to wrap]:TYPE:(do po nib)' \
+'-b[make disk bootable]' \
+'--bootable[make disk bootable]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(mkdir)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image of new directory]:PATH: ' \
+'--file=[path inside disk image of new directory]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to delete]:PATH: ' \
+'--file=[path inside disk image to delete]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(protect)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to protect]:PATH: ' \
+'--file=[path inside disk image to protect]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-p+[password to assign]:PASSWORD: ' \
+'--password=[password to assign]:PASSWORD: ' \
+'--read[protect read]' \
+'--write[protect read]' \
+'--delete[protect read]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(unprotect)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to unprotect]:PATH: ' \
+'--file=[path inside disk image to unprotect]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(lock)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to lock]:PATH: ' \
+'--file=[path inside disk image to lock]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(unlock)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to unlock]:PATH: ' \
+'--file=[path inside disk image to unlock]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to rename]:PATH: ' \
+'--file=[path inside disk image to rename]:PATH: ' \
+'-n+[new name]:NAME: ' \
+'--name=[new name]:NAME: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(retype)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to retype]:PATH: ' \
+'--file=[path inside disk image to retype]:PATH: ' \
+'-t+[file system type, code or mnemonic]:TYPE: ' \
+'--type=[file system type, code or mnemonic]:TYPE: ' \
+'-a+[file system auxiliary metadata]:AUX: ' \
+'--aux=[file system auxiliary metadata]:AUX: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg=[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(verify)
+_arguments "${_arguments_options[@]}" \
+'-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
+'--type=[type of the file]:TYPE:(atxt itxt mtxt)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(minify)
+_arguments "${_arguments_options[@]}" \
+'-t+[type of the file]:TYPE:(atxt)' \
+'--type=[type of the file]:TYPE:(atxt)' \
+'--level=[set minification level]:LEVEL:(0 1 2 3)' \
+'--flags=[set minification flags]:VAL: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(renumber)
+_arguments "${_arguments_options[@]}" \
+'-t+[type of the file]:TYPE:(atxt)' \
+'--type=[type of the file]:TYPE:(atxt)' \
+'-b+[lowest number to renumber]:NUM: ' \
+'--beg=[lowest number to renumber]:NUM: ' \
+'-e+[highest number to renumber plus 1]:NUM: ' \
+'--end=[highest number to renumber plus 1]:NUM: ' \
+'-f+[first number]:NUM: ' \
+'--first=[first number]:NUM: ' \
+'-s+[step between numbers]:NUM: ' \
+'--step=[step between numbers]:NUM: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" \
+'-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
+'--file=[path, key, or address, maybe inside disk image]:PATH:_files' \
+'-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type=[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg=[path to disk image]:PATH:_files' \
+'-l+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
+'--len=[length of record in DOS 3.3 random access text file]:LENGTH: ' \
+'--trunc[truncate raw at EOF if possible]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(put)
+_arguments "${_arguments_options[@]}" \
+'-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
+'--file=[path, key, or address, maybe inside disk image]:PATH:_files' \
+'-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type=[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg=[path to disk image]:PATH:_files' \
+'-a+[address of binary file]:ADDRESS: ' \
+'--addr=[address of binary file]:ADDRESS: ' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(catalog)
+_arguments "${_arguments_options[@]}" \
+'-f+[path of directory inside disk image]:PATH: ' \
+'--file=[path of directory inside disk image]:PATH: ' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg=[path to disk image]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg=[path to disk image]:PATH:_files' \
+'--meta[include metadata]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(tokenize)
+_arguments "${_arguments_options[@]}" \
+'-a+[address of tokenized code (Applesoft only)]:ADDRESS: ' \
+'--addr=[address of tokenized code (Applesoft only)]:ADDRESS: ' \
+'-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
+'--type=[type of the file]:TYPE:(atxt itxt mtxt)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(detokenize)
+_arguments "${_arguments_options[@]}" \
+'-t+[type of the file]:TYPE:(atok itok mtok)' \
+'--type=[type of the file]:TYPE:(atok itok mtok)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" \
+":: :_a2kit__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:a2kit-help-command-$line[1]:"
+        case $line[1] in
+            (mkdsk)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(mkdir)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(protect)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(unprotect)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(lock)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(unlock)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(retype)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(verify)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(minify)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(renumber)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(put)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(catalog)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(tokenize)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(detokenize)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_a2kit_commands] )) ||
+_a2kit_commands() {
+    local commands; commands=(
+'mkdsk:write a blank disk image to the given path' \
+'mkdir:create a new directory inside a disk image' \
+'delete:delete a file or directory inside a disk image' \
+'del:delete a file or directory inside a disk image' \
+'era:delete a file or directory inside a disk image' \
+'protect:password protect a disk or file' \
+'unprotect:remove password protection from a disk or file' \
+'lock:write protect a file or directory inside a disk image' \
+'unlock:remove write protection from a file or directory inside a disk image' \
+'rename:rename a file or directory inside a disk image' \
+'retype:change file type inside a disk image' \
+'verify:read from stdin and error check' \
+'minify:reduce program size' \
+'renumber:renumber BASIC program lines' \
+'get:read from stdin, local, or disk image, write to stdout' \
+'put:read from stdin, write to local or disk image' \
+'catalog:write disk image catalog to stdout' \
+'cat:write disk image catalog to stdout' \
+'dir:write disk image catalog to stdout' \
+'ls:write disk image catalog to stdout' \
+'tree:write directory tree as a JSON string to stdout' \
+'tokenize:read from stdin, tokenize, write to stdout' \
+'tok:read from stdin, tokenize, write to stdout' \
+'detokenize:read from stdin, detokenize, write to stdout' \
+'dtok:read from stdin, detokenize, write to stdout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'a2kit commands' commands "$@"
+}
+(( $+functions[_a2kit__catalog_commands] )) ||
+_a2kit__catalog_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit catalog commands' commands "$@"
+}
+(( $+functions[_a2kit__help__catalog_commands] )) ||
+_a2kit__help__catalog_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help catalog commands' commands "$@"
+}
+(( $+functions[_a2kit__delete_commands] )) ||
+_a2kit__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit delete commands' commands "$@"
+}
+(( $+functions[_a2kit__help__delete_commands] )) ||
+_a2kit__help__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help delete commands' commands "$@"
+}
+(( $+functions[_a2kit__detokenize_commands] )) ||
+_a2kit__detokenize_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit detokenize commands' commands "$@"
+}
+(( $+functions[_a2kit__help__detokenize_commands] )) ||
+_a2kit__help__detokenize_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help detokenize commands' commands "$@"
+}
+(( $+functions[_a2kit__get_commands] )) ||
+_a2kit__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit get commands' commands "$@"
+}
+(( $+functions[_a2kit__help__get_commands] )) ||
+_a2kit__help__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help get commands' commands "$@"
+}
+(( $+functions[_a2kit__help_commands] )) ||
+_a2kit__help_commands() {
+    local commands; commands=(
+'mkdsk:write a blank disk image to the given path' \
+'mkdir:create a new directory inside a disk image' \
+'delete:delete a file or directory inside a disk image' \
+'protect:password protect a disk or file' \
+'unprotect:remove password protection from a disk or file' \
+'lock:write protect a file or directory inside a disk image' \
+'unlock:remove write protection from a file or directory inside a disk image' \
+'rename:rename a file or directory inside a disk image' \
+'retype:change file type inside a disk image' \
+'verify:read from stdin and error check' \
+'minify:reduce program size' \
+'renumber:renumber BASIC program lines' \
+'get:read from stdin, local, or disk image, write to stdout' \
+'put:read from stdin, write to local or disk image' \
+'catalog:write disk image catalog to stdout' \
+'tree:write directory tree as a JSON string to stdout' \
+'tokenize:read from stdin, tokenize, write to stdout' \
+'detokenize:read from stdin, detokenize, write to stdout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'a2kit help commands' commands "$@"
+}
+(( $+functions[_a2kit__help__help_commands] )) ||
+_a2kit__help__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help help commands' commands "$@"
+}
+(( $+functions[_a2kit__help__lock_commands] )) ||
+_a2kit__help__lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help lock commands' commands "$@"
+}
+(( $+functions[_a2kit__lock_commands] )) ||
+_a2kit__lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit lock commands' commands "$@"
+}
+(( $+functions[_a2kit__help__minify_commands] )) ||
+_a2kit__help__minify_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help minify commands' commands "$@"
+}
+(( $+functions[_a2kit__minify_commands] )) ||
+_a2kit__minify_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit minify commands' commands "$@"
+}
+(( $+functions[_a2kit__help__mkdir_commands] )) ||
+_a2kit__help__mkdir_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help mkdir commands' commands "$@"
+}
+(( $+functions[_a2kit__mkdir_commands] )) ||
+_a2kit__mkdir_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit mkdir commands' commands "$@"
+}
+(( $+functions[_a2kit__help__mkdsk_commands] )) ||
+_a2kit__help__mkdsk_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help mkdsk commands' commands "$@"
+}
+(( $+functions[_a2kit__mkdsk_commands] )) ||
+_a2kit__mkdsk_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit mkdsk commands' commands "$@"
+}
+(( $+functions[_a2kit__help__protect_commands] )) ||
+_a2kit__help__protect_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help protect commands' commands "$@"
+}
+(( $+functions[_a2kit__protect_commands] )) ||
+_a2kit__protect_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit protect commands' commands "$@"
+}
+(( $+functions[_a2kit__help__put_commands] )) ||
+_a2kit__help__put_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help put commands' commands "$@"
+}
+(( $+functions[_a2kit__put_commands] )) ||
+_a2kit__put_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit put commands' commands "$@"
+}
+(( $+functions[_a2kit__help__rename_commands] )) ||
+_a2kit__help__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help rename commands' commands "$@"
+}
+(( $+functions[_a2kit__rename_commands] )) ||
+_a2kit__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit rename commands' commands "$@"
+}
+(( $+functions[_a2kit__help__renumber_commands] )) ||
+_a2kit__help__renumber_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help renumber commands' commands "$@"
+}
+(( $+functions[_a2kit__renumber_commands] )) ||
+_a2kit__renumber_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit renumber commands' commands "$@"
+}
+(( $+functions[_a2kit__help__retype_commands] )) ||
+_a2kit__help__retype_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help retype commands' commands "$@"
+}
+(( $+functions[_a2kit__retype_commands] )) ||
+_a2kit__retype_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit retype commands' commands "$@"
+}
+(( $+functions[_a2kit__help__tokenize_commands] )) ||
+_a2kit__help__tokenize_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help tokenize commands' commands "$@"
+}
+(( $+functions[_a2kit__tokenize_commands] )) ||
+_a2kit__tokenize_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit tokenize commands' commands "$@"
+}
+(( $+functions[_a2kit__help__tree_commands] )) ||
+_a2kit__help__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help tree commands' commands "$@"
+}
+(( $+functions[_a2kit__tree_commands] )) ||
+_a2kit__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit tree commands' commands "$@"
+}
+(( $+functions[_a2kit__help__unlock_commands] )) ||
+_a2kit__help__unlock_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help unlock commands' commands "$@"
+}
+(( $+functions[_a2kit__unlock_commands] )) ||
+_a2kit__unlock_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit unlock commands' commands "$@"
+}
+(( $+functions[_a2kit__help__unprotect_commands] )) ||
+_a2kit__help__unprotect_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help unprotect commands' commands "$@"
+}
+(( $+functions[_a2kit__unprotect_commands] )) ||
+_a2kit__unprotect_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit unprotect commands' commands "$@"
+}
+(( $+functions[_a2kit__help__verify_commands] )) ||
+_a2kit__help__verify_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit help verify commands' commands "$@"
+}
+(( $+functions[_a2kit__verify_commands] )) ||
+_a2kit__verify_commands() {
+    local commands; commands=()
+    _describe -t commands 'a2kit verify commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_a2kit" ]; then
+    _a2kit "$@"
+else
+    compdef _a2kit a2kit
+fi

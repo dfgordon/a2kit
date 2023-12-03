@@ -167,3 +167,30 @@ mod control_tests {
 		super::test_tokenizer(&test_string, expected);
 	}
 }
+
+mod escapes {
+	#[test]
+	fn string_escapes() {
+		let test_code = "10 print \"\\x8a1\\x8a2\"";
+		let expected = "0B0A0061288AB18AB22901";
+		super::test_tokenizer(test_code, expected);
+	}
+ 	#[test]
+	fn rem_escapes() {
+		let test_code = "10 rem \\x8a\\x8aAAA\\x8a\\x8a";
+		let expected = "0D0A005DA08A8AC1C1C18A8A01";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn dos_escapes() {
+		let test_code = "0 PR# 0\n1 PRINT:PRINT \"\\x84BLOAD DATA1,A$4000\":END\n";
+		let expected = "0800007EB00000011E01006303612884C2CCCFC1C4A0C4C1D4C1B1ACC1A4B4B0B0B029035101";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn dos_non_escapes() {
+		let test_code = "0 PR# 0\n1 PRINT:PRINT \"\x04BLOAD DATA1,A$4000\":END\n";
+		let expected = "0800007EB00000011E01006303612884C2CCCFC1C4A0C4C1D4C1B1ACC1A4B4B0B0B029035101";
+		super::test_tokenizer(test_code, expected);
+	}
+}

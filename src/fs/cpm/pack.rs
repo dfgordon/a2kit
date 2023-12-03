@@ -35,6 +35,7 @@ pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
     return [days[0],days[1],hours as u8,minutes as u8];
 }
 
+// TODO: return an option
 pub fn unpack_date(cpm_date: [u8;4]) -> chrono::NaiveDateTime {
     let ref_date = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap();
     let now = ref_date + Duration::days(u16::from_le_bytes([cpm_date[0],cpm_date[1]]) as i64 - 1);

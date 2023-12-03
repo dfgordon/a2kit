@@ -73,7 +73,7 @@ use img::DiskImage;
 use fs::DiskFS;
 use std::io::Read;
 use std::fmt::Write;
-use log::{warn,info,debug};
+use log::{warn,info,debug,error};
 use regex::Regex;
 use hex;
 
@@ -141,6 +141,9 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
     };
+    if disk_img_data.len() < 100 {
+        return Err(Box::new(img::Error::ImageSizeMismatch));
+    }
     debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
@@ -234,6 +237,9 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
     };
+    if disk_img_data.len() < 100 {
+        return Err(Box::new(img::Error::ImageSizeMismatch));
+    }
     debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
@@ -314,6 +320,20 @@ fn buffer_file(path: &str,max: u64) -> Result<Vec<u8>,DYNERR> {
     }
 }
 
+/// Calls `create_img_from_bytestream` getting the bytes from stdin.
+/// All image types will be tried heuristically.
+pub fn create_img_from_stdin() -> Result<Box<dyn DiskImage>,DYNERR> {
+    let mut disk_img_data = Vec::new();
+    if atty::is(atty::Stream::Stdin) {
+        error!("pipe a disk image or use `-d` option");
+        return Err(Box::new(commands::CommandError::InvalidCommand));
+    }
+    match std::io::stdin().read_to_end(&mut disk_img_data) {
+        Ok(_n) => create_img_from_bytestream(&disk_img_data,None),
+        Err(e) => Err(Box::new(e))
+    }
+}
+
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
 /// File extension will be used to restrict image types that are tried,
@@ -333,10 +353,21 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR>
     }
 }
 
+pub fn create_img_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
+    match maybe_img_path {
+        Some(img_path) => create_img_from_file(img_path),
+        None => create_img_from_stdin()
+    }
+}
+
 /// Calls `create_fs_from_bytestream` getting the bytes from stdin.
 /// All image types and file systems will be tried heuristically.
 pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
     let mut disk_img_data = Vec::new();
+    if atty::is(atty::Stream::Stdin) {
+        error!("pipe a disk image or use `-d` option");
+        return Err(Box::new(commands::CommandError::InvalidCommand));
+    }
     match std::io::stdin().read_to_end(&mut disk_img_data) {
         Ok(_n) => create_fs_from_bytestream(&disk_img_data,None),
         Err(e) => Err(Box::new(e))
@@ -359,6 +390,13 @@ pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
             create_fs_from_bytestream(&disk_img_data,maybe_ext)
         },
         Err(e) => Err(e)
+    }
+}
+
+pub fn create_fs_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    match maybe_img_path {
+        Some(img_path) => create_fs_from_file(img_path),
+        None => create_fs_from_stdin()
     }
 }
 

@@ -35,19 +35,17 @@ fn output_get(
 }
 
 pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
-    // if !atty::is(atty::Stream::Stdin) {
-    //     error!("input is redirected, but `get` must start the pipeline");
-    //     return Err(Box::new(CommandError::InvalidCommand));
-    // }
+
     let maybe_src_path = cmd.get_one::<String>("file");
     let maybe_typ = cmd.get_one::<String>("type");
     let maybe_img = cmd.get_one::<String>("dimg");
+    let local_file = atty::is(atty::Stream::Stdin) && maybe_img.is_none();
     let trunc = cmd.get_flag("trunc");
 
-    match (maybe_typ,maybe_img,maybe_src_path) {
+    match (maybe_typ,local_file,maybe_src_path) {
 
         // we are getting a specific item from a disk image
-        (Some(typ_str),Some(img_path),Some(src_path)) => {
+        (Some(typ_str),false,Some(src_path)) => {
             // For items that don't need a file system handle differently.
             // Also verify truncation flag.
             match (ItemType::from_str(typ_str),trunc) {
@@ -64,7 +62,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                 (Err(e),_) => return Err(Box::new(e))
             }
             let typ = ItemType::from_str(typ_str);
-            match crate::create_fs_from_file(img_path) {
+            match crate::create_fs_from_file_or_stdin(maybe_img) {
                 Ok(mut disk) => {
                     // special handling for sparse data
                     if let Ok(ItemType::FileImage) = typ {
@@ -121,7 +119,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         },
 
         // this pattern can be used for metadata only
-        (Some(type_str),Some(_),None) => {
+        (Some(type_str),false,None) => {
             match ItemType::from_str(type_str) {
                 Ok(ItemType::Metadata) => return super::get_img::get_meta(cmd),
                 Ok(_) => {
@@ -133,7 +131,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         },
 
         // this pattern means we have a local file
-        (None,None,Some(src_path)) => {
+        (None,true,Some(src_path)) => {
             match std::fs::read(&src_path) {
                 Ok(object) => {
                     std::io::stdout().write_all(&object).expect("could not write stdout");
@@ -146,7 +144,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         // arguments inconsistent
         _ => {
             match (maybe_typ,maybe_img) {
-                (Some(_),None) => error!("please specify disk image with `-d`"),
+                (Some(_),None) => error!("please pipe a disk image or use `-d`"),
                 (Some(_),Some(_)) => error!("please narrow the item with `-f`"),
                 (None,Some(_)) => error!("please narrow the type of item with `-t`"),
                 (None,None) => error!("please provide arguments")

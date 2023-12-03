@@ -40,12 +40,8 @@ impl lang::Visit for Tokenizer
 			}
 			panic!("number node did not parse as a number")
 		}
-		// Anonymous nodes (are there any?)
-		// if !curs.node().is_named() {
-		// 	let mut cleaned = self.text(curs.node()).to_uppercase().replace(" ","").as_bytes().to_vec();
-		// 	self.tokenized_line.append(&mut cleaned);
-		// 	return walker::WalkerChoice::GotoSibling;
-		// }
+		// Anonymous nodes would go here
+
 		// Positive ASCII tokens
 		if let Some(tok) = self.tok_map.get(curs.node().kind()) {
 			self.tokenized_line.push(*tok);
@@ -64,24 +60,25 @@ impl lang::Visit for Tokenizer
 			self.tokenized_line.append(&mut neg);
 			return lang::WalkerChoice::GotoSibling;
 		}
-		// Persistent spaces
+		// Strings including tokenized quotes and escapes
 		if curs.node().kind()=="string" {
-			// formerly tried iterating over children, but children() seemed to skip anonymous nodes
-			let cleaned = self.text(curs.node()).to_uppercase().trim().as_bytes().to_vec();
-			let mut neg: Vec<u8> = cleaned.iter().map(|b| b+128).collect();
-			neg[0] = 0x28;
-			neg[cleaned.len()-1] = 0x29;
+			let mut neg: Vec<u8> = vec![0x28];
+			let txt = Self::stringlike_node_to_bytes(&self.text(curs.node()), false);
+			neg.append(&mut txt[1..txt.len()-1].to_vec());
+			neg.push(0x29);
 			self.tokenized_line.append(&mut neg);
 			return lang::WalkerChoice::GotoSibling;
 		}
+		// Comment text with escapes
 		if curs.node().kind()=="comment_text" {
-			self.tokenized_line.append(&mut self.text(curs.node()).as_bytes().to_vec().iter().map(|b| b+128).collect());
+			let mut neg = Self::stringlike_node_to_bytes(&self.text(curs.node()), false);
+			self.tokenized_line.append(&mut neg);
 			return lang::WalkerChoice::GotoSibling;
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().named_child_count()==0 {
-			self.tokenized_line.append(&mut self.text(curs.node()).replace(" ","").as_bytes().to_vec());
+			self.tokenized_line.append(&mut self.text(curs.node()).to_uppercase().replace(" ","").as_bytes().to_vec());
 			return lang::WalkerChoice::GotoSibling;
 		}
 
@@ -106,6 +103,11 @@ impl Tokenizer
 		let rng = std::ops::Range {start: node.range().start_point.column, end: node.range().end_point.column};
 		String::from(&self.line[rng])
 	}
+	/// will invert and capitalize
+	fn stringlike_node_to_bytes(txt: &str,trim: bool) -> Vec<u8> {
+		let trimmed = match trim { true => txt.trim_start().to_string(), false => txt.to_string() };
+		return crate::parse_escaped_ascii(&trimmed, true, true);
+	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();
 		let tree = parser.parse(&self.line,None).expect("Error parsing file");
@@ -124,7 +126,7 @@ impl Tokenizer
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(tree_sitter_integerbasic::language()).expect("error loading integer grammar");
 		for line in program.lines() {
-			if line.len()==0 {
+			if line.trim().len()==0 {
 				continue;
 			}
 			self.line = String::from(line) + "\n";
@@ -135,6 +137,10 @@ impl Tokenizer
 	}
 	/// Detokenize from byte array into a UTF8 string
 	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
+		const OPEN_QUOTE: u8 = 0x28;
+		const CLOSE_QUOTE: u8 = 0x29;
+		const REM_TOK: u8 = 93;
+		const EOL: u8 = 0x01;
 		let mut addr = 0;
 		let mut code = String::new();
 		while addr < 65536 && addr+2<img.len() {
@@ -142,6 +148,7 @@ impl Tokenizer
 			let line_num: u16 = img[addr] as u16 + img[addr+1] as u16*256;
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
+			let mut escaped: String;
 			for rep in 0..256 {
 				if rep==255 {
 					error!("integer BASIC line is too long");
@@ -151,41 +158,55 @@ impl Tokenizer
 					error!("program ended while processing line");
 					return Err(Box::new(lang::Error::Detokenization));
 				}
-				if img[addr]==1 {
+				if img[addr]==EOL {
 					code += "\n";
 					addr += 1;
 					break;
-				}
-				if img[addr]<128 {
+				} else if img[addr] == OPEN_QUOTE {
+					code += "\"";
+					(escaped,addr) = super::bytes_to_escaped_string(&img, addr+1, &[CLOSE_QUOTE,EOL]);
+					code += &escaped;
+					if img[addr] == CLOSE_QUOTE {
+						code += "\"";
+						addr += 1;
+					}
+				} else if img[addr] == REM_TOK {
+					if !code.ends_with(" ") {
+						code += " ";
+					}
+					code += "REM"; // real Apple II would add trailing space, breaking symmetry with tokenizer
+					(escaped,addr) = super::bytes_to_escaped_string(&img, addr+1, &[EOL]);
+					code += &escaped;
+				} else if img[addr]<128 {
 					if let Some(tok) = self.detok_map.get(&img[addr]) {
-						if tok.len()>1 {
-							code += &(String::from(" ") + &tok.to_uppercase() + " ");
-						} else {
-							code += &tok.to_uppercase();
+						if tok.len()>1 && *tok!="<>" && !code.ends_with(" ") {
+							code += " ";
+						}
+						code += &tok.to_uppercase();
+						if tok.len()>1 && *tok!="<>" && !tok.ends_with("(") && !tok.ends_with("=") {
+							code += " ";
 						}
 						addr += 1;
 					} else {
 						error!("unrecognized integer BASIC token encountered");
 						return Err(Box::new(lang::Error::Syntax));
 					}
+				} else if img[addr]>=176 && img[addr]<=185 {
+					// next 2 bytes are a binary number
+					if addr+2 >= img.len() {
+						error!("program ended while processing integer");
+						return Err(Box::new(lang::Error::Detokenization));
+					}
+					code += &u16::to_string(&u16::from_le_bytes([img[addr+1],img[addr+2]]));
+					addr += 3;
 				} else {
-					if img[addr]>=176 && img[addr]<=185 {
-						// next 2 bytes are a binary number
-						if addr+2 >= img.len() {
-							error!("program ended while processing integer");
+					// this is a variable name
+					while img[addr]>=128 {
+						code += &String::from_utf8(vec![img[addr]-128]).expect("expected negative ASCII was not found");
+						addr += 1;
+						if addr >= img.len() {
+							error!("program ended while processing variable name");
 							return Err(Box::new(lang::Error::Detokenization));
-						}
-						code += &u16::to_string(&u16::from_le_bytes([img[addr+1],img[addr+2]]));
-						addr += 3;
-					} else {
-						// this is a variable name
-						while img[addr]>=128 {
-							code += &String::from_utf8(vec![img[addr]-128]).expect("expected negative ASCII was not found");
-							addr += 1;
-							if addr >= img.len() {
-								error!("program ended while processing variable name");
-								return Err(Box::new(lang::Error::Detokenization));
-							}
 						}
 					}
 				}

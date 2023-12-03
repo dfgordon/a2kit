@@ -503,7 +503,9 @@ impl Disk {
     /// Find the directory and return the key block pointer
     fn find_dir_key_block(&mut self,path: &str) -> Result<u16,DYNERR> {
         let vhdr = self.get_vol_header()?;
-        if path=="/" || path=="" || path==&("/".to_string()+&vhdr.name()) {
+        let vname = "/".to_string() + &vhdr.name().to_lowercase();
+        let vname2 = vname.clone() + "/";
+        if path=="/" || path=="" || path.to_lowercase()==vname || path.to_lowercase()==vname2 {
             return Ok(VOL_KEY_BLOCK);
         }
         if let Ok(loc) = self.search_volume(&vec![StorageType::SubDirEntry], path) {

@@ -51,6 +51,7 @@ pub fn node_text(node: tree_sitter::Node,source: &str) -> String {
 /// If there is a literal hex escape it is put as `\x5CxHH` where H is the hex.
 /// Return the escaped string and the index to the terminator.
 /// The terminator is not part of the returned string.
+/// Specific to Applesoft.
 pub fn bytes_to_escaped_string(bytes: &[u8], offset: usize, terminator: &[u8], ctx: &str) -> (String,usize)
 {
     assert!(ctx=="str" || ctx=="tok_data" || ctx=="tok_rem");

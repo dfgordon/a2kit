@@ -1,15 +1,21 @@
+build = "build.rs"
+
 [package]
 name = "a2kit"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
 description = "Apple II disk image and language utility"
-keywords = ["disk","image","retro","apple","cpm"]
+keywords = ["retro","disk","apple","cpm","dos"]
 repository = "https://github.com/dfgordon/a2kit"
 homepage = "https://github.com/dfgordon/a2kit"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+clap = {version="4.4.4",features=["cargo"]}
+clap_complete = "4.4.4"
 
 [dependencies]
 log = "0.4.17"
@@ -18,9 +24,9 @@ env_logger = "0.9.1"
 hex = "0.4.3"
 tree-sitter = "0.20.8"
 tree-sitter-applesoft = "3.1.1"
-tree-sitter-integerbasic = "1.0.2"
+tree-sitter-integerbasic = "1.0.3"
 tree-sitter-merlin6502 = "2.0.0"
-clap = {version="4.2.7",features=["cargo"]}
+clap = {version="4.4.4",features=["cargo"]}
 tempfile = "3.6.0"
 json = "0.12"
 chrono = "0.4.20"

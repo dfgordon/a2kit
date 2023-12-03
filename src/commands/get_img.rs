@@ -28,9 +28,9 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     // presence of arguments should already be resolved
     let src_path = cmd.get_one::<String>("file").expect(RCH);
     let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
-    let img_path = cmd.get_one::<String>("dimg").expect(RCH);
+    let maybe_img_path = cmd.get_one::<String>("dimg");
 
-    match crate::create_img_from_file(&img_path) {
+    match crate::create_img_from_file_or_stdin(maybe_img_path) {
         Ok(mut img) => {
             let bytes = match typ {
                 ItemType::Sector => {
@@ -60,9 +60,9 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
 pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
     // presence of arguments should already be resolved
     let maybe_selection = cmd.get_one::<String>("file");
-    let img_path = cmd.get_one::<String>("dimg").expect(RCH);
+    let maybe_img_path = cmd.get_one::<String>("dimg");
 
-    match crate::create_img_from_file(&img_path) {
+    match crate::create_img_from_file_or_stdin(maybe_img_path) {
         Ok(img) => {
             match maybe_selection {
                 None => {
