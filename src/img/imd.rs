@@ -77,7 +77,9 @@ pub struct Track {
     head: u8,
     sectors: u8,
     sector_shift: u8,
-    /// order is not important (maybe geometrical), value is physical sector address
+    /// In these maps we suppose the order corresponds to geometry.
+    /// The map entry then gives a CHS address that corresponds to an offset in
+    /// the track buffer.
     sector_map: Vec<u8>,
     cylinder_map: Vec<u8>,
     head_map: Vec<u8>,

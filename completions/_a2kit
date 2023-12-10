@@ -31,17 +31,17 @@ _a2kit() {
             (mkdsk)
 _arguments "${_arguments_options[@]}" \
 '-v+[volume name or number]:VOLUME: ' \
-'--volume=[volume name or number]:VOLUME: ' \
+'--volume+[volume name or number]:VOLUME: ' \
 '-t+[type of disk image to create]:TYPE:(d13 do po woz1 woz2 imd img 2mg nib td0)' \
-'--type=[type of disk image to create]:TYPE:(d13 do po woz1 woz2 imd img 2mg nib td0)' \
+'--type+[type of disk image to create]:TYPE:(d13 do po woz1 woz2 imd img 2mg nib td0)' \
 '-o+[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
-'--os=[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
+'--os+[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
 '-k+[kind of disk]:SIZE:(8in 8in-trs80 8in-nabu 5.25in 5.25in-ibm-ssdd8 5.25in-ibm-ssdd9 5.25in-ibm-dsdd8 5.25in-ibm-dsdd9 5.25in-ibm-ssqd 5.25in-ibm-dsqd 5.25in-ibm-dshd 5.25in-kayii 5.25in-kay4 5.25in-osb-sd 5.25in-osb-dd 3.5in 3.5in-ss 3.5in-ds 3.5in-ibm-720 3.5in-ibm-1440 3.5in-ibm-2880 3in-amstrad hdmax)' \
-'--kind=[kind of disk]:SIZE:(8in 8in-trs80 8in-nabu 5.25in 5.25in-ibm-ssdd8 5.25in-ibm-ssdd9 5.25in-ibm-dsdd8 5.25in-ibm-dsdd9 5.25in-ibm-ssqd 5.25in-ibm-dsqd 5.25in-ibm-dshd 5.25in-kayii 5.25in-kay4 5.25in-osb-sd 5.25in-osb-dd 3.5in 3.5in-ss 3.5in-ds 3.5in-ibm-720 3.5in-ibm-1440 3.5in-ibm-2880 3in-amstrad hdmax)' \
+'--kind+[kind of disk]:SIZE:(8in 8in-trs80 8in-nabu 5.25in 5.25in-ibm-ssdd8 5.25in-ibm-ssdd9 5.25in-ibm-dsdd8 5.25in-ibm-dsdd9 5.25in-ibm-ssqd 5.25in-ibm-dsqd 5.25in-ibm-dshd 5.25in-kayii 5.25in-kay4 5.25in-osb-sd 5.25in-osb-dd 3.5in 3.5in-ss 3.5in-ds 3.5in-ibm-720 3.5in-ibm-1440 3.5in-ibm-2880 3in-amstrad hdmax)' \
 '-d+[disk image path to create]:PATH:_files' \
-'--dimg=[disk image path to create]:PATH:_files' \
+'--dimg+[disk image path to create]:PATH:_files' \
 '-w+[type of disk image to wrap]:TYPE:(do po nib)' \
-'--wrap=[type of disk image to wrap]:TYPE:(do po nib)' \
+'--wrap+[type of disk image to wrap]:TYPE:(do po nib)' \
 '-b[make disk bootable]' \
 '--bootable[make disk bootable]' \
 '-h[Print help]' \
@@ -51,9 +51,9 @@ _arguments "${_arguments_options[@]}" \
 (mkdir)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image of new directory]:PATH: ' \
-'--file=[path inside disk image of new directory]:PATH: ' \
+'--file+[path inside disk image of new directory]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -61,9 +61,29 @@ _arguments "${_arguments_options[@]}" \
 (delete)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to delete]:PATH: ' \
-'--file=[path inside disk image to delete]:PATH: ' \
+'--file+[path inside disk image to delete]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(del)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to delete]:PATH: ' \
+'--file+[path inside disk image to delete]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(era)
+_arguments "${_arguments_options[@]}" \
+'-f+[path inside disk image to delete]:PATH: ' \
+'--file+[path inside disk image to delete]:PATH: ' \
+'-d+[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -71,11 +91,11 @@ _arguments "${_arguments_options[@]}" \
 (protect)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to protect]:PATH: ' \
-'--file=[path inside disk image to protect]:PATH: ' \
+'--file+[path inside disk image to protect]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-p+[password to assign]:PASSWORD: ' \
-'--password=[password to assign]:PASSWORD: ' \
+'--password+[password to assign]:PASSWORD: ' \
 '--read[protect read]' \
 '--write[protect read]' \
 '--delete[protect read]' \
@@ -86,9 +106,9 @@ _arguments "${_arguments_options[@]}" \
 (unprotect)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to unprotect]:PATH: ' \
-'--file=[path inside disk image to unprotect]:PATH: ' \
+'--file+[path inside disk image to unprotect]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -96,9 +116,9 @@ _arguments "${_arguments_options[@]}" \
 (lock)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to lock]:PATH: ' \
-'--file=[path inside disk image to lock]:PATH: ' \
+'--file+[path inside disk image to lock]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -106,9 +126,9 @@ _arguments "${_arguments_options[@]}" \
 (unlock)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to unlock]:PATH: ' \
-'--file=[path inside disk image to unlock]:PATH: ' \
+'--file+[path inside disk image to unlock]:PATH: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -116,11 +136,11 @@ _arguments "${_arguments_options[@]}" \
 (rename)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to rename]:PATH: ' \
-'--file=[path inside disk image to rename]:PATH: ' \
+'--file+[path inside disk image to rename]:PATH: ' \
 '-n+[new name]:NAME: ' \
-'--name=[new name]:NAME: ' \
+'--name+[new name]:NAME: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -128,13 +148,13 @@ _arguments "${_arguments_options[@]}" \
 (retype)
 _arguments "${_arguments_options[@]}" \
 '-f+[path inside disk image to retype]:PATH: ' \
-'--file=[path inside disk image to retype]:PATH: ' \
+'--file+[path inside disk image to retype]:PATH: ' \
 '-t+[file system type, code or mnemonic]:TYPE: ' \
-'--type=[file system type, code or mnemonic]:TYPE: ' \
+'--type+[file system type, code or mnemonic]:TYPE: ' \
 '-a+[file system auxiliary metadata]:AUX: ' \
-'--aux=[file system auxiliary metadata]:AUX: ' \
+'--aux+[file system auxiliary metadata]:AUX: ' \
 '-d+[path to disk image itself]:PATH:_files' \
-'--dimg=[path to disk image itself]:PATH:_files' \
+'--dimg+[path to disk image itself]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -142,7 +162,7 @@ _arguments "${_arguments_options[@]}" \
 (verify)
 _arguments "${_arguments_options[@]}" \
 '-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
-'--type=[type of the file]:TYPE:(atxt itxt mtxt)' \
+'--type+[type of the file]:TYPE:(atxt itxt mtxt)' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -150,9 +170,9 @@ _arguments "${_arguments_options[@]}" \
 (minify)
 _arguments "${_arguments_options[@]}" \
 '-t+[type of the file]:TYPE:(atxt)' \
-'--type=[type of the file]:TYPE:(atxt)' \
-'--level=[set minification level]:LEVEL:(0 1 2 3)' \
-'--flags=[set minification flags]:VAL: ' \
+'--type+[type of the file]:TYPE:(atxt)' \
+'--level+[set minification level]:LEVEL:(0 1 2 3)' \
+'--flags+[set minification flags]:VAL: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -160,15 +180,15 @@ _arguments "${_arguments_options[@]}" \
 (renumber)
 _arguments "${_arguments_options[@]}" \
 '-t+[type of the file]:TYPE:(atxt)' \
-'--type=[type of the file]:TYPE:(atxt)' \
+'--type+[type of the file]:TYPE:(atxt)' \
 '-b+[lowest number to renumber]:NUM: ' \
-'--beg=[lowest number to renumber]:NUM: ' \
+'--beg+[lowest number to renumber]:NUM: ' \
 '-e+[highest number to renumber plus 1]:NUM: ' \
-'--end=[highest number to renumber plus 1]:NUM: ' \
+'--end+[highest number to renumber plus 1]:NUM: ' \
 '-f+[first number]:NUM: ' \
-'--first=[first number]:NUM: ' \
+'--first+[first number]:NUM: ' \
 '-s+[step between numbers]:NUM: ' \
-'--step=[step between numbers]:NUM: ' \
+'--step+[step between numbers]:NUM: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -176,13 +196,13 @@ _arguments "${_arguments_options[@]}" \
 (get)
 _arguments "${_arguments_options[@]}" \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'--file=[path, key, or address, maybe inside disk image]:PATH:_files' \
+'--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type=[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image]:PATH:_files' \
-'--dimg=[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
 '-l+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
-'--len=[length of record in DOS 3.3 random access text file]:LENGTH: ' \
+'--len+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
 '--trunc[truncate raw at EOF if possible]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -191,13 +211,13 @@ _arguments "${_arguments_options[@]}" \
 (put)
 _arguments "${_arguments_options[@]}" \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'--file=[path, key, or address, maybe inside disk image]:PATH:_files' \
+'--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type=[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image]:PATH:_files' \
-'--dimg=[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
 '-a+[address of binary file]:ADDRESS: ' \
-'--addr=[address of binary file]:ADDRESS: ' \
+'--addr+[address of binary file]:ADDRESS: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -205,9 +225,39 @@ _arguments "${_arguments_options[@]}" \
 (catalog)
 _arguments "${_arguments_options[@]}" \
 '-f+[path of directory inside disk image]:PATH: ' \
-'--file=[path of directory inside disk image]:PATH: ' \
+'--file+[path of directory inside disk image]:PATH: ' \
 '-d+[path to disk image]:PATH:_files' \
-'--dimg=[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(ls)
+_arguments "${_arguments_options[@]}" \
+'-f+[path of directory inside disk image]:PATH: ' \
+'--file+[path of directory inside disk image]:PATH: ' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(dir)
+_arguments "${_arguments_options[@]}" \
+'-f+[path of directory inside disk image]:PATH: ' \
+'--file+[path of directory inside disk image]:PATH: ' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(cat)
+_arguments "${_arguments_options[@]}" \
+'-f+[path of directory inside disk image]:PATH: ' \
+'--file+[path of directory inside disk image]:PATH: ' \
+'-d+[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -215,7 +265,7 @@ _arguments "${_arguments_options[@]}" \
 (tree)
 _arguments "${_arguments_options[@]}" \
 '-d+[path to disk image]:PATH:_files' \
-'--dimg=[path to disk image]:PATH:_files' \
+'--dimg+[path to disk image]:PATH:_files' \
 '--meta[include metadata]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -224,9 +274,19 @@ _arguments "${_arguments_options[@]}" \
 (tokenize)
 _arguments "${_arguments_options[@]}" \
 '-a+[address of tokenized code (Applesoft only)]:ADDRESS: ' \
-'--addr=[address of tokenized code (Applesoft only)]:ADDRESS: ' \
+'--addr+[address of tokenized code (Applesoft only)]:ADDRESS: ' \
 '-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
-'--type=[type of the file]:TYPE:(atxt itxt mtxt)' \
+'--type+[type of the file]:TYPE:(atxt itxt mtxt)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(tok)
+_arguments "${_arguments_options[@]}" \
+'-a+[address of tokenized code (Applesoft only)]:ADDRESS: ' \
+'--addr+[address of tokenized code (Applesoft only)]:ADDRESS: ' \
+'-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
+'--type+[type of the file]:TYPE:(atxt itxt mtxt)' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -234,7 +294,15 @@ _arguments "${_arguments_options[@]}" \
 (detokenize)
 _arguments "${_arguments_options[@]}" \
 '-t+[type of the file]:TYPE:(atok itok mtok)' \
-'--type=[type of the file]:TYPE:(atok itok mtok)' \
+'--type+[type of the file]:TYPE:(atok itok mtok)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(dtok)
+_arguments "${_arguments_options[@]}" \
+'-t+[type of the file]:TYPE:(atok itok mtok)' \
+'--type+[type of the file]:TYPE:(atok itok mtok)' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -263,6 +331,14 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
+(del)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(era)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
 (protect)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -311,6 +387,18 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
+(ls)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(dir)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(cat)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
 (tree)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -319,7 +407,15 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
+(tok)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
 (detokenize)
+_arguments "${_arguments_options[@]}" \
+&& ret=0
+;;
+(dtok)
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;

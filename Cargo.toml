@@ -1,12 +1,10 @@
-build = "build.rs"
-
 [package]
 name = "a2kit"
-version = "2.6.0"
+version = "2.6.1"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
-description = "Apple II disk image and language utility"
+description = "Retro disk image and language utility"
 keywords = ["retro","disk","apple","cpm","dos"]
 repository = "https://github.com/dfgordon/a2kit"
 homepage = "https://github.com/dfgordon/a2kit"
@@ -16,6 +14,7 @@ homepage = "https://github.com/dfgordon/a2kit"
 [build-dependencies]
 clap = {version="4.4.4",features=["cargo"]}
 clap_complete = "4.4.4"
+regex = "1.10"
 
 [dependencies]
 log = "0.4.17"
@@ -30,7 +29,7 @@ clap = {version="4.4.4",features=["cargo"]}
 tempfile = "3.6.0"
 json = "0.12"
 chrono = "0.4.20"
-regex = "1.5"
+regex = "1.10"
 predicates = "2.1.0"
 assert_cmd = "2.0.2"
 thiserror = "1.0.30"

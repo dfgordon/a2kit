@@ -889,7 +889,7 @@ impl img::DiskImage for Td0 {
         }
         ans.push(self.end);
         // Real teledisks have several trailing bytes, and some decoders will choke if
-        // they are missing (notably MAME).  The value of the bytes is not important,
+        // they are missing.  The value of the bytes is not important,
         // but they do need to be chosen to produce enough bits in the Huffman code so
         // that the decoder will not give up before the end of disk marker.  The following
         // is nothing special, just 7 randomly chosen bytes.
