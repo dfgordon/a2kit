@@ -69,6 +69,31 @@ pub struct BPBFoundation {
     pub tot_sec_32: [u8;4],
 }
 
+impl BPBFoundation {
+    fn to_json(&self,indent: u16) -> String {
+        let mut ans = json::JsonValue::new_object();
+        let mut bpb = json::JsonValue::new_object();
+        bpb["bytes_per_sec"] = json::JsonValue::String(hex::encode_upper(&self.bytes_per_sec));
+        bpb["sec_per_clus"] = json::JsonValue::String(hex::encode_upper(&vec![self.sec_per_clus]));
+        bpb["reserved_sectors"] = json::JsonValue::String(hex::encode_upper(&self.reserved_sectors));
+        bpb["num_fats"] = json::JsonValue::String(hex::encode_upper(&vec![self.num_fats]));
+        bpb["root_ent_cnt"] = json::JsonValue::String(hex::encode_upper(&self.root_ent_cnt));
+        bpb["tot_sec_16"] = json::JsonValue::String(hex::encode_upper(&self.tot_sec_16));
+        bpb["media"] = json::JsonValue::String(hex::encode_upper(&vec![self.media]));
+        bpb["fat_size_16"] = json::JsonValue::String(hex::encode_upper(&self.fat_size_16));
+        bpb["sec_per_trk"] = json::JsonValue::String(hex::encode_upper(&self.sec_per_trk));
+        bpb["num_heads"] = json::JsonValue::String(hex::encode_upper(&self.num_heads));
+        bpb["hidd_sec"] = json::JsonValue::String(hex::encode_upper(&self.hidd_sec));
+        bpb["tot_sec_32"] = json::JsonValue::String(hex::encode_upper(&self.tot_sec_32));
+        ans["bpb"] = bpb;
+        if indent==0 {
+            return json::stringify(ans);
+        } else {
+            return json::stringify_pretty(ans,indent);
+        }
+    }
+}
+
 /// Introduced with Windows 95, appears starting at byte 36 of the boot sector.
 #[derive(DiskStruct)]
 pub struct BPBExtension32 {
@@ -477,6 +502,9 @@ impl BootSector {
         self.tail.reserved1 = 0x00;
         self.tail.vol_id = id;
         self.tail.vol_lab = label;
+    }
+    pub fn to_json(&self,indent: u16) -> String {
+        self.foundation.to_json(indent)
     }
 }
 

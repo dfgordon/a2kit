@@ -36,6 +36,9 @@ _a2kit() {
             a2kit,era)
                 cmd="a2kit__delete"
                 ;;
+            a2kit,geometry)
+                cmd="a2kit__geometry"
+                ;;
             a2kit,get)
                 cmd="a2kit__get"
                 ;;
@@ -72,6 +75,9 @@ _a2kit() {
             a2kit,retype)
                 cmd="a2kit__retype"
                 ;;
+            a2kit,stat)
+                cmd="a2kit__stat"
+                ;;
             a2kit,tok)
                 cmd="a2kit__tokenize"
                 ;;
@@ -98,6 +104,9 @@ _a2kit() {
                 ;;
             a2kit__help,detokenize)
                 cmd="a2kit__help__detokenize"
+                ;;
+            a2kit__help,geometry)
+                cmd="a2kit__help__geometry"
                 ;;
             a2kit__help,get)
                 cmd="a2kit__help__get"
@@ -132,6 +141,9 @@ _a2kit() {
             a2kit__help,retype)
                 cmd="a2kit__help__retype"
                 ;;
+            a2kit__help,stat)
+                cmd="a2kit__help__stat"
+                ;;
             a2kit__help,tokenize)
                 cmd="a2kit__help__tokenize"
                 ;;
@@ -154,7 +166,7 @@ _a2kit() {
 
     case "${cmd}" in
         a2kit)
-            opts="-h -V --help --version mkdsk mkdir delete protect unprotect lock unlock rename retype verify minify renumber get put catalog tree tokenize detokenize help"
+            opts="-h -V --help --version mkdsk mkdir delete protect unprotect lock unlock rename retype verify minify renumber get put catalog tree stat geometry tokenize detokenize help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -249,6 +261,28 @@ _a2kit() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        a2kit__geometry)
+            opts="-d -h --dimg --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --dimg)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -d)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         a2kit__get)
             opts="-f -t -d -l -h --file --type --dimg --len --trunc --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
@@ -296,7 +330,7 @@ _a2kit() {
             return 0
             ;;
         a2kit__help)
-            opts="mkdsk mkdir delete protect unprotect lock unlock rename retype verify minify renumber get put catalog tree tokenize detokenize help"
+            opts="mkdsk mkdir delete protect unprotect lock unlock rename retype verify minify renumber get put catalog tree stat geometry tokenize detokenize help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -338,6 +372,20 @@ _a2kit() {
             return 0
             ;;
         a2kit__help__detokenize)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        a2kit__help__geometry)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -492,6 +540,20 @@ _a2kit() {
             return 0
             ;;
         a2kit__help__retype)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        a2kit__help__stat)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -934,6 +996,28 @@ _a2kit() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --dimg)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -d)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        a2kit__stat)
+            opts="-d -h --dimg --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --dimg)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0

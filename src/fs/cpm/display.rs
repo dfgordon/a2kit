@@ -644,5 +644,8 @@ pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bo
             }
         }
     }
-    Ok(json::stringify_pretty(tree, 4))
+    match dpb.user_blocks() > 2048 && include_meta {
+        true => Ok(json::stringify_pretty(tree, 1)),
+        false => Ok(json::stringify_pretty(tree, 2))
+    }
 }

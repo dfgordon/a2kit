@@ -922,6 +922,19 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len,true)
     }
+    fn stat(&mut self) -> Result<super::Stat,DYNERR> {
+        let (vol_lab,_) = self.get_root_dir()?;
+        Ok(super::Stat {
+            fs_name: "fat".to_string(),
+            label: vol_lab,
+            users: Vec::new(),
+            block_size: self.boot_sector.block_size() as usize,
+            block_beg: 2,
+            block_end: 2 + self.boot_sector.cluster_count_usable() as usize,
+            free_blocks: self.num_free_blocks()?,
+            raw: self.boot_sector.to_json(0)
+        })
+    }
     fn catalog_to_stdout(&mut self, path_and_options: &str) -> STDRESULT {
         let items: Vec<&str> = path_and_options.split_whitespace().collect();
         let (path,opt) = match items.len() {
@@ -960,7 +973,10 @@ impl super::DiskFS for Disk {
         tree["files"] = self.tree_node(&dir,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vol);
-        Ok(json::stringify_pretty(tree, 4))
+        match self.boot_sector.cluster_count_usable() > 2048 && include_meta {
+            true => Ok(json::stringify_pretty(tree, 1)),
+            false => Ok(json::stringify_pretty(tree, 2))
+        }
     }
     fn create(&mut self,path: &str) -> STDRESULT {
         let (name,mut loc) = self.prepare_to_write(path)?;
@@ -1167,7 +1183,7 @@ impl super::DiskFS for Disk {
         match usize::from_str(num) {
             Ok(block) => {
                 let mut buf: Vec<u8> = vec![0;self.boot_sector.block_size() as usize];
-                if block >= 2 + self.boot_sector.cluster_count_usable() as usize {
+                if block < 2 || block >= 2 + self.boot_sector.cluster_count_usable() as usize {
                     return Err(Box::new(Error::SectorNotFound));
                 }
                 self.read_block(&mut buf,block,0)?;
@@ -1179,8 +1195,11 @@ impl super::DiskFS for Disk {
     fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR> {
         match usize::from_str(num) {
             Ok(block) => {
-                if dat.len() > self.boot_sector.block_size() as usize || block >= 2 + self.boot_sector.cluster_count_usable() as usize {
+                if block < 2 || block >= 2 + self.boot_sector.cluster_count_usable() as usize {
                     return Err(Box::new(Error::SectorNotFound));
+                }
+                if dat.len() > self.boot_sector.block_size() as usize {
+                    return Err(Box::new(Error::WriteFault));
                 }
                 self.zap_block(dat,block,0)?;
                 Ok(dat.len())

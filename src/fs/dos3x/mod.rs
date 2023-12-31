@@ -686,6 +686,19 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
+    fn stat(&mut self) -> Result<super::Stat,DYNERR> {
+        let vtoc = &self.get_vtoc_constants()?;
+        Ok(super::Stat {
+            fs_name: "a2 dos".to_string(),
+            label: vtoc.vol.to_string(),
+            users: Vec::new(),
+            block_size: 256,
+            block_beg: 0,
+            block_end: vtoc.sectors as usize * vtoc.tracks as usize,
+            free_blocks: self.num_free_sectors()?,
+            raw: "".to_string()
+        })
+    }
     fn catalog_to_stdout(&mut self, _path: &str) -> STDRESULT {
         let vconst = self.get_vtoc_constants()?;
         let typ_map: HashMap<u8,&str> = HashMap::from([(0," T"),(1," I"),(2," A"),(4," B"),(128,"*T"),(129,"*I"),(130,"*A"),(132,"*B")]);
@@ -761,7 +774,7 @@ impl super::DiskFS for Disk {
             }
             ts = [dir.next_track,dir.next_sector];
             if ts == [0,0] {
-                return Ok(json::stringify_pretty(tree, 4));
+                return Ok(json::stringify_pretty(tree, 2));
             }
         }
         error!("the disk image directory seems to be damaged");
@@ -925,14 +938,16 @@ impl super::DiskFS for Disk {
         }
     }
     fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        let vtoc = self.get_vtoc_ref()?;
+        let vconst = self.get_vtoc_constants()?;
+        let sec_cnt = vconst.sectors as usize;
+        let bytes_per_sector = u16::from_le_bytes(vconst.bytes) as usize;
         match usize::from_str(num) {
             Ok(sector) => {
-                if sector > vtoc.tracks as usize*vtoc.sectors as usize {
+                if sector > vconst.tracks as usize*sec_cnt {
                     return Err(Box::new(Error::Range));
                 }
-                let mut buf: Vec<u8> = vec![0;256];
-                self.read_sector(&mut buf,[(sector/16) as u8,(sector%16) as u8],0)?;
+                let mut buf: Vec<u8> = vec![0;bytes_per_sector];
+                self.read_sector(&mut buf,[(sector/sec_cnt) as u8,(sector%sec_cnt) as u8],0)?;
                 Ok((0,buf))
             },
             Err(e) => Err(Box::new(e))
@@ -940,13 +955,14 @@ impl super::DiskFS for Disk {
     }
     fn write_block(&mut self,num: &str,dat: &[u8]) -> Result<usize,DYNERR> {
         let vconst = self.get_vtoc_constants()?;
+        let sec_cnt = vconst.sectors as usize;
         let bytes_per_sector = u16::from_le_bytes(vconst.bytes);
         match usize::from_str(num) {
             Ok(sector) => {
-                if dat.len()>bytes_per_sector as usize || sector > vconst.tracks as usize*vconst.sectors as usize {
+                if dat.len()>bytes_per_sector as usize || sector > vconst.tracks as usize*sec_cnt {
                     return Err(Box::new(Error::Range));
                 }
-                self.zap_sector(&dat,[(sector/16) as u8,(sector%16) as u8],0,bytes_per_sector)?;
+                self.zap_sector(&dat,[(sector/sec_cnt) as u8,(sector%sec_cnt) as u8],0,bytes_per_sector)?;
                 Ok(dat.len())
             },
             Err(e) => Err(Box::new(e))

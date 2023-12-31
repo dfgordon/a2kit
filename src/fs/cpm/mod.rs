@@ -565,6 +565,29 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
+    fn stat(&mut self) -> Result<super::Stat,DYNERR> {
+        let dir = &self.get_directory();
+        Ok(super::Stat {
+            fs_name: "cpm".to_string(),
+            label: match dir.find_label() {
+                Some(label) => {
+                    let (mut res,typ) = label.get_split_string();
+                    if typ.len()>0 {
+                        res += ".";
+                        res += &typ;
+                    }
+                    res
+                },
+                None => "".to_string()
+            },
+            users: dir.get_users().iter().map(|u| u.to_string()).collect(),
+            block_size: self.dpb.block_size(),
+            block_beg: 0,
+            block_end: self.dpb.user_blocks(),
+            free_blocks: self.num_free_blocks(dir) as usize,
+            raw: self.dpb.to_json(0)
+        })
+    }
     fn catalog_to_stdout(&mut self, opt: &str) -> STDRESULT {
         let dir = self.get_directory();
         match opt {

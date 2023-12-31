@@ -542,9 +542,6 @@ impl Td0 {
             end: 0xff
         }
     }
-    pub fn num_heads(&self) -> usize {
-        self.heads
-    }
     fn get_track_mut(&mut self,cyl: usize,head: usize) -> Result<&mut Track,img::Error> {
         for trk in &mut self.tracks {
             if trk.header.cylinder as usize==cyl && (trk.header.head & HEAD_MASK) as usize==head {
@@ -604,6 +601,20 @@ impl Td0 {
 impl img::DiskImage for Td0 {
     fn track_count(&self) -> usize {
         self.tracks.len()
+    }
+    fn num_heads(&self) -> usize {
+        self.heads
+    }
+    fn track_2_ch(&self,track: usize) -> [usize;2] {
+        [self.tracks[track].header.cylinder as usize,self.tracks[track].header.head as usize]
+    }
+    fn ch_2_track(&self,ch: [usize;2]) -> usize {
+        for i in 0..self.tracks.len() {
+            if self.tracks[i].header.cylinder as usize==ch[0] && self.tracks[i].header.head as usize==ch[1] {
+                return i
+            }
+        }
+        panic!("cylinder {}, head {} does not exist",ch[0],ch[1]);
     }
     fn byte_capacity(&self) -> usize {
         let mut ans = 0;
@@ -916,6 +927,24 @@ impl img::DiskImage for Td0 {
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
         error!("TD0 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+        let trk_obj = &self.tracks[trk];
+        let flux_code = match trk_obj.header.head > 127 || self.header.data_rate > 127 {
+            true => img::FluxCode::FM,
+            false => img::FluxCode::MFM
+        };
+        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        for sec in &trk_obj.sectors {
+            chs_map.push([sec.header.cylinder as usize,sec.header.head as usize,sec.header.id as usize]);
+        }
+        Ok(Some(img::TrackSolution {
+            cylinder: trk_obj.header.cylinder as usize,
+            head: trk_obj.header.head as usize,
+            flux_code,
+            nib_code: img::NibbleCode::None,
+            chs_map
+        }))
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("TD0 images have no track bits");

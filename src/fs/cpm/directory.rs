@@ -785,6 +785,20 @@ impl Directory {
         }
         Ok(ans)
     }
+    /// Collect users, this assumes we have established a valid CP/M directory
+    pub fn get_users(&self) -> Vec<u8> {
+        let mut ans = Vec::new();
+        for i in 0..self.num_entries() {
+            let xtype = self.get_type(&Ptr::ExtentEntry(i));
+            if let Some(fx) = self.get_entry::<Extent>(&Ptr::ExtentEntry(i)) {
+                if !ans.contains(&fx.user) {
+                    ans.push(fx.user);
+                }
+            }
+        }
+        ans.sort();
+        ans
+    }
     /// Sort the files based on the order of appearance in the directory.
     /// Panics if there is a file with an empty entry list.
     pub fn sort_on_entry_index(&self,files: &BTreeMap<String,FileInfo>) -> BTreeMap<usize,FileInfo> {

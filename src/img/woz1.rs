@@ -353,6 +353,9 @@ impl img::DiskImage for Woz1 {
             _ => panic!("disk type not supported")
         }
     }
+    fn num_heads(&self) -> usize {
+        1
+    }
     fn byte_capacity(&self) -> usize {
         match self.info.disk_type {
             1 => self.track_count()*16*256,
@@ -408,15 +411,15 @@ impl img::DiskImage for Woz1 {
             }
             ptr = next;
         }
-        if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 {
-            // TODO: can we figure if this is a 13 sector disk at this point?
-            ans.kind = match ans.info.disk_type {
-                1 => img::names::A2_DOS33_KIND,
-                _ => panic!("WOZ v1 encountered unexpected disk type in INFO chunk")
-            };
-            debug!("setting disk kind to {}",ans.kind);
+        if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 && ans.info.disk_type==1 {
+            if let Ok(Some(_sol)) = ans.get_track_solution(0) {
+                debug!("setting disk kind to {}",ans.kind);
+            } else {
+                warn!("could not solve track 0, continuing with {}",ans.kind);
+            }
             return Some(ans);
         }
+        warn!("WOZ v1 sanity checks failed, refusing");
         return None;
     }
     fn to_bytes(&mut self) -> Vec<u8> {
@@ -448,6 +451,32 @@ impl img::DiskImage for Woz1 {
         }
         bits.copy_from_slice(dat);
         Ok(())
+    }
+    fn get_track_solution(&mut self,track: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+        let [cylinder,head] = self.track_2_ch(track);
+        self.kind = img::names::A2_DOS32_KIND;
+        let mut reader = self.new_rw_obj(track as u8);
+        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            return Ok(Some(img::TrackSolution {
+                cylinder,
+                head,
+                flux_code: img::FluxCode::GCR,
+                nib_code: img::NibbleCode::N53,
+                chs_map
+            }));
+        }
+        self.kind = img::names::A2_DOS33_KIND;
+        reader = self.new_rw_obj(track as u8);
+        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            return Ok(Some(img::TrackSolution {
+                cylinder,
+                head,
+                flux_code: img::FluxCode::GCR,
+                nib_code: img::NibbleCode::N62,
+                chs_map
+            }));
+        }
+        return Err(Box::new(img::Error::UnknownDiskKind));
     }
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;

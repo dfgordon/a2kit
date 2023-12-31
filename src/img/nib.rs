@@ -115,6 +115,9 @@ impl img::DiskImage for Nib {
     fn track_count(&self) -> usize {
         self.tracks
     }
+    fn num_heads(&self) -> usize {
+        1
+    }
     fn byte_capacity(&self) -> usize {
         match self.kind {
             img::names::A2_DOS32_KIND => self.tracks*13*256,
@@ -149,22 +152,36 @@ impl img::DiskImage for Nib {
     fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
         match buf.len() {
             l if l==35*TRACK_BYTE_CAPACITY_NIB => {
-                Some(Self {
+                let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NIB,
                     data: buf.clone(),
                     head_coords: HeadCoords { track: usize::MAX, bit_ptr: usize::MAX }
-                })
+                };
+                if let Ok(Some(_sol)) = disk.get_track_solution(0) {
+                    debug!("setting disk kind to {}",disk.kind);
+                    return Some(disk);
+                } else {
+                    debug!("Looks like NIB, but could not solve track 0");
+                    return None;
+                }
             },
             l if l==35*TRACK_BYTE_CAPACITY_NB2 => {
-                Some(Self {
+                let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NB2,
                     data: buf.clone(),
                     head_coords: HeadCoords { track: usize::MAX, bit_ptr: usize::MAX }
-                })
+                };
+                if let Ok(Some(_sol)) = disk.get_track_solution(0) {
+                    debug!("setting disk kind to {}",disk.kind);
+                    return Some(disk);
+                } else {
+                    debug!("Looks like NB2, but could not solve track 0");
+                    return None;
+                }
             }
             _ => {
                 debug!("Buffer size {} fails to match nib or nb2",buf.len());
@@ -188,6 +205,32 @@ impl img::DiskImage for Nib {
         }
         bits.copy_from_slice(dat);
         Ok(())
+    }
+    fn get_track_solution(&mut self,track: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+        let [cylinder,head] = self.track_2_ch(track);
+        self.kind = img::names::A2_DOS32_KIND;
+        let mut reader = self.new_rw_obj(track as u8);
+        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            return Ok(Some(img::TrackSolution {
+                cylinder,
+                head,
+                flux_code: img::FluxCode::GCR,
+                nib_code: img::NibbleCode::N53,
+                chs_map
+            }));
+        }
+        self.kind = img::names::A2_DOS33_KIND;
+        reader = self.new_rw_obj(track as u8);
+        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            return Ok(Some(img::TrackSolution {
+                cylinder,
+                head,
+                flux_code: img::FluxCode::GCR,
+                nib_code: img::NibbleCode::N62,
+                chs_map
+            }));
+        }
+        return Err(Box::new(img::Error::UnknownDiskKind));
     }
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;

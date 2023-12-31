@@ -51,6 +51,9 @@ impl img::DiskImage for PO {
     fn track_count(&self) -> usize {
         return self.blocks as usize/8;
     }
+    fn num_heads(&self) -> usize {
+        1
+    }
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
@@ -114,6 +117,9 @@ impl img::DiskImage for PO {
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_solution(&mut self,_trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
+        return Ok(None);
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("PO images have no track bits");

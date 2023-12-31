@@ -592,6 +592,24 @@ impl super::TrackBits for TrackBits {
         }
         return ans;
     }
+    fn chs_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;3]>,NibbleError> {
+        let mut secs_found: Vec<u8> = Vec::new();
+        self.reset();
+        let mut ans: Vec<[usize;3]> = Vec::new();
+        for _try in 0..32 {
+            if self.find_byte_pattern(bits,&self.adr_fmt.prolog.clone(),&self.adr_fmt.prolog_mask.clone(),None).is_some() {
+                let (_vol,track,sector,_chksum) = self.decode_addr(bits);
+                if secs_found.contains(&sector) {
+                    return Ok(ans)
+                }
+                ans.push([track as usize,0,sector as usize]);
+                secs_found.push(sector);
+            } else {
+                return Err(NibbleError::BitPatternNotFound);
+            }
+        }
+        return Ok(ans);
+    }
 }
 
 fn invert_53() -> [u8;256] {

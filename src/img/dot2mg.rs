@@ -135,6 +135,9 @@ impl img::DiskImage for Dot2mg {
     fn track_count(&self) -> usize {
         self.raw_img.track_count()
     }
+    fn num_heads(&self) -> usize {
+        self.raw_img.num_heads()
+    }
     fn byte_capacity(&self) -> usize {
         self.raw_img.byte_capacity()
     }
@@ -297,6 +300,9 @@ impl img::DiskImage for Dot2mg {
     }
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT {
         self.raw_img.set_track_buf(cyl, head, dat)
+    }
+    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
+        self.raw_img.get_track_solution(trk)
     }
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         self.raw_img.get_track_nibbles(cyl, head)

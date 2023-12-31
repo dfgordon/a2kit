@@ -61,6 +61,31 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         };
     }
 
+    // Output the FS stats as a JSON string
+
+    if let Some(cmd) = matches.subcommand_matches("stat") {
+        return match a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
+            Ok(mut dimg) => {
+                let stats = dimg.stat()?;
+                println!("{}",stats.to_json(2));
+                Ok(())
+            },
+            Err(e) => Err(e)
+        };
+    }
+    
+    // Output the disk geometry as a JSON string
+
+    if let Some(cmd) = matches.subcommand_matches("geometry") {
+        return match a2kit::create_img_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
+            Ok(mut dimg) => {
+                println!("{}",dimg.export_geometry(2)?);
+                Ok(())
+            },
+            Err(e) => Err(e)
+        };
+    }
+
     // Verify
 
     if let Some(cmd) = matches.subcommand_matches("verify") {

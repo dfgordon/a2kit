@@ -19,6 +19,7 @@ use crate::fs::Block;
 use crate::img::names::*;
 use crate::{STDRESULT,DYNERR,putString};
 
+#[derive(FromPrimitive)]
 pub enum Mode {
     Fm500Kbps = 0,
     Fm300Kbps = 1,
@@ -363,9 +364,6 @@ impl Imd {
             tracks
         }
     }
-    pub fn num_heads(&self) -> usize {
-        self.heads
-    }
     fn get_track_mut(&mut self,cyl: usize,head: usize) -> Result<&mut Track,img::Error> {
         for trk in &mut self.tracks {
             if trk.cylinder as usize==cyl && (trk.head & HEAD_MASK) as usize==head {
@@ -410,6 +408,20 @@ impl Imd {
 impl img::DiskImage for Imd {
     fn track_count(&self) -> usize {
         self.tracks.len()
+    }
+    fn num_heads(&self) -> usize {
+        self.heads
+    }
+    fn track_2_ch(&self,track: usize) -> [usize;2] {
+        [self.tracks[track].cylinder as usize,self.tracks[track].head as usize]
+    }
+    fn ch_2_track(&self,ch: [usize;2]) -> usize {
+        for i in 0..self.tracks.len() {
+            if self.tracks[i].cylinder as usize==ch[0] && self.tracks[i].head as usize==ch[1] {
+                return i
+            }
+        }
+        panic!("cylinder {}, head {} does not exist",ch[0],ch[1]);
     }
     fn byte_capacity(&self) -> usize {
         let mut ans = 0;
@@ -669,6 +681,27 @@ impl img::DiskImage for Imd {
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
         error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+        let trk_obj = &self.tracks[trk];
+        let flux_code = match Mode::from_u8(trk_obj.mode) {
+            Some(Mode::Fm250Kbps) | Some(Mode::Fm300Kbps) | Some(Mode::Fm500Kbps) => img::FluxCode::FM,
+            Some(Mode::Mfm250Kbps) | Some(Mode::Mfm300Kbps) | Some(Mode::Mfm500Kbps) => img::FluxCode::MFM,
+            None => img::FluxCode::None
+        };
+        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        for i in 0..trk_obj.sectors as usize {
+            let c = match trk_obj.cylinder_map.len()>i { true=>trk_obj.cylinder_map[i] as usize, false=>trk_obj.cylinder as usize };
+            let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>trk_obj.head as usize };
+            chs_map.push([c,h,trk_obj.sector_map[i] as usize]);
+        }
+        Ok(Some(img::TrackSolution {
+            cylinder: trk_obj.cylinder as usize,
+            head: trk_obj.head as usize,
+            flux_code,
+            nib_code: img::NibbleCode::None,
+            chs_map
+        }))
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("IMD images have no track bits");

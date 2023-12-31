@@ -1,4 +1,4 @@
-// test of prodos disk image module
+// test of FAT file system
 use std::path::Path;
 use std::fmt::Write;
 use a2kit::fs::{fat,DiskFS,Block};

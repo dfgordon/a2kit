@@ -283,10 +283,20 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
             return Ok(Box::new(img));
         }
     }
+    // For DO we need to run the FS heuristics to distinguish from PO,
+    // in case the extension hint is missing or vague.
     if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
         if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
             info!("Possible DO image");
-            return Ok(Box::new(img));
+            if ext=="do" {
+                return Ok(Box::new(img));
+            }
+            // TODO: run the FS heuristics without taking ownership
+            if try_img(Box::new(img)).is_some() {
+                let copy = img::dsk_do::DO::from_bytes(disk_img_data).unwrap();
+                return Ok(Box::new(copy));
+            }
+            debug!("reject DO based on FS heuristics")
         }
     }
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {

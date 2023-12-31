@@ -124,6 +124,14 @@ pub struct BlockLayout {
     block_count: usize
 }
 
+pub struct TrackSolution {
+    cylinder: usize,
+    head: usize,
+    flux_code: FluxCode,
+    nib_code: NibbleCode,
+    chs_map: Vec<[usize;3]>
+}
+
 #[derive(PartialEq,Eq,Clone,Copy)]
 pub struct TrackLayout {
     cylinders: [usize;5],
@@ -234,6 +242,28 @@ impl fmt::Display for DiskKind {
     }
 }
 
+impl fmt::Display for NibbleCode {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            NibbleCode::N44 => write!(f,"4&4"),
+            NibbleCode::N53 => write!(f,"5&3"),
+            NibbleCode::N62 => write!(f,"6&2"),
+            NibbleCode::None => write!(f,"none")
+        }
+    }
+}
+
+impl fmt::Display for FluxCode {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            FluxCode::FM => write!(f,"FM"),
+            FluxCode::MFM => write!(f,"MFM"),
+            FluxCode::GCR => write!(f,"GCR"),
+            FluxCode::None => write!(f,"none")
+        }
+    }
+}
+
 /// Given a command line argument return a likely disk kind the user may want
 impl FromStr for DiskKind {
     type Err = Error;
@@ -323,6 +353,9 @@ pub trait TrackBits {
     fn read_sector(&mut self,bits: &[u8],track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
     /// Get aligned track nibbles; n.b. head position will move.
     fn to_nibbles(&mut self,bits: &[u8]) -> Vec<u8>;
+    /// Get CHS addresses in time order, or return an error.  Head position will move.
+    /// This can also be used to determine if the assumed encoding is valid.
+    fn chs_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;3]>,NibbleError>;
 }
 
 /// The main trait for working with any kind of disk image.
@@ -331,6 +364,13 @@ pub trait TrackBits {
 /// track of the head position or other status indicators.
 pub trait DiskImage {
     fn track_count(&self) -> usize;
+    fn num_heads(&self) -> usize;
+    fn track_2_ch(&self,track: usize) -> [usize;2] {
+        [track/self.num_heads(),track%self.num_heads()]
+    }
+    fn ch_2_track(&self,ch: [usize;2]) -> usize {
+        ch[0]*self.num_heads() + ch[1]
+    }
     /// N.b. this means bytes, not nibbles, e.g., a nibble buffer will be larger
     fn byte_capacity(&self) -> usize;
     fn what_am_i(&self) -> DiskImageType;
@@ -351,6 +391,11 @@ pub trait DiskImage {
     fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
     /// Set the track buffer using another track buffer, the sizes must match
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT;
+    /// Given a track index, get the physical CH, CHS map, flux and nibble codes for the track.
+    /// Implement this at a low level, making as few assumptions as possible.
+    /// The expense of this operation can vary widely depending on the image type.
+    /// No solution is not an error, i.e., we can return Ok(None).
+    fn get_track_solution(&mut self,track: usize) -> Result<Option<TrackSolution>,DYNERR>;
     /// Get the track bytes as aligned nibbles; for user inspection
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
     /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`
@@ -376,6 +421,52 @@ pub trait DiskImage {
     /// If a leaf is `_pretty` ignore it.
     fn put_metadata(&mut self,key_path: &Vec<String>, _val: &json::JsonValue) -> STDRESULT {
         meta::test_metadata(key_path,self.what_am_i())
+    }
+    /// Write the disk geometry, including all track solutions, into a JSON string
+    fn export_geometry(&mut self,indent: u16) -> Result<String,DYNERR> {
+        let mut solved_track_count = 0;
+        let mut root = json::JsonValue::new_object();
+        root["package"] = json::JsonValue::String(package_string(&self.kind()));
+        let mut trk_ary = json::JsonValue::new_array();
+        for trk in 0..self.track_count() {
+            match self.get_track_solution(trk) {
+                Ok(Some(sol)) => {
+                    solved_track_count += 1;
+                    let mut trk_obj = json::JsonValue::new_object();
+                    trk_obj["cylinder"] = json::JsonValue::Number(sol.cylinder.into());
+                    trk_obj["head"] = json::JsonValue::Number(sol.head.into());
+                    trk_obj["flux_code"] = match sol.flux_code {
+                        FluxCode::None => json::JsonValue::Null,
+                        f => json::JsonValue::String(f.to_string())
+                    };
+                    trk_obj["nibble_code"] = match sol.nib_code {
+                        NibbleCode::None => json::JsonValue::Null,
+                        n => json::JsonValue::String(n.to_string())
+                    };
+                    trk_obj["chs_map"] = json::JsonValue::new_array();
+                    for chs in sol.chs_map {
+                        let mut chs_json = json::JsonValue::new_array();
+                        chs_json.push(chs[0])?;
+                        chs_json.push(chs[1])?;
+                        chs_json.push(chs[2])?;
+                        trk_obj["chs_map"].push(chs_json)?;
+                    }
+                    trk_ary.push(trk_obj)?;
+                },
+                Ok(None) => trk_ary.push(json::JsonValue::Null)?,
+                Err(e) => return Err(e)
+            }
+        }
+        if solved_track_count==0 {
+            root["tracks"] = json::JsonValue::Null;
+        } else {
+            root["tracks"] = trk_ary;
+        }
+        if indent==0 {
+            Ok(json::stringify(root))
+        } else {
+            Ok(json::stringify_pretty(root, indent))
+        }
     }
 }
 
@@ -405,3 +496,15 @@ pub fn quantize_block(src: &[u8],quantum: usize) -> Vec<u8> {
     return padded;
 }
 
+/// Package designation for geometry JSON (e.g., "3.5", "5.25", ...)
+pub fn package_string(kind: &DiskKind) -> String {
+    match kind {
+        DiskKind::D3(_) => "3".to_string(),
+        DiskKind::D35(_) => "3.5".to_string(),
+        DiskKind::D525(_) => "5.25".to_string(),
+        DiskKind::D8(_) => "8".to_string(),
+        DiskKind::LogicalBlocks(_) => "logical".to_string(),
+        DiskKind::LogicalSectors(_) => "logical".to_string(),
+        DiskKind::Unknown => "unknown".to_string()
+    }
+}

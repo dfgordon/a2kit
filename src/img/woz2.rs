@@ -663,6 +663,9 @@ impl img::DiskImage for Woz2 {
             _ => panic!("disk type not supported")
         }
     }
+    fn num_heads(&self) -> usize {
+        self.info.disk_sides as usize
+    }
     fn byte_capacity(&self) -> usize {
         match self.info.disk_type {
             1 => self.track_count()*16*256,
@@ -744,9 +747,14 @@ impl img::DiskImage for Woz2 {
                 (2,_,2) => img::names::A2_800_KIND,
                 _ => img::DiskKind::Unknown
             };
-            debug!("setting disk kind to {}",ans.kind);
+            if let Ok(Some(_sol)) = ans.get_track_solution(0) {
+                debug!("setting disk kind to {}",ans.kind);
+            } else {
+                warn!("Could not solve track 0, continuing with {}",ans.kind);
+            }
             return Some(ans);
         }
+        debug!("WOZ v2 sanity checks failed, refusing");
         return None;
     }
     fn to_bytes(&mut self) -> Vec<u8> {
@@ -784,6 +792,52 @@ impl img::DiskImage for Woz2 {
         }
         bits.copy_from_slice(dat);
         Ok(())
+    }
+    fn get_track_solution(&mut self,track: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+        let [cylinder,head] = self.track_2_ch(track);
+        if self.info.disk_type==2 {
+            self.kind = match self.info.disk_sides {
+                1 => img::names::A2_400_KIND,
+                2 => img::names::A2_800_KIND,
+                _ => return Err(Box::new(img::Error::UnknownImageType))
+            };
+            let mut reader = self.new_rw_obj(track as u8);
+            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+                return Ok(Some(img::TrackSolution {
+                    cylinder,
+                    head,
+                    flux_code: img::FluxCode::GCR,
+                    nib_code: img::NibbleCode::N62,
+                    chs_map
+                }));
+            }
+            return Ok(None);
+        } else if self.info.disk_type==1 {
+            self.kind = img::names::A2_DOS32_KIND;
+            let mut reader = self.new_rw_obj(track as u8);
+            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+                return Ok(Some(img::TrackSolution {
+                    cylinder,
+                    head,
+                    flux_code: img::FluxCode::GCR,
+                    nib_code: img::NibbleCode::N53,
+                    chs_map
+                }));
+            }
+            self.kind = img::names::A2_DOS33_KIND;
+            reader = self.new_rw_obj(track as u8);
+            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+                return Ok(Some(img::TrackSolution {
+                    cylinder,
+                    head,
+                    flux_code: img::FluxCode::GCR,
+                    nib_code: img::NibbleCode::N62,
+                    chs_map
+                }));
+            }
+            return Ok(None);
+        }
+        return Err(Box::new(img::Error::UnknownImageType));
     }
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;

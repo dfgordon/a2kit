@@ -55,6 +55,9 @@ impl img::DiskImage for Img {
     fn track_count(&self) -> usize {
         return self.cylinders * self.heads;
     }
+    fn num_heads(&self) -> usize {
+        return self.heads;
+    }
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
@@ -101,7 +104,7 @@ impl img::DiskImage for Img {
         }
     }
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        let track = cyl*self.heads + head;
+        let track = self.ch_2_track([cyl, head]);
         trace!("reading {}/{}/{}",cyl,head,sec);
         if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
             error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
@@ -111,7 +114,7 @@ impl img::DiskImage for Img {
         Ok(self.data[offset..offset+self.sec_size].to_vec())
     }
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
-        let track = cyl*self.heads + head;
+        let track = self.ch_2_track([cyl, head]);
         trace!("writing {}/{}/{}",cyl,head,sec);
         if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
             error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
@@ -183,6 +186,26 @@ impl img::DiskImage for Img {
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
         error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
+        let [cylinder,head] = self.track_2_ch(trk);
+        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        for i in 0..self.sectors {
+            chs_map.push([cylinder,head,i]);
+        }
+        let flux_code = match self.kind {
+            img::DiskKind::D35(l) => l.flux_code[0],
+            img::DiskKind::D525(l) => l.flux_code[0],
+            img::DiskKind::D8(l) => l.flux_code[0],
+            _ => img::FluxCode::None
+        };
+        return Ok(Some(img::TrackSolution {
+            cylinder,
+            head,
+            flux_code,
+            nib_code: img::NibbleCode::None,
+            chs_map
+        }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("IMG images have no track bits");

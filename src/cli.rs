@@ -307,6 +307,26 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .after_help(IN_HELP),
     );
     main_cmd = main_cmd.subcommand(
+        Command::new("stat")
+            .arg(
+                arg!(-d --dimg <PATH> "path to disk image")
+                    .value_hint(ValueHint::FilePath)
+                    .required(false),
+            )
+            .about("write FS statistics as a JSON string to stdout")
+            .after_help(IN_HELP),
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("geometry")
+            .arg(
+                arg!(-d --dimg <PATH> "path to disk image")
+                    .value_hint(ValueHint::FilePath)
+                    .required(false),
+            )
+            .about("write disk geometry as a JSON string to stdout")
+            .after_help(IN_HELP),
+    );
+    main_cmd = main_cmd.subcommand(
         Command::new("tokenize")
             .arg(
                 arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)")

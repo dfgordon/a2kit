@@ -573,11 +573,25 @@ impl fmt::Display for Records {
     }
 }
 
+pub struct Stat {
+    fs_name: String,
+    label: String,
+    users: Vec<String>,
+    block_size: usize,
+    block_beg: usize,
+    block_end: usize,
+    free_blocks: usize,
+    /// raw params should be a JSON string or nothing
+    raw: String
+}
+
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
 /// Provides BASIC-like high level commands, block operations, and file image operations.
 pub trait DiskFS {
     /// Create an empty file image appropriate for this file system
     fn new_fimg(&self,chunk_len: usize) -> FileImage;
+    /// Stat the file system
+    fn stat(&mut self) -> Result<Stat,DYNERR>;
     /// List all the files on disk to standard output, mirrors `CATALOG`
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT;
     /// Get the file system tree as a JSON string
@@ -646,4 +660,27 @@ pub trait DiskFS {
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>);
     /// Mutably borrow the underlying disk image
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage>;
+}
+
+impl Stat {
+    pub fn to_json(&self,indent: u16) -> String {
+        let mut ans = json::JsonValue::new_object();
+        ans["fs_name"] = json::JsonValue::String(self.fs_name.clone());
+        ans["label"] = json::JsonValue::String(self.label.clone());
+        ans["users"] = json::JsonValue::Array(self.users.iter().map(|s| json::JsonValue::String(s.clone())).collect());
+        ans["block_size"] = json::JsonValue::Number(self.block_size.into());
+        ans["block_beg"] = json::JsonValue::Number(self.block_beg.into());
+        ans["block_end"] = json::JsonValue::Number(self.block_end.into());
+        ans["free_blocks"] = json::JsonValue::Number(self.free_blocks.into());
+        if let Ok(obj) = json::parse(&self.raw) {
+            ans["raw"] = obj;
+        } else {
+            ans["raw"] = json::JsonValue::Null;
+        }
+        if indent > 0 {
+            return json::stringify_pretty(ans, indent);
+        } else {
+            return json::stringify(ans);
+        }
+        }
 }

@@ -893,6 +893,19 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
+    fn stat(&mut self) -> Result<super::Stat,DYNERR> {
+        let vheader = self.get_vol_header()?;
+        Ok(super::Stat {
+            fs_name: "prodos".to_string(),
+            label: vheader.name(),
+            users: Vec::new(),
+            block_size: BLOCK_SIZE,
+            block_beg: 0,
+            block_end: self.total_blocks,
+            free_blocks: self.num_free_blocks()? as usize,
+            raw: "".to_string()
+        })
+    }
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT {
         let b = self.find_dir_key_block(path)?;
         let mut dir = self.get_directory(b as usize)?;
@@ -933,7 +946,10 @@ impl super::DiskFS for Disk {
         tree["files"] = self.tree_node(dir_block,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vhdr.name());
-        Ok(json::stringify_pretty(tree, 4))
+        match vhdr.total_blocks() > 1600 && include_meta {
+            true => Ok(json::stringify_pretty(tree, 1)),
+            false => Ok(json::stringify_pretty(tree, 2))
+        }
     }
     fn create(&mut self,path: &str) -> STDRESULT {
         match self.prepare_to_write(path) {

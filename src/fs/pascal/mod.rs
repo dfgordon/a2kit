@@ -523,6 +523,20 @@ impl super::DiskFS for Disk {
     fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
         Disk::new_fimg(chunk_len)
     }
+    fn stat(&mut self) -> Result<super::Stat,DYNERR> {
+        let dir = self.get_directory()?;
+        let free_block_tuple = self.num_free_blocks()?;
+        Ok(super::Stat {
+            fs_name: "a2 pascal".to_string(),
+            label: vol_name_to_string(dir.header.name,dir.header.name_len),
+            users: Vec::new(),
+            block_size: BLOCK_SIZE,
+            block_beg: 0,
+            block_end: dir.total_blocks(),
+            free_blocks: free_block_tuple.0 as usize,
+            raw: "".to_string()
+        })
+    }
     fn catalog_to_stdout(&mut self, _path: &str) -> STDRESULT {
         let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
         let dir = self.get_directory()?;
@@ -588,7 +602,7 @@ impl super::DiskFS for Disk {
                 }
             }
         }
-        Ok(json::stringify_pretty(tree, 4))
+        Ok(json::stringify_pretty(tree, 2))
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
         error!("pascal implementation does not support operation");

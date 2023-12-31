@@ -51,6 +51,9 @@ impl img::DiskImage for DO {
     fn track_count(&self) -> usize {
         return self.tracks as usize;
     }
+    fn num_heads(&self) -> usize {
+        1
+    }
     fn byte_capacity(&self) -> usize {
         return self.data.len();
     }
@@ -186,6 +189,20 @@ impl img::DiskImage for DO {
     fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
         error!("DO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
+    }
+    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
+        let [c,h] = self.track_2_ch(trk);
+        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        for i in 0..16 {
+            chs_map.push([c,h,i]);
+        }
+        return Ok(Some(img::TrackSolution {
+            cylinder: c,
+            head: h,
+            flux_code: img::FluxCode::GCR,
+            nib_code: img::NibbleCode::N62,
+            chs_map
+        }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
         error!("DO images have no track bits");

@@ -50,6 +50,31 @@ pub struct DiskParameterBlock {
     pub reserved_track_capacity: usize
 }
 
+impl DiskParameterBlock {
+    pub fn to_json(&self,indent: u16) -> String {
+        let mut ans = json::JsonValue::new_object();
+        let mut dpb = json::JsonValue::new_object();
+        dpb["spt"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.spt)));
+        dpb["bsh"] = json::JsonValue::String(hex::encode_upper(&vec![self.bsh]));
+        dpb["blm"] = json::JsonValue::String(hex::encode_upper(&vec![self.blm]));
+        dpb["exm"] = json::JsonValue::String(hex::encode_upper(&vec![self.exm]));
+        dpb["dsm"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.dsm)));
+        dpb["drm"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.drm)));
+        dpb["al0"] = json::JsonValue::String(hex::encode_upper(&vec![self.al0]));
+        dpb["al1"] = json::JsonValue::String(hex::encode_upper(&vec![self.al1]));
+        dpb["cks"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.cks)));
+        dpb["off"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.off)));
+        dpb["psh"] = json::JsonValue::String(hex::encode_upper(&vec![self.psh]));
+        dpb["phm"] = json::JsonValue::String(hex::encode_upper(&vec![self.phm]));
+        ans["dpb"] = dpb;
+        if indent==0 {
+            return json::stringify(ans);
+        } else {
+            return json::stringify_pretty(ans,indent);
+        }
+    }
+}
+
 pub const A2_525: DiskParameterBlock = DiskParameterBlock {
     spt: 32,
     bsh: 3,

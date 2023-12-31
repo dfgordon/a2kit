@@ -38,6 +38,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand put 'read from stdin, write to local or disk image'
             cand catalog 'write disk image catalog to stdout'
             cand tree 'write directory tree as a JSON string to stdout'
+            cand stat 'write FS statistics as a JSON string to stdout'
+            cand geometry 'write disk geometry as a JSON string to stdout'
             cand tokenize 'read from stdin, tokenize, write to stdout'
             cand detokenize 'read from stdin, detokenize, write to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
@@ -203,6 +205,18 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'a2kit;stat'= {
+            cand -d 'path to disk image'
+            cand --dimg 'path to disk image'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;geometry'= {
+            cand -d 'path to disk image'
+            cand --dimg 'path to disk image'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'a2kit;tokenize'= {
             cand -a 'address of tokenized code (Applesoft only)'
             cand --addr 'address of tokenized code (Applesoft only)'
@@ -234,6 +248,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand put 'read from stdin, write to local or disk image'
             cand catalog 'write disk image catalog to stdout'
             cand tree 'write directory tree as a JSON string to stdout'
+            cand stat 'write FS statistics as a JSON string to stdout'
+            cand geometry 'write disk geometry as a JSON string to stdout'
             cand tokenize 'read from stdin, tokenize, write to stdout'
             cand detokenize 'read from stdin, detokenize, write to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
@@ -269,6 +285,10 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;help;catalog'= {
         }
         &'a2kit;help;tree'= {
+        }
+        &'a2kit;help;stat'= {
+        }
+        &'a2kit;help;geometry'= {
         }
         &'a2kit;help;tokenize'= {
         }

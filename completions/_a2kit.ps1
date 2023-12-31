@@ -41,6 +41,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
             [CompletionResult]::new('catalog', 'catalog', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('tree', 'tree', [CompletionResultType]::ParameterValue, 'write directory tree as a JSON string to stdout')
+            [CompletionResult]::new('stat', 'stat', [CompletionResultType]::ParameterValue, 'write FS statistics as a JSON string to stdout')
+            [CompletionResult]::new('geometry', 'geometry', [CompletionResultType]::ParameterValue, 'write disk geometry as a JSON string to stdout')
             [CompletionResult]::new('tokenize', 'tokenize', [CompletionResultType]::ParameterValue, 'read from stdin, tokenize, write to stdout')
             [CompletionResult]::new('detokenize', 'detokenize', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -223,6 +225,20 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'a2kit;stat' {
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;geometry' {
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'a2kit;tokenize' {
             [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'address of tokenized code (Applesoft only)')
             [CompletionResult]::new('--addr', 'addr', [CompletionResultType]::ParameterName, 'address of tokenized code (Applesoft only)')
@@ -256,6 +272,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
             [CompletionResult]::new('catalog', 'catalog', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('tree', 'tree', [CompletionResultType]::ParameterValue, 'write directory tree as a JSON string to stdout')
+            [CompletionResult]::new('stat', 'stat', [CompletionResultType]::ParameterValue, 'write FS statistics as a JSON string to stdout')
+            [CompletionResult]::new('geometry', 'geometry', [CompletionResultType]::ParameterValue, 'write disk geometry as a JSON string to stdout')
             [CompletionResult]::new('tokenize', 'tokenize', [CompletionResultType]::ParameterValue, 'read from stdin, tokenize, write to stdout')
             [CompletionResult]::new('detokenize', 'detokenize', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -307,6 +325,12 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             break
         }
         'a2kit;help;tree' {
+            break
+        }
+        'a2kit;help;stat' {
+            break
+        }
+        'a2kit;help;geometry' {
             break
         }
         'a2kit;help;tokenize' {
