@@ -119,6 +119,10 @@ pub fn combine_ignorable_offsets(map: &mut HashMap<Block,Vec<usize>>,other: Hash
     }
 }
 
+fn universal_row(typ: &str, blocks: usize, name: &str) -> String {
+    format!("{:4} {:5}  {}",typ,blocks,name)
+}
+
 /// This converts between UTF8+LF/CRLF and the encoding used by the file system
 pub trait TextEncoder {
     fn new(line_terminator: Vec<u8>) -> Self where Self: Sized;
@@ -574,15 +578,15 @@ impl fmt::Display for Records {
 }
 
 pub struct Stat {
-    fs_name: String,
-    label: String,
-    users: Vec<String>,
-    block_size: usize,
-    block_beg: usize,
-    block_end: usize,
-    free_blocks: usize,
+    pub fs_name: String,
+    pub label: String,
+    pub users: Vec<String>,
+    pub block_size: usize,
+    pub block_beg: usize,
+    pub block_end: usize,
+    pub free_blocks: usize,
     /// raw params should be a JSON string or nothing
-    raw: String
+    pub raw: String
 }
 
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
@@ -592,8 +596,13 @@ pub trait DiskFS {
     fn new_fimg(&self,chunk_len: usize) -> FileImage;
     /// Stat the file system
     fn stat(&mut self) -> Result<Stat,DYNERR>;
-    /// List all the files on disk to standard output, mirrors `CATALOG`
+    /// Directory listing to standard output in the file system's native style
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT;
+    /// Get directory listing as a Vec<String>.
+    /// The rows are in an easily parsed fixed column format that is the same for all file systems.
+    /// For flat file systems, the path must be "" or "/", or else an error is returned.
+    /// For any file system, if the path resolves to a file, an error is returned.
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR>;
     /// Get the file system tree as a JSON string
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR>;
     /// Create a new directory
@@ -613,16 +622,30 @@ pub trait DiskFS {
     fn unlock(&mut self,path: &str) -> STDRESULT;
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
     fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> STDRESULT;
-    /// Read a binary file from the disk.  Returns (aux,data), aux = load address if applicable.
+    /// Read a binary file from the disk.  Returns (load address,data).
     fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
     /// Write a binary file to the disk.
     fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
     /// Read a BASIC program file from the disk, program is in tokenized form.
-    /// Detokenization is handled in a different module.  Returns (aux,data), aux = load address if applicable.
+    /// Detokenization is handled in a different module.  Returns (load address,data).
     fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
     /// Write a BASIC program to the disk, program must already be tokenized.
     /// Tokenization is handled in a different module.
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
+    /// Get load address for this file image, if applicable.
+    fn fimg_load_address(&self,fimg: &FileImage) -> u16 {
+        0
+    }
+    /// Extract file's data using the file image's metadata to select the methodology.
+    /// In particular, any header maintained by the file system is stripped.
+    fn fimg_file_data(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
+    /// Convenience function, returns (load address,data), using `fimg` methods.
+    /// Default method should usually be fine.
+    fn load_any(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+        let fimg = self.read_any(path)?;
+        let dat = self.fimg_file_data(&fimg)?;
+        Ok((self.fimg_load_address(&fimg),dat))
+    }
     /// Read sequential data from the disk, Returns (aux,data), aux is implementation dependent.
     /// If `trunc=true` the data will be truncated at the EOF given by the file's metadata (if available),
     /// otherwise it extends to the block boundary.

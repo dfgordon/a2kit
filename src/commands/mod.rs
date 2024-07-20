@@ -56,7 +56,8 @@ pub enum ItemType {
     Sector,
     RawTrack,
     System,
-    Metadata
+    Metadata,
+    Automatic
 }
 
 impl FromStr for ItemType {
@@ -82,6 +83,7 @@ impl FromStr for ItemType {
             "sec" => Ok(Self::Sector),
             "sys" => Ok(Self::System),
             "meta" => Ok(Self::Metadata),
+            "auto" => Ok(Self::Automatic),
             _ => Err(CommandError::UnknownItemType)
         }
     }

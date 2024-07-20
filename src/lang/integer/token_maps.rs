@@ -1,5 +1,17 @@
-pub const TOK_MAP: [(&str,u8);109] = [
+pub const TOK_MAP: [(&str,u8);119] = [
     ("close",114),
+    ("com_auto",13),
+    ("com_clr",12),
+    ("com_con",6),
+    ("com_del",9),
+    ("com_himem",16),
+    ("com_load",4),
+    ("com_lomem",17),
+    ("com_man",15),
+    ("com_new",11),
+    ("com_run",8),
+    ("com_run_line",7),
+    ("com_save",5),
     ("dollar",64),
     ("fcall_abs",49),
     ("fcall_ascp",60),
@@ -44,8 +56,6 @@ pub const TOK_MAP: [(&str,u8);109] = [
     ("open_slice",42),
     ("open_str",66),
     ("quote",40),
-    ("run",8),
-    ("run_line",7),
     ("sep_auto",14),
     ("sep_del",10),
     ("sep_dim_int",68),
@@ -110,12 +120,22 @@ pub const TOK_MAP: [(&str,u8);109] = [
     ("unquote",41)
 ];
 
-pub const DETOK_MAP: [(u8,&str);109] = [
+pub const DETOK_MAP: [(u8,&str);119] = [
     (3,":"),
+    (4,"load"),
+    (5,"save"),
+    (6,"con"),
     (7,"run"),
     (8,"run"),
+    (9,"del"),
     (10,","),
+    (11,"new"),
+    (12,"clr"),
+    (13,"auto"),
     (14,","),
+    (15,"man"),
+    (16,"himem:"),
+    (17,"lomem:"),
     (18,"+"),
     (19,"-"),
     (20,"*"),

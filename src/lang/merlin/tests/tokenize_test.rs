@@ -3,13 +3,10 @@
 use std::fmt::Write;
 #[cfg(test)]
 use regex::Regex;
-#[cfg(test)]
-use super::tokenizer::Tokenizer;
-
 
 #[cfg(test)]
 fn test_tokenizer(test_code: &str,expected: &str) {
-	let mut tokenizer = Tokenizer::new();
+	let mut tokenizer = super::super::tokenizer::Tokenizer::new();
 	// get actual into hex string
 	let bytes = tokenizer.tokenize(test_code.to_string()).expect("tokenizer failed");
 	let mut listfmt = String::new();

@@ -96,6 +96,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                     }
                     // other file types
                     let maybe_object = match typ {
+                        Ok(ItemType::Automatic) => disk.load_any(&src_path),
                         Ok(ItemType::ApplesoftTokens) => disk.load(&src_path),
                         Ok(ItemType::IntegerTokens) => disk.load(&src_path),
                         Ok(ItemType::MerlinTokens) => disk.read_text(&src_path),

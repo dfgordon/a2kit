@@ -227,7 +227,8 @@ impl TextEncoder for Encoder {
 }
 
 /// Structured representation of sequential text files on disk.
-/// For random access text use `fs::Records` instead.
+/// Before using directly consider using DiskFS traits. 
+/// For random access text use `fs::Records`.
 pub struct SequentialText {
     pub text: Vec<u8>
 }

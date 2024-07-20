@@ -22,6 +22,8 @@ use crate::img;
 use crate::commands::ItemType;
 use crate::{DYNERR,STDRESULT};
 
+pub const FS_NAME: &str = "prodos";
+
 /// The primary interface for disk operations.
 pub struct Disk {
     img: Box<dyn img::DiskImage>,
@@ -41,7 +43,7 @@ impl Disk {
     fn new_fimg(chunk_len: usize) -> super::FileImage {
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from("prodos"),
+            file_system: String::from(FS_NAME),
             fs_type: vec![0],
             aux: vec![0;2],
             eof: vec![0;3],
@@ -62,7 +64,7 @@ impl Disk {
         Self {
             img,
             total_blocks,
-            /// bitmap buffer is designed to work transparently
+            // bitmap buffer is designed to work transparently
             maybe_bitmap: None,
             bitmap_blocks: Vec::new()
         }
@@ -896,7 +898,7 @@ impl super::DiskFS for Disk {
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let vheader = self.get_vol_header()?;
         Ok(super::Stat {
-            fs_name: "prodos".to_string(),
+            fs_name: FS_NAME.to_string(),
             label: vheader.name(),
             users: Vec::new(),
             block_size: BLOCK_SIZE,
@@ -938,17 +940,35 @@ impl super::DiskFS for Disk {
         println!();
         Ok(())
     }
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
+        let mut ans = Vec::new();
+        let mut curr = self.find_dir_key_block(path)?;
+        while curr>0 {
+            let dir = self.get_directory(curr as usize)?;
+            for loc in dir.entry_locations(curr) {
+                let entry = dir.get_entry(&loc);
+                if entry.is_active() {
+                    ans.push(entry.universal_row());
+                }
+            }
+            curr = dir.next();
+        }
+        Ok(ans)
+    }
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
         let vhdr = self.get_vol_header()?;
         let dir_block = self.find_dir_key_block("/")?;
         let mut tree = json::JsonValue::new_object();
-        tree["file_system"] = json::JsonValue::String("prodos".to_string());
+        tree["file_system"] = json::JsonValue::String(FS_NAME.to_string());
         tree["files"] = self.tree_node(dir_block,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vhdr.name());
-        match vhdr.total_blocks() > 1600 && include_meta {
-            true => Ok(json::stringify_pretty(tree, 1)),
-            false => Ok(json::stringify_pretty(tree, 2))
+        if vhdr.total_blocks() <= 1600 && !include_meta {
+            Ok(json::stringify_pretty(tree,2))
+        } else if vhdr.total_blocks() <= 1600 && include_meta {
+            Ok(json::stringify_pretty(tree,1))
+        } else {
+            Ok(json::stringify(tree))
         }
     }
     fn create(&mut self,path: &str) -> STDRESULT {
@@ -1101,6 +1121,16 @@ impl super::DiskFS for Disk {
         }
         return self.write_any(path,&fimg);
     }
+    fn fimg_load_address(&self,fimg: &super::FileImage) -> u16 {
+        super::FileImage::usize_from_truncated_le_bytes(&fimg.aux) as u16
+    }
+    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
+        if &fimg.file_system != FS_NAME {
+            return Err(Box::new(Error::FileTypeMismatch));
+        }
+        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        Ok(fimg.sequence_limited(eof))
+    }
     fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.find_file(path) {
             Ok(loc) => {
@@ -1189,7 +1219,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!="prodos" {
+        if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to prodos",fimg.file_system);
             return Err(Box::new(Error::IOError));
         }

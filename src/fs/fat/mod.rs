@@ -25,6 +25,8 @@ use crate::bios::{bpb,fat};
 use crate::commands::ItemType;
 use crate::{DYNERR,STDRESULT};
 
+pub const FS_NAME: &str = "fat";
+
 /// The primary interface for disk operations.
 pub struct Disk {
     img: Box<dyn img::DiskImage>,
@@ -46,7 +48,7 @@ impl Disk {
         };
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from("fat"),
+            file_system: String::from(FS_NAME),
             fs_type: vec![0;3],
             aux: vec![],
             eof: vec![0;4],
@@ -357,7 +359,7 @@ impl Disk {
         };
         // Using nanos gives us about 30 bits of resolution.
         // This avoids issues with the FAT datestamp after the year 2107.
-        let id = u32::to_le_bytes(chrono::Local::now().naive_local().timestamp_subsec_nanos());
+        let id = u32::to_le_bytes(chrono::Local::now().naive_local().and_utc().timestamp_subsec_nanos());
         self.boot_sector.create_tail(0x00, id, boot_label);
         // write the boot sector (perhaps rewriting).
         // may be written again if FAT32.
@@ -925,7 +927,7 @@ impl super::DiskFS for Disk {
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let (vol_lab,_) = self.get_root_dir()?;
         Ok(super::Stat {
-            fs_name: "fat".to_string(),
+            fs_name: FS_NAME.to_string(),
             label: vol_lab,
             users: Vec::new(),
             block_size: self.boot_sector.block_size() as usize,
@@ -966,16 +968,55 @@ impl super::DiskFS for Disk {
             _ => Err(Box::new(Error::InvalidSwitch))
         }
     }
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
+        match self.goto_path(path) {
+            Ok((_,dir_info)) => {
+                if dir_info.directory {
+                    let dir = self.get_directory(&dir_info.cluster1)?;
+                    let mut ans = Vec::new();
+                    for i in 0..dir.num_entries() {
+                        let entry_type = dir.get_type(&Ptr::Entry(i));
+                        if entry_type==EntryType::FreeAndNoMore {
+                            break;
+                        }
+                        if entry_type==EntryType::VolumeLabel || entry_type==EntryType::Free {
+                            continue;
+                        }
+                        let entry = dir.get_entry(&Ptr::Entry(i));
+                        let name_and_ext = entry.name(false);
+                        let mut split = name_and_ext.split(".").collect::<Vec<&str>>();
+                        if split.len()<2 {
+                            split.push("");
+                        }
+                        let (typ,name) = match (entry_type,split[1].len()) {
+                            (EntryType::Directory,0) => ("DIR",split[0].to_string()),
+                            (EntryType::Directory,_) => ("DIR",name_and_ext),
+                            _ => (split[1],split[0].to_string())
+                        };
+                        let blocks = 1 + (entry.eof() as i64 - 1) / self.boot_sector.block_size() as i64;
+                        ans.push(super::universal_row(typ,blocks as usize,&name));
+                    }
+                    return Ok(ans);
+                } else {
+                    return Err(Box::new(Error::FileNotFound));
+                }
+            },
+            Err(e) => Err(e)
+        }
+    }
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
         let (vol,dir) = self.get_root_dir()?;
         let mut tree = json::JsonValue::new_object();
-        tree["file_system"] = json::JsonValue::String("fat".to_string());
+        tree["file_system"] = json::JsonValue::String(FS_NAME.to_string());
         tree["files"] = self.tree_node(&dir,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vol);
-        match self.boot_sector.cluster_count_usable() > 2048 && include_meta {
-            true => Ok(json::stringify_pretty(tree, 1)),
-            false => Ok(json::stringify_pretty(tree, 2))
+        if self.boot_sector.cluster_count_usable() <= 2048 && !include_meta {
+            Ok(json::stringify_pretty(tree,2))
+        } else if self.boot_sector.cluster_count_usable() <= 2048 && include_meta {
+            Ok(json::stringify_pretty(tree,1))
+        } else {
+            Ok(json::stringify(tree))
         }
     }
     fn create(&mut self,path: &str) -> STDRESULT {
@@ -1146,6 +1187,13 @@ impl super::DiskFS for Disk {
         error!("MS-DOS implementation does not support operation");
         return Err(Box::new(Error::Syntax));
     }
+    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
+        if &fimg.file_system != FS_NAME {
+            return Err(Box::new(Error::IncorrectDOS));
+        }
+        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        Ok(fimg.sequence_limited(eof))
+    }
     fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         let (maybe_parent,finfo) = self.goto_path(path)?;
         if let Some(parent) = maybe_parent {
@@ -1216,7 +1264,7 @@ impl super::DiskFS for Disk {
         Err(Box::new(Error::ReadFault))
     }
     fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!="fat" {
+        if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to FAT",fimg.file_system);
             return Err(Box::new(Error::WriteFault));
         }

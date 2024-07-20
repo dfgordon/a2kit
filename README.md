@@ -4,7 +4,7 @@ Command line interface and library for manipulating retro disk images, file syst
 
 * Designed to be scriptable
 * Languages - Applesoft, Integer BASIC, Merlin Assembly
-    - full syntax comprehension
+    - syntax comprehension, complete LSP support coming with v3
     - tokenization, detokenization
 * File Systems - Apple DOS 3.x, ProDOS, CP/M, Pascal, FAT (such as MS-DOS)
     - full read and write access

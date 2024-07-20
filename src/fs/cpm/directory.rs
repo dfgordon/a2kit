@@ -789,7 +789,6 @@ impl Directory {
     pub fn get_users(&self) -> Vec<u8> {
         let mut ans = Vec::new();
         for i in 0..self.num_entries() {
-            let xtype = self.get_type(&Ptr::ExtentEntry(i));
             if let Some(fx) = self.get_entry::<Extent>(&Ptr::ExtentEntry(i)) {
                 if !ans.contains(&fx.user) {
                     ans.push(fx.user);
@@ -816,19 +815,23 @@ impl Directory {
 /// preferred over directly accessing the map.
 pub fn get_file<'a>(xname: &str,files: &'a BTreeMap<String,FileInfo>) -> Option<&'a FileInfo> {
     // the order of these attempts is significant
-    if let Some(finfo) = files.get(xname) {
+    let mut trimmed = xname.trim_end().to_string();
+    if !xname.contains(".") {
+        trimmed += ".";
+    }
+    if let Some(finfo) = files.get(&trimmed) {
         return Some(finfo);
     }
-    if let Some(finfo) = files.get(&xname.to_uppercase()) {
+    if let Some(finfo) = files.get(&trimmed.to_uppercase()) {
         return Some(finfo);
     }
-    if xname.contains(":") {
+    if trimmed.contains(":") {
         return None;
     }
-    if let Some(finfo) = files.get(&("0:".to_string()+xname)) {
+    if let Some(finfo) = files.get(&("0:".to_string()+&trimmed)) {
         return Some(finfo);
     }
-    if let Some(finfo) = files.get(&("0:".to_string()+&xname.to_uppercase())) {
+    if let Some(finfo) = files.get(&("0:".to_string()+&trimmed.to_uppercase())) {
         return Some(finfo);
     }
     return None;

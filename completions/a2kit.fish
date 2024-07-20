@@ -61,30 +61,35 @@ complete -c a2kit -n "__fish_seen_subcommand_from retype" -s a -l aux -d 'file s
 complete -c a2kit -n "__fish_seen_subcommand_from retype" -s d -l dimg -d 'path to disk image itself' -r -F
 complete -c a2kit -n "__fish_seen_subcommand_from retype" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from verify" -s t -l type -d 'type of the file' -r -f -a "{atxt	'',itxt	'',mtxt	''}"
+complete -c a2kit -n "__fish_seen_subcommand_from verify" -s c -l config -d 'modify diagnostic configuration' -r
+complete -c a2kit -n "__fish_seen_subcommand_from verify" -s w -l workspace -d 'workspace directory' -r
+complete -c a2kit -n "__fish_seen_subcommand_from verify" -s s -l sexpr -d 'write S-expressions to stderr'
 complete -c a2kit -n "__fish_seen_subcommand_from verify" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from minify" -s t -l type -d 'type of the file' -r -f -a "{atxt	''}"
 complete -c a2kit -n "__fish_seen_subcommand_from minify" -l level -d 'set minification level' -r -f -a "{0	'',1	'',2	'',3	''}"
 complete -c a2kit -n "__fish_seen_subcommand_from minify" -l flags -d 'set minification flags' -r
 complete -c a2kit -n "__fish_seen_subcommand_from minify" -s h -l help -d 'Print help'
-complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s t -l type -d 'type of the file' -r -f -a "{atxt	''}"
+complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s t -l type -d 'type of the file' -r -f -a "{atxt	'',itxt	''}"
 complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s b -l beg -d 'lowest number to renumber' -r
 complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s e -l end -d 'highest number to renumber plus 1' -r
 complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s f -l first -d 'first number' -r
 complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s s -l step -d 'step between numbers' -r
+complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s r -l reorder -d 'allow reordering of lines'
 complete -c a2kit -n "__fish_seen_subcommand_from renumber" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from get" -s f -l file -d 'path, key, or address, maybe inside disk image' -r -F
-complete -c a2kit -n "__fish_seen_subcommand_from get" -s t -l type -d 'type of the item' -r -f -a "{any	'',bin	'',txt	'',raw	'',rec	'',atok	'',itok	'',mtok	'',block	'',sec	'',track	'',raw_track	'',meta	''}"
+complete -c a2kit -n "__fish_seen_subcommand_from get" -s t -l type -d 'type of the item' -r -f -a "{any	'',auto	'',bin	'',txt	'',raw	'',rec	'',atok	'',itok	'',mtok	'',block	'',sec	'',track	'',raw_track	'',meta	''}"
 complete -c a2kit -n "__fish_seen_subcommand_from get" -s d -l dimg -d 'path to disk image' -r -F
 complete -c a2kit -n "__fish_seen_subcommand_from get" -s l -l len -d 'length of record in DOS 3.3 random access text file' -r
 complete -c a2kit -n "__fish_seen_subcommand_from get" -l trunc -d 'truncate raw at EOF if possible'
 complete -c a2kit -n "__fish_seen_subcommand_from get" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from put" -s f -l file -d 'path, key, or address, maybe inside disk image' -r -F
-complete -c a2kit -n "__fish_seen_subcommand_from put" -s t -l type -d 'type of the item' -r -f -a "{any	'',bin	'',txt	'',raw	'',rec	'',atok	'',itok	'',mtok	'',block	'',sec	'',track	'',raw_track	'',meta	''}"
+complete -c a2kit -n "__fish_seen_subcommand_from put" -s t -l type -d 'type of the item' -r -f -a "{any	'',auto	'',bin	'',txt	'',raw	'',rec	'',atok	'',itok	'',mtok	'',block	'',sec	'',track	'',raw_track	'',meta	''}"
 complete -c a2kit -n "__fish_seen_subcommand_from put" -s d -l dimg -d 'path to disk image' -r -F
 complete -c a2kit -n "__fish_seen_subcommand_from put" -s a -l addr -d 'address of binary file' -r
 complete -c a2kit -n "__fish_seen_subcommand_from put" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from catalog" -s f -l file -d 'path of directory inside disk image' -r
 complete -c a2kit -n "__fish_seen_subcommand_from catalog" -s d -l dimg -d 'path to disk image' -r -F
+complete -c a2kit -n "__fish_seen_subcommand_from catalog" -l generic -d 'use generic output format'
 complete -c a2kit -n "__fish_seen_subcommand_from catalog" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_seen_subcommand_from tree" -s d -l dimg -d 'path to disk image' -r -F
 complete -c a2kit -n "__fish_seen_subcommand_from tree" -l meta -d 'include metadata'

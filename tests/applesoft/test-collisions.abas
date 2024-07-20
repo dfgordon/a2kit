@@ -1,0 +1,9 @@
+10 PIES = 10
+20 PI = 3.14159
+30 A1VAR = 1.5
+40 A1VAR% = 1
+50 A1VAR$ = "1.5"
+60 MYWRD$ = "blue"
+70 MYCLR$ = "blue"
+80 DEF FN CUBE(X) = X^3: DEF FN CUTE(X) = X
+90 DEF FN A1(X) = X+1

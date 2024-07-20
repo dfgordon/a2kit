@@ -153,6 +153,12 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;verify' {
             [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the file')
             [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('-c', 'c', [CompletionResultType]::ParameterName, 'modify diagnostic configuration')
+            [CompletionResult]::new('--config', 'config', [CompletionResultType]::ParameterName, 'modify diagnostic configuration')
+            [CompletionResult]::new('-w', 'w', [CompletionResultType]::ParameterName, 'workspace directory')
+            [CompletionResult]::new('--workspace', 'workspace', [CompletionResultType]::ParameterName, 'workspace directory')
+            [CompletionResult]::new('-s', 's', [CompletionResultType]::ParameterName, 'write S-expressions to stderr')
+            [CompletionResult]::new('--sexpr', 'sexpr', [CompletionResultType]::ParameterName, 'write S-expressions to stderr')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -177,6 +183,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--first', 'first', [CompletionResultType]::ParameterName, 'first number')
             [CompletionResult]::new('-s', 's', [CompletionResultType]::ParameterName, 'step between numbers')
             [CompletionResult]::new('--step', 'step', [CompletionResultType]::ParameterName, 'step between numbers')
+            [CompletionResult]::new('-r', 'r', [CompletionResultType]::ParameterName, 'allow reordering of lines')
+            [CompletionResult]::new('--reorder', 'reorder', [CompletionResultType]::ParameterName, 'allow reordering of lines')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -213,6 +221,7 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
             [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
             [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break

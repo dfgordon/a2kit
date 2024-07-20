@@ -588,7 +588,7 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
 pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bool) -> Result<String,DYNERR> {
     const TIME_FMT: &str = "%Y/%m/%d %H:%M";
     let mut tree = json::JsonValue::new_object();
-    tree["file_system"] = json::JsonValue::String("cpm".to_string());
+    tree["file_system"] = json::JsonValue::String(super::FS_NAME.to_string());
     tree["files"] = json::JsonValue::new_object();
     tree["label"] = json::JsonValue::new_object();
     let maybe_lab = dir.find_label();
@@ -644,8 +644,11 @@ pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bo
             }
         }
     }
-    match dpb.user_blocks() > 2048 && include_meta {
-        true => Ok(json::stringify_pretty(tree, 1)),
-        false => Ok(json::stringify_pretty(tree, 2))
+    if dpb.user_blocks() <= 2048 && !include_meta {
+        Ok(json::stringify_pretty(tree,2))
+    } else if dpb.user_blocks() <= 2048 && include_meta {
+        Ok(json::stringify_pretty(tree,1))
+    } else {
+        Ok(json::stringify(tree))
     }
 }

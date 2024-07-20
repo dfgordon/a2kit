@@ -153,6 +153,21 @@ mod escapes {
 	}
 }
 
+mod commands {
+	#[test]
+	fn list() {
+		let expected = "10 LIST : LIST 10: LIST 10,20\n";
+		let tokens = "130A00760374B10A000374B10A0075B2140001";
+		super::test_detokenizer(tokens, expected);
+	}
+	#[test]
+	fn del() {
+		let expected = "420 TEXT : CALL -936: CALL 672: DEL 90: END \n";
+		let tokens = "17A4014B034D36B9A803034DB6A0020309B95A00035101";
+		super::test_detokenizer(tokens, expected);
+	}
+}
+
 mod general {
 	#[test]
 	fn text_and_binary_nums() {

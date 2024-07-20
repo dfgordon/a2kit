@@ -1,0 +1,1376 @@
+{
+    "--^": {
+        "alt": [],
+        "args": null,
+        "brief": "end of loop",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "end of loop",
+        "eg": [
+            "     --^"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "adr": {
+        "alt": [],
+        "args": "seq($.data,repeat(seq(',',$.data)))",
+        "brief": "define long address",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "list of expressions resolving to 24 bit little endian",
+        "eg": [
+            "     ADR $01FDF0  ; F0 FD 01",
+            "     ADR 10  ; 0A 00 00",
+            "     ADR dat1,dat2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/.*/",
+        "version": [
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "adrl": {
+        "alt": [],
+        "args": "seq($.data,repeat(seq(',',$.data)))",
+        "brief": "define long address",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "list of expressions resolving to 32 bit little endian",
+        "eg": [
+            "     ADRL $01FDF0  ; F0 FD 01 00",
+            "     ADRL 10  ; 0A 00 00 00",
+            "     ADRL dat1,dat2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/.*/",
+        "version": [
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "asc": {
+        "alt": [],
+        "args": "choice($._string_operand,$._num_str)",
+        "brief": "ascii text",
+        "category": "strings",
+        "caveat": "details depend on Merlin version",
+        "desc": "put delimited ascii text into object code, where delimiter can be any character",
+        "eg": [
+            "     ASC  &Say \"hello!\"&,00",
+            "     ASC  #>X+Y  ; number to padded string"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "ast": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "asterisks",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "print a line of asterisks",
+        "eg": [
+            "     AST  10",
+            "     AST  X*2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "cas": {
+        "alt": [],
+        "args": "alias(choice('SE','IN'),$.enum)",
+        "brief": "set case sensitivity",
+        "category": "assembler",
+        "caveat": "extension ignores this pseudo-op",
+        "desc": "set case sensitivity",
+        "eg": [
+            "     CAS  SE  ; sensitive",
+            "     CAS  IN  ; insensitive"
+        ],
+        "enum": [
+            "SE",
+            "IN"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v16+"
+        ]
+    },
+    "chk": {
+        "alt": [],
+        "args": null,
+        "brief": "checksum",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "put checksum in object code",
+        "eg": [
+            "     CHK"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "cyc": {
+        "alt": [],
+        "args": "optional(alias(choice('OFF','AVE','FLAGS'),$.enum))",
+        "brief": "cycle time",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "calculate and print cycle times",
+        "eg": [
+            "     CYC  ; cycles and total",
+            "     CYC  OFF  ; none",
+            "     CYC  AVE  ; cycles and average",
+            "     CYC  FLAGS  ; cycles and MX"
+        ],
+        "enum": [
+            "",
+            "OFF",
+            "AVE",
+            "FLAGS"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/FLAGS/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "da": {
+        "alt": [
+            "dw"
+        ],
+        "args": "seq($.data,repeat(seq(',',$.data)))",
+        "brief": "define address or word",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "list of expressions resolving to 16 bit little endian",
+        "eg": [
+            "     DA $FDF0  ; F0 FD",
+            "     DA 10,$300  ; 0A 00 00 03",
+            "     DA dat1,dat2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "dat": {
+        "alt": [],
+        "args": "optional($._aexpr)",
+        "brief": "date stamp",
+        "category": "formatting",
+        "caveat": "ProDOS only, object code arguments only for v16+",
+        "desc": "print the date and time, or insert in object code",
+        "eg": [
+            "     DAT  ; screen/printer",
+            "     DAT  1  ; object code DD-MMM-YY",
+            "     DAT  2  ; object code MM/DD/YY",
+            "     DAT  3  ; object code DD-MMM-YY  H:MM:SS AM/PM",
+            "     DAT  4  ; object code MM/DD/YY  H:MM:SS AM/PM",
+            "* 5-8 positive ASCII versions"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v16x": "/.*/",
+        "v8x": "/.*/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "dci": {
+        "alt": [],
+        "args": "$._string_operand",
+        "brief": "dextral character inverted",
+        "category": "strings",
+        "caveat": null,
+        "desc": "ASC with last character high bit flipped",
+        "eg": [
+            "     DCI  \"Number 9\""
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "ddb": {
+        "alt": [],
+        "args": "seq($.data,repeat(seq(',',$.data)))",
+        "brief": "define double byte",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "list of expressions resolving to 16 bit big endian",
+        "eg": [
+            "     DDB $FDF0  ; FD F0",
+            "     DDB 10,$300  ; 00 0A 03 00",
+            "     DDB dat1,dat2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "dend": {
+        "alt": [],
+        "args": null,
+        "brief": "end dummy section",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "mark the end of a dummy section",
+        "eg": [
+            "     DEND"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "dfb": {
+        "alt": [
+            "db"
+        ],
+        "args": "seq($.data,repeat(seq(',',$.data)))",
+        "brief": "define byte",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "define byte, selects low byte, \\# and < ignored, > selects high byte",
+        "eg": [
+            "     DFB $FDF0  ; F0",
+            "     DFB 10,31  ; 0A 1F",
+            "     DB dat1,dat2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "do": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "do if true",
+        "category": "conditionals",
+        "caveat": null,
+        "desc": "if expression is zero, stop generating object code",
+        "eg": [
+            "     DO  0  ; assembly off",
+            "     DO  1  ; assembly on",
+            "     DO  LAB  ; if LAB assemble",
+            "     DO  LAB/2  ; if LAB>1 assemble"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "ds": {
+        "alt": [],
+        "args": "choice($.data,seq($.data,',',$.data),$.new_page,seq($.new_page,',',$.data))",
+        "brief": "define storage",
+        "category": "data storage",
+        "caveat": "using \\ in REL file loads next file at page boundary",
+        "desc": "fill space with uniform bytes",
+        "eg": [
+            "     DS  10  ; zero 10 bytes",
+            "     DS  10,$80  ; put $80 in 10 bytes",
+            "     DS  \\  ; zero to next page",
+            "     DS  \\,$80 ; $80 to next page",
+            "     DS  \\,EXPR ; EXPR to next page"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "dsk": {
+        "alt": [],
+        "args": "$.filename",
+        "brief": "assemble to disk",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "write assembled code directly to named file on disk",
+        "eg": [
+            "     DSK  /vol/prog"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "dum": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "dummy section",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "start a section that produces label values, but no object code. Expression gives the ORG of the section.",
+        "eg": [
+            "     DUM  $1000"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "else": {
+        "alt": [],
+        "args": null,
+        "brief": "invert the last do",
+        "category": "conditionals",
+        "caveat": null,
+        "desc": "invert the last do",
+        "eg": [
+            "     ELSE"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "end": {
+        "alt": [],
+        "args": null,
+        "brief": "end of source",
+        "category": "assembler",
+        "caveat": "labels trailing END are not recognized",
+        "desc": "ignore any trailing source code",
+        "eg": [
+            "     END"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "ent": {
+        "alt": [],
+        "args": "optional(seq($.label_ref,repeat(seq(',',$.label_ref))))",
+        "brief": "entry label",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "defines label as entry for use by the linker, i.e., export the label to another REL module",
+        "eg": [
+            "lab  ENT",
+            "     ENT  lab1,lab2"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "v8x": "/.*/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "eom": {
+        "alt": [
+            "<<<"
+        ],
+        "args": null,
+        "brief": "end macro",
+        "category": "macro",
+        "caveat": null,
+        "desc": "end of a macro definition",
+        "eg": [
+            "     EOM",
+            "     <<<"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "equ": {
+        "alt": [
+            "="
+        ],
+        "args": "$._aexpr",
+        "brief": "equate",
+        "category": "assembler",
+        "caveat": "cannot equate a forward referenced label to zero page",
+        "desc": "equate label with expression",
+        "eg": [
+            "lab  EQU  $1000",
+            "sum  =    lab+1"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "err": {
+        "alt": [],
+        "args": "choice($.ptr_check,seq(optional('\\\\'),$._aexpr))",
+        "brief": "force error",
+        "category": "miscellaneous",
+        "caveat": "Merlin 16+ ignores this unless the expression evaluates to zero page",
+        "desc": "force error",
+        "eg": [
+            "     ERR  */$9600  ; throw if PC reaches $9600",
+            "     ERR  ($300)-$4C  ; throw if $300 does not contain $4C",
+            "     ERR  \\$8FFF  ; throw if REL code reaches $9000"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "exd": {
+        "alt": [],
+        "args": "optional(seq($.label_def,repeat(seq(',',$.label_def))))",
+        "brief": "external label direct page",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "defines label as a direct page external for use by linker, i.e., import the label from another REL module",
+        "eg": [
+            "lab  EXD",
+            "     EXD  lab1,lab2"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "version": [
+            "v16+"
+        ]
+    },
+    "exp": {
+        "alt": [],
+        "args": "alias(choice('ON','OFF','ONLY'),$.enum)",
+        "brief": "expand macros",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "control macro expansion in the listing",
+        "eg": [
+            "     EXP  ON  ; entire macro",
+            "     EXP OFF  ; only call",
+            "     EXP ONLY  ; only inner"
+        ],
+        "enum": [
+            "ON",
+            "OFF",
+            "ONLY"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "ext": {
+        "alt": [],
+        "args": "optional(seq($.label_def,repeat(seq(',',$.label_def))))",
+        "brief": "external label",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "defines label as external for use by linker, i.e., import the label from another REL module",
+        "eg": [
+            "lab  EXT",
+            "     EXT  lab1,lab2"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "v8x": "/.*/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "fin": {
+        "alt": [],
+        "args": null,
+        "brief": "cancel last DO or IF",
+        "category": "conditionals",
+        "caveat": null,
+        "desc": "cancel last DO or IF",
+        "eg": [
+            "     FIN"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "flo": {
+        "alt": [],
+        "args": "$.dstring",
+        "brief": "floating point constant",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "converts a dstring to a 10-byte floating point constant",
+        "eg": [
+            "     FLO  '3.1416'"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v16+",
+            "v32"
+        ]
+    },
+    "fls": {
+        "alt": [],
+        "args": "$._string_operand",
+        "brief": "flashing text",
+        "category": "strings",
+        "caveat": null,
+        "desc": "ASC with text in flashing format",
+        "eg": [
+            "     FLS  \"DANGER\",00"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "hex": {
+        "alt": [],
+        "args": "$.hex_data",
+        "brief": "hex data",
+        "category": "data storage",
+        "caveat": null,
+        "desc": "insert plain hex data",
+        "eg": [
+            "     HEX 0A0B0C0D",
+            "     HEX 0A,0B,0C,0D"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "if": {
+        "alt": [],
+        "args": "choice($.if_char,$.if_mx)",
+        "brief": "test first character or MX, where MX is a two-bit number",
+        "category": "conditionals",
+        "caveat": null,
+        "desc": "if first character of variable matches, or if expression starting with MX is true, then assemble",
+        "eg": [
+            "     IF  A=]1  ; if ]1 starts with A, assemble",
+            "     IF  MX  ; if M or X assemble",
+            "     IF  MX/2  ; if M assemble",
+            "* any expression starting with MX is valid"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/^MX/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "inv": {
+        "alt": [],
+        "args": "$._string_operand",
+        "brief": "inverse text",
+        "category": "strings",
+        "caveat": null,
+        "desc": "ASC with text in inverse format",
+        "eg": [
+            "     INV  \"WARNING\",00"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "kbd": {
+        "alt": [],
+        "args": "optional($.dstring)",
+        "brief": "define label from keyboard",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "define label from keyboard",
+        "eg": [
+            "OUT  KBD  ; OUT is read from keyboard",
+            "OUT  ERR  \"enter: \"  ; with prompt"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "lst": {
+        "alt": [],
+        "args": "optional(choice(alias(choice('ON','OFF','RTN'),$.enum),seq(alias('FILE',$.enum),',',$.filename)))",
+        "brief": "listing control",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "toggle listing, or send to file",
+        "eg": [
+            "     LST  ON  ; start",
+            "     LST  OFF  ; stop",
+            "     LST  RTN  ; restore",
+            "     LST  FILE,list.out  ; to file"
+        ],
+        "enum": [
+            "",
+            "ON",
+            "OFF",
+            "RTN",
+            "FILE,NAME"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v16x": "/FILE/",
+        "v8x": "/RTN|FILE/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "lstdo": {
+        "alt": [],
+        "args": "optional(alias('OFF',$.enum))",
+        "brief": "list inactive areas",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "controls whether to list code where DO OFF is in effect",
+        "eg": [
+            "     LSTDO  ; list DO OFF areas",
+            "     LSTDO  OFF  ; do not list DO OFF areas"
+        ],
+        "enum": [
+            "",
+            "OFF"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "lup": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "begin loop",
+        "category": "miscellaneous",
+        "caveat": "at-symbol is used to form iterated labels",
+        "desc": "begin loop",
+        "eg": [
+            "     LUP  NUM   ; start",
+            "]I   =    ]I+1  ; increment",
+            "IT@  DFB  ]I    ; iterated label",
+            "     --^        ; end loop"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "mac": {
+        "alt": [],
+        "args": null,
+        "brief": "begin macro",
+        "category": "macro",
+        "caveat": "assigned label cannot be referenced except as a macro call",
+        "desc": "start of a macro definition",
+        "eg": [
+            "mymacro  MAC"
+        ],
+        "label": [
+            "var",
+            "global"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "mx": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "long status mode",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "set intended long status of the 65816",
+        "eg": [
+            "     MX  %10  ; M is 8 bit, X is 16 bit"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/.*/",
+        "version": [
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "obj": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "set object",
+        "category": "assembler",
+        "caveat": "accepted only prior to start of code, must be in range $4000-$BFE0",
+        "desc": "set the division line between symbol table and object code areas",
+        "eg": [
+            "     OBJ  $4000",
+            "     OBJ  START"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "org": {
+        "alt": [],
+        "args": "optional($._aexpr)",
+        "brief": "set origin",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "set starting address of assembled code",
+        "eg": [
+            "     ORG  $8000"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "pag": {
+        "alt": [],
+        "args": null,
+        "brief": "send formfeed",
+        "category": "formatting",
+        "caveat": "no effect on screen listing",
+        "desc": "send formfeed to the printer",
+        "eg": [
+            "     PAG"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "pau": {
+        "alt": [],
+        "args": null,
+        "brief": "pause",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "pause listing at this point until keypress",
+        "eg": [
+            "     PAU"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "pmc": {
+        "alt": [
+            ">>>"
+        ],
+        "args": "seq($.macro_ref,optional(seq($._arg_sep,$.arg_macro)))",
+        "brief": "put macro call",
+        "category": "macro",
+        "caveat": "macro label can also go directly in the instruction column",
+        "desc": "call the named macro",
+        "eg": [
+            "     PMC mymac",
+            "     >>> mymac,arg1;arg2"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "put": {
+        "alt": [],
+        "args": "$.filename",
+        "brief": "put text file",
+        "category": "assembler",
+        "caveat": "Not recursive.  Macro definitions not allowed in PUT file.  Prefix `T.` is assumed for DOS 3.3, unless first character is less than `@`. Suffix `.S` is assumed for ProDOS. Slot and drive are not accepted in ProDOS.",
+        "desc": "insert a named file into the assembly source",
+        "eg": [
+            "     PUT  /pre/source"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "rel": {
+        "alt": [],
+        "args": null,
+        "brief": "relocatable code module",
+        "category": "assembler",
+        "caveat": "must occur prior to any labels",
+        "desc": "generate code compatible with relocating linker",
+        "eg": [
+            "     REL"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "rev": {
+        "alt": [],
+        "args": "$.dstring",
+        "brief": "reverse text",
+        "category": "strings",
+        "caveat": null,
+        "desc": "ASC with d-string backwards in memory",
+        "eg": [
+            "     REV  \"racecar\""
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "sav": {
+        "alt": [],
+        "args": "$.filename",
+        "brief": "save object code",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "save object code to named file, starting at last SAV",
+        "eg": [
+            "     SAV  /vol/prog"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "skp": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "skip lines",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "sends a number of carriage returns to the listing",
+        "eg": [
+            "     SKP  5  ; skip 5 lines"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "str": {
+        "alt": [],
+        "args": "$._string_operand",
+        "brief": "ASC with leading length byte",
+        "category": "strings",
+        "caveat": "trailing hex not counted in length",
+        "desc": "ASC with leading length byte",
+        "eg": [
+            "     STR  \"hello\""
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "strl": {
+        "alt": [],
+        "args": "$._string_operand",
+        "brief": "ASC with leading length word",
+        "category": "strings",
+        "caveat": "trailing hex not counted in length",
+        "desc": "ASC with leading length word",
+        "eg": [
+            "     STRL  \"hello\""
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v16+",
+            "v32"
+        ]
+    },
+    "sw": {
+        "alt": [],
+        "args": null,
+        "brief": "enable sweet 16",
+        "category": "miscellaneous",
+        "caveat": "Merlin 8, extension does not support",
+        "desc": "enable sweet 16",
+        "eg": [
+            "     SW"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8"
+        ]
+    },
+    "tr": {
+        "alt": [],
+        "args": "optional(alias(choice('ON','OFF','ADR'),$.enum))",
+        "brief": "truncate control",
+        "category": "formatting",
+        "caveat": null,
+        "desc": "limits the object code printout to three bytes per source line",
+        "eg": [
+            "     TR  ON",
+            "     TR  OFF",
+            "     TR  ADR  ; suppress bank byte"
+        ],
+        "enum": [
+            "ON",
+            "OFF",
+            "ADR"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v8x": "/ADR/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "ttl": {
+        "alt": [],
+        "args": "$.dstring",
+        "brief": "define title heading",
+        "category": "formatting",
+        "caveat": "Merlin 16 only",
+        "desc": "used to change title at top of a page during listing",
+        "eg": [
+            "     TTL  \"Code Section A\""
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+"
+        ]
+    },
+    "typ": {
+        "alt": [],
+        "args": "$._aexpr",
+        "brief": "set ProDOS file type",
+        "category": "assembler",
+        "caveat": null,
+        "desc": "set filetype used by DSK or SAV, 0=none,6=BIN,255=SYS",
+        "eg": [
+            "     TYPE  $06  ; binary file"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "use": {
+        "alt": [],
+        "args": "$.filename",
+        "brief": "use file as library",
+        "category": "assembler",
+        "caveat": "Not recursive.  Prefix `T.` is assumed for DOS 3.3, unless first character is less than `@`. Suffix `.S` is assumed for ProDOS. Slot and drive are not accepted in ProDOS.",
+        "desc": "use text file as macro library",
+        "eg": [
+            "     USE  /lib/macros"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "usr": {
+        "alt": [],
+        "args": "$.literal",
+        "brief": "user defined",
+        "category": "miscellaneous",
+        "caveat": null,
+        "desc": "user defined",
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "var": {
+        "alt": [],
+        "args": "seq($._aexpr,repeat(seq(';',$._aexpr)))",
+        "brief": "setup variables",
+        "category": "assembler",
+        "caveat": "often used just prior to PUT",
+        "desc": "equate several variable labels in one step",
+        "eg": [
+            "     VAR  1;$3;lab"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    },
+    "xc": {
+        "alt": [],
+        "args": "optional(alias('OFF',$.enum))",
+        "brief": "extended opcodes",
+        "category": "miscellaneous",
+        "caveat": "specific behavior depends on Merlin version",
+        "desc": "enable or disable processor instructions",
+        "eg": [
+            "     XC",
+            "     XC  OFF"
+        ],
+        "enum": [
+            "",
+            "OFF"
+        ],
+        "label": [
+            "var",
+            "global",
+            "local"
+        ],
+        "v16x": "/.*/",
+        "v8x": "/.*/",
+        "version": [
+            "v8",
+            "v16",
+            "v16+",
+            "v32"
+        ]
+    }
+}

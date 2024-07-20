@@ -41,7 +41,14 @@ fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
 fn unpack_time(prodos_date_time: [u8;4]) -> Option<chrono::NaiveDateTime> {
     let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
     let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
-    let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
+    let yearmod100 = date >> 9;
+    // Suppose the earliest date stamp we can find originates from the year before
+    // SOS was released, i.e., 1979.  Use this to help decide the century.
+    // This scheme will work until 2079.
+    let year = match yearmod100 < 79 {
+        true => 2000 + yearmod100,
+        false => 1900 + yearmod100
+    };
     let month = (date >> 5) & 15;
     let day = date & 31;
     let hour = (time >> 8) & 255;
@@ -281,9 +288,9 @@ impl Entry {
     pub fn set_aux(&mut self,aux: u16) {
         self.aux_type = u16::to_le_bytes(aux);
     }
-    // pub fn ftype(&self) -> u8 {
-    //     return self.file_type;
-    // }
+    pub fn ftype(&self) -> u8 {
+        return self.file_type;
+    }
     pub fn set_ftype(&mut self,typ: u8) {
         self.file_type = typ;
     }
@@ -405,6 +412,15 @@ impl Entry {
         meta["system"] = json::JsonValue::Boolean(self.file_type==FileType::System as u8);
         meta["blocks"] = json::JsonValue::Number(u16::from_le_bytes(self.blocks_used).into());
         meta
+    }
+    pub fn universal_row(&self) -> String  {
+        let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
+        let type_as_hex = "$".to_string()+ &hex::encode_upper(vec![self.file_type]);
+        super::super::universal_row(
+            match typ_map.get(&self.file_type) { Some(s) => *s, _ => &type_as_hex },
+            u16::from_le_bytes(self.blocks_used) as usize,
+            &self.name()
+        )
     }
 }
 

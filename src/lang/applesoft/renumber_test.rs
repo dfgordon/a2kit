@@ -1,8 +1,5 @@
-#[cfg(test)]
 use super::renumber::Renumberer;
 
-
-#[cfg(test)]
 fn test_renumber(test_code: &str,expected: &str,beg: usize,end: usize,first: usize,step: usize,should_fail: bool) {
 	let mut renumberer = Renumberer::new();
 	let result = renumberer.renumber(test_code, beg, end, first, step);
@@ -12,7 +9,22 @@ fn test_renumber(test_code: &str,expected: &str,beg: usize,end: usize,first: usi
 			assert!(false);
 		},
 		false => if let Ok(actual) = renumberer.renumber(test_code, beg, end, first, step) {
-			assert_eq!(actual,String::from(expected)+"\n");
+			assert_eq!(actual,String::from(expected));
+		}
+	}
+}
+
+fn test_move(test_code: &str,expected: &str,beg: usize,end: usize,first: usize,step: usize,should_fail: bool) {
+	let mut renumberer = Renumberer::new();
+	renumberer.set_flags(1);
+	let result = renumberer.renumber(test_code, beg, end, first, step);
+	match should_fail {
+		true => if let Ok(_actual) = result {
+			// if renumbering should fail, but instead works, the test has failed
+			assert!(false);
+		},
+		false => if let Ok(actual) = renumberer.renumber(test_code, beg, end, first, step) {
+			assert_eq!(actual,String::from(expected) + "\n");
 		}
 	}
 }
@@ -56,5 +68,32 @@ mod invalid_cases {
 		let test_code = "10 HOME\n20 PRINT X\n30 END";
 		let expected = "";
 		super::test_renumber(test_code, expected,0,usize::MAX,63800,100,true);
+	}
+    #[test]
+	fn move_not_allowed() {
+		let test_code = "0 HOME\n20 PRINT X\n30 END";
+		let expected = "30 END\n40 HOME\n50 PRINT X";
+		super::test_renumber(test_code, expected,0,30,40,10,true);
+	}
+}
+
+mod valid_moves {
+    #[test]
+	fn with_on_x_goto() {
+		let test_code = "0 HOME\n20 GOTO 30\n30 END\n40 ON X GOTO 0,20,30";
+		let expected = "40 ON X GOTO 100,101,102\n100 HOME\n101 GOTO 102\n102 END";
+		super::test_move(test_code, expected,0,40,100,1,false);
+	}
+    #[test]
+	fn simple_move() {
+		let test_code = "0 HOME\n20 PRINT X\n30 END";
+		let expected = "30 END\n40 HOME\n50 PRINT X";
+		super::test_move(test_code, expected,0,30,40,10,false);
+	}
+    #[test]
+	fn inner_move() {
+		let test_code = "10 HOME\n20 INPUT X\n30 PRINT X\n40 END";
+		let expected = "10 HOME\n40 END\n1000 INPUT X\n1002 PRINT X";
+		super::test_move(test_code, expected,20,40,1000,2,false);
 	}
 }

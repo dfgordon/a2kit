@@ -1,9 +1,6 @@
-#[cfg(test)]
 use super::tokenizer::Tokenizer;
-#[cfg(test)]
 use hex;
 
-#[cfg(test)]
 fn test_detokenizer(hex_tokens: &str, expected: &str) {
     let tokens = hex::decode(hex_tokens).expect("hex error");
     let tokenizer = Tokenizer::new();

@@ -1,8 +1,6 @@
-#[cfg(test)]
 use super::minifier;
 
 
-#[cfg(test)]
 fn test_minify(test_code: &str,expected: &str,level: usize) {
 	let mut minifier = minifier::Minifier::new();
 	minifier.set_level(level);

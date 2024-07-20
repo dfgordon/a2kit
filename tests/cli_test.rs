@@ -9,13 +9,13 @@ type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 #[test]
 fn parse_simple_file() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
-    if let Ok(fd) = File::open(Path::new("tests").join("test.bas")) {
+    if let Ok(fd) = File::open(Path::new("tests").join("applesoft").join("test.bas")) {
         cmd.arg("verify")
             .arg("-t").arg("atxt")
             .stdin(Stdio::from(fd))
             .assert()
             .success()
-            .stderr(predicate::str::contains("Syntax OK"));
+            .stderr(predicate::str::contains("Passing"));
     }
     Ok(())
 }
@@ -23,7 +23,7 @@ fn parse_simple_file() -> STDRESULT {
 #[test]
 fn invalid_file_type() -> STDRESULT {
     let mut cmd = Command::cargo_bin("a2kit")?;
-    if let Ok(fd) = File::open(Path::new("tests").join("test.bas")) {
+    if let Ok(fd) = File::open(Path::new("tests").join("applesoft").join("test.bas")) {
         cmd.arg("verify")
             .arg("-t").arg("atxt1")
             .stdin(Stdio::from(fd))

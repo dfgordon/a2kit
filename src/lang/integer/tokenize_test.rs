@@ -194,3 +194,18 @@ mod escapes {
 		super::test_tokenizer(test_code, expected);
 	}
 }
+
+mod commands {
+	#[test]
+	fn list() {
+		let test_code = "10 list: list 10: list 10,20\n";
+		let expected = "130A00760374B10A000374B10A0075B2140001";
+		super::test_tokenizer(test_code, expected);
+	}
+	#[test]
+	fn del() {
+		let test_code = "420 text: call -936: call 672: del 90: end\n";
+		let expected = "17A4014B034D36B9A803034DB6A0020309B95A00035101";
+		super::test_tokenizer(test_code, expected);
+	}
+}

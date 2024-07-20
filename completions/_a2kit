@@ -163,6 +163,12 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 '-t+[type of the file]:TYPE:(atxt itxt mtxt)' \
 '--type+[type of the file]:TYPE:(atxt itxt mtxt)' \
+'-c+[modify diagnostic configuration]:JSON: ' \
+'--config+[modify diagnostic configuration]:JSON: ' \
+'-w+[workspace directory]:PATH: ' \
+'--workspace+[workspace directory]:PATH: ' \
+'-s[write S-expressions to stderr]' \
+'--sexpr[write S-expressions to stderr]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -179,8 +185,8 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (renumber)
 _arguments "${_arguments_options[@]}" \
-'-t+[type of the file]:TYPE:(atxt)' \
-'--type+[type of the file]:TYPE:(atxt)' \
+'-t+[type of the file]:TYPE:(atxt itxt)' \
+'--type+[type of the file]:TYPE:(atxt itxt)' \
 '-b+[lowest number to renumber]:NUM: ' \
 '--beg+[lowest number to renumber]:NUM: ' \
 '-e+[highest number to renumber plus 1]:NUM: ' \
@@ -189,6 +195,8 @@ _arguments "${_arguments_options[@]}" \
 '--first+[first number]:NUM: ' \
 '-s+[step between numbers]:NUM: ' \
 '--step+[step between numbers]:NUM: ' \
+'-r[allow reordering of lines]' \
+'--reorder[allow reordering of lines]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -197,8 +205,8 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
 '-l+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
@@ -212,8 +220,8 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
 '-a+[address of binary file]:ADDRESS: ' \
@@ -228,6 +236,7 @@ _arguments "${_arguments_options[@]}" \
 '--file+[path of directory inside disk image]:PATH: ' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
+'--generic[use generic output format]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -238,6 +247,7 @@ _arguments "${_arguments_options[@]}" \
 '--file+[path of directory inside disk image]:PATH: ' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
+'--generic[use generic output format]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -248,6 +258,7 @@ _arguments "${_arguments_options[@]}" \
 '--file+[path of directory inside disk image]:PATH: ' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
+'--generic[use generic output format]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -258,6 +269,7 @@ _arguments "${_arguments_options[@]}" \
 '--file+[path of directory inside disk image]:PATH: ' \
 '-d+[path to disk image]:PATH:_files' \
 '--dimg+[path to disk image]:PATH:_files' \
+'--generic[use generic output format]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

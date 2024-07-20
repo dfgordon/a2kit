@@ -50,7 +50,7 @@ pub fn pack_tenths(time: Option<chrono::NaiveDateTime>) -> u8 {
         Some(t) => t,
         _ => chrono::Local::now().naive_local()
     };
-    (now.timestamp_subsec_millis() / 100) as u8 + 10*(now.second() % 2) as u8
+    (now.and_utc().timestamp_subsec_millis() / 100) as u8 + 10*(now.second() % 2) as u8
 }
 
 pub fn unpack_date(fat_date: [u8;2]) -> Option<chrono::NaiveDate> {

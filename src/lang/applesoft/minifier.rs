@@ -5,7 +5,7 @@ use log::error;
 use tree_sitter;
 use tree_sitter_applesoft;
 use crate::lang;
-use crate::lang::Visit;
+use crate::lang::{Navigate,Navigation};
 use super::minify_guards;
 use crate::DYNERR;
 
@@ -24,11 +24,11 @@ pub struct Minifier
 	flags: u64
 }
 
-impl lang::Visit for Minifier
+impl Navigate for Minifier
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> Result<Navigation,DYNERR>
     {
-		let node_str: String = lang::node_text(curs.node(),&self.line);
+		let node_str: String = lang::node_text(&curs.node(),&self.line);
 
 		// Shorten variable names
 		if curs.node().kind().starts_with("name_") {
@@ -53,7 +53,7 @@ impl lang::Visit for Minifier
 			} else {
 				self.minified_line += &txt;
 			}
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(Navigation::GotoSibling);
 		}
 
 		// REM and DATA and ampersand
@@ -63,22 +63,22 @@ impl lang::Visit for Minifier
 					if let Some(prev) = curs.node().prev_named_sibling() {
 						if prev.kind()=="statement" {
 							// if there is a previous statement we can drop the whole comment
-							return lang::WalkerChoice::GotoSibling;
+							return Ok(Navigation::GotoSibling);
 						}
 					}
 					// if no previous statement we have to keep the token
 					self.minified_line += "REM";
-					return lang::WalkerChoice::GotoSibling;
+					return Ok(Navigation::GotoSibling);
 				}
 				// for DATA always keep everything
 				if tok.kind()=="tok_data" {
 					self.minified_line += &node_str;
-					return lang::WalkerChoice::GotoSibling;
+					return Ok(Navigation::GotoSibling);
 				}
 				// for ampersand keep everything unless flag is set
 				if tok.kind()=="tok_amp" && (self.flags & FLAG_AMP_VARS == 0) {
 					self.minified_line += &node_str;
-					return lang::WalkerChoice::GotoSibling;
+					return Ok(Navigation::GotoSibling);
 				}
 			}
 		}
@@ -90,7 +90,7 @@ impl lang::Visit for Minifier
 			while curr.kind()!="line" {
 				if curr.next_sibling()!=None {
 					self.minified_line += node_str.trim_start();
-					return lang::WalkerChoice::GotoSibling;
+					return Ok(Navigation::GotoSibling);
 				}
 				if curr.parent()==None {
 					break;
@@ -102,17 +102,17 @@ impl lang::Visit for Minifier
 			} else {
 				self.minified_line += node_str.trim_start();
 			}
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(Navigation::GotoSibling);
 		}
 
 		// Extraneous separators
 		if !curs.node().is_named() && node_str==":" {
 			if let Some(next) = curs.node().next_sibling() {
-				if !next.is_named() && lang::node_text(next, &self.line)==":" {
-					return lang::WalkerChoice::GotoSibling; // trailing node is another separator
+				if !next.is_named() && lang::node_text(&next, &self.line)==":" {
+					return Ok(Navigation::GotoSibling); // trailing node is another separator
 				}
 			} else {
-				return lang::WalkerChoice::GotoSibling; // there is no trailing node
+				return Ok(Navigation::GotoSibling); // there is no trailing node
 			}
 		}
 
@@ -122,10 +122,10 @@ impl lang::Visit for Minifier
 			if curs.node().kind()=="tok_at" {
 				self.minified_line += " ";
 			}
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(Navigation::GotoSibling);
 		}
 
-		return lang::WalkerChoice::GotoChild;
+		return Ok(Navigation::GotoChild);
     }
 }
 
@@ -185,7 +185,7 @@ impl Minifier
 		}
 		self.minified_program = String::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.len()==0 {
 				continue;
@@ -195,7 +195,7 @@ impl Minifier
 				self.line = self.minified_line.clone();
 				self.minified_line = String::new();
 				let tree = parser.parse(&self.line,None).expect("Error parsing file");
-				self.walk(&tree);
+				self.walk(&tree)?;
 				self.minified_line.push('\n');
 				if self.minified_line==self.line {
 					break;

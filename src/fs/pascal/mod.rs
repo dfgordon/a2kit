@@ -21,6 +21,8 @@ use crate::img;
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
 
+pub const FS_NAME: &str = "a2 pascal";
+
 fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
     let now = match time {
         Some(t) => t,
@@ -146,7 +148,7 @@ impl Disk
     fn new_fimg(chunk_len: usize) -> super::FileImage {
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from("a2 pascal"),
+            file_system: String::from(FS_NAME),
             fs_type: vec![0;2],
             aux: vec![],
             eof: vec![0;4],
@@ -527,7 +529,7 @@ impl super::DiskFS for Disk {
         let dir = self.get_directory()?;
         let free_block_tuple = self.num_free_blocks()?;
         Ok(super::Stat {
-            fs_name: "a2 pascal".to_string(),
+            fs_name: FS_NAME.to_string(),
             label: vol_name_to_string(dir.header.name,dir.header.name_len),
             users: Vec::new(),
             block_size: BLOCK_SIZE,
@@ -570,12 +572,36 @@ impl super::DiskFS for Disk {
         println!();
         Ok(())
     }
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
+        if path!="/" && path!="" {
+            return Err(Box::new(Error::NoFile));
+        }
+        let mut ans = Vec::new();
+        let typ_map: HashMap<u8,&str> = HashMap::from(TYPE_MAP_DISP);
+        let dir = self.get_directory()?;
+        let total = dir.total_blocks();
+        for entry in dir.entries {
+            let beg = u16::from_le_bytes(entry.begin_block);
+            let end = u16::from_le_bytes(entry.end_block);
+            if beg!=0 && end>beg && (end as usize)<total {
+                let name = file_name_to_string(entry.name,entry.name_len);
+                let blocks = end - beg;
+                let type_as_hex = "$".to_string()+ &hex::encode_upper(vec![entry.file_type[0]]);
+                let typ = match typ_map.get(&entry.file_type[0]) {
+                    Some(s) => s,
+                    None => type_as_hex.as_str()
+                };
+                ans.push(super::universal_row(typ,blocks as usize,&name));
+            }
+        }
+        Ok(ans)
+    }
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
         let dir = self.get_directory()?;
         let total = dir.total_blocks();
         const TIME_FMT: &str = "%Y/%m/%d %H:%M";
         let mut tree = json::JsonValue::new_object();
-        tree["file_system"] = json::JsonValue::String("a2 pascal".to_string());
+        tree["file_system"] = json::JsonValue::String(FS_NAME.to_string());
         tree["files"] = json::JsonValue::new_object();
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vol_name_to_string(dir.header.name, dir.header.name_len));
@@ -670,6 +696,13 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
+    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {        
+        if &fimg.file_system != FS_NAME {
+            return Err(Box::new(Error::BadFormat));
+        }
+        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        Ok(fimg.sequence_limited(eof))
+    }
     fn read_raw(&mut self,name: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.read_file(&name) {
             Ok(fimg) => {
@@ -747,7 +780,7 @@ impl super::DiskFS for Disk {
         self.read_file(name)
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!="a2 pascal" {
+        if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to a2 pascal",fimg.file_system);
             return Err(Box::new(Error::DevErr));
         }

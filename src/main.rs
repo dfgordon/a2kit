@@ -16,6 +16,9 @@ use a2kit::lang;
 use a2kit::lang::applesoft;
 use a2kit::lang::integer;
 use a2kit::lang::merlin;
+use a2kit::lang::server::Analysis;
+use colored::Colorize;
+use log::warn;
 
 mod cli;
 
@@ -44,7 +47,21 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             _ => "/"
         };
         return match a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
-            Ok(mut disk) => disk.catalog_to_stdout(&path_in_img),
+            Ok(mut disk) => {
+                if cmd.get_flag("generic") {
+                    match disk.catalog_to_vec(&path_in_img) {
+                        Ok(rows) => {
+                            for row in rows {
+                                println!("{}",row);
+                            }
+                            Ok(())
+                        },
+                        Err(e) => Err(e)
+                    }
+                } else {
+                    disk.catalog_to_stdout(&path_in_img)
+                }
+            },
             Err(e) => Err(e)
         };
     }
@@ -89,24 +106,43 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     // Verify
 
     if let Some(cmd) = matches.subcommand_matches("verify") {
-        if let Ok(typ) = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH)) {
-            let res = match typ
-            {
-                ItemType::ApplesoftText => lang::verify_stdin(tree_sitter_applesoft::language(),"]"),
-                ItemType::IntegerText => lang::verify_stdin(tree_sitter_integerbasic::language(),">"),
-                ItemType::MerlinText => lang::verify_stdin(tree_sitter_merlin6502::language(),":"),
-                _ => return Err(Box::new(CommandError::UnsupportedItemType))
-            };
-            match res {
-                Ok(res) => {
-                    println!("{}",res.0);
-                    eprintln!("{}",res.1);
-                    return Ok(());
-                },
-                Err(e) => {
-                    return Err(e);
-                }
+        let mut analyzer: Box<dyn Analysis> = match ItemType::from_str(cmd.get_one::<String>("type").expect(RCH)) {
+            Ok(ItemType::ApplesoftText) => Box::new(lang::applesoft::diagnostics::Analyzer::new()),
+            Ok(ItemType::IntegerText) => Box::new(lang::integer::diagnostics::Analyzer::new()),
+            Ok(ItemType::MerlinText) => Box::new(lang::merlin::diagnostics::Analyzer::new()),
+            _ => panic!("not handled")
+        };
+        if cmd.value_source("config").unwrap()==ValueSource::CommandLine {
+            analyzer.update_config(cmd.get_one::<String>("config").unwrap())?;
+        }
+        let doc = lang::Document::from_string(analyzer.read_stdin(),0);
+        if let Some(ws_path) = cmd.get_one::<String>("workspace") {
+            match lsp_types::Url::from_directory_path(ws_path) {
+                Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
+                Err(_) => return Err(Box::new(lang::Error::PathNotFound))
             }
+        }
+        if cmd.get_flag("sexpr") {
+            analyzer.eprint_lines_sexpr(&doc.text);
+        }
+        analyzer.analyze(&doc)?;
+        for diag in analyzer.get_diags(&doc) {
+            lang::eprint_diagnostic(&diag,&doc.text);
+        }
+        let [err,warn,_info] = analyzer.err_warn_info_counts();
+        if warn > 0 {
+            eprintln!("! {} {}",warn.to_string().bright_yellow(),"warnings".bright_yellow());
+        }
+        if err==0 {
+            eprintln!("\u{2713} {}","Passing".green());
+            if !atty::is(atty::Stream::Stdout) {
+                // if not the console, pipe the code to the next node
+                println!("{}",doc.text);
+            }
+            return Ok(());
+        } else {
+            eprintln!("\u{2717} {} {}",err.to_string().red(),"errors".red());
+            return Err(Box::new(lang::Error::Syntax));
         }
     }
 
@@ -161,6 +197,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         let end = usize::from_str_radix(cmd.get_one::<String>("end").unwrap(),10)?;
         let first = usize::from_str_radix(cmd.get_one::<String>("first").unwrap(),10)?;
         let step = usize::from_str_radix(cmd.get_one::<String>("step").unwrap(),10)?;
+        let reorder = cmd.get_flag("reorder");
         let mut program = String::new();
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
@@ -178,10 +215,20 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             Ok(ItemType::ApplesoftText) => {
                 lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 let mut renumberer = applesoft::renumber::Renumberer::new();
-                let object = renumberer.renumber(&program,beg,end,first,step)?;
-                println!("{}",&object);
+                renumberer.set_flags(match reorder {true => 1, false => 0});
+                let new_prog = renumberer.renumber(&program,beg,end,first,step)?;
+                println!("{}",&new_prog);
                 Ok(())
             },
+            Ok(ItemType::IntegerText) => {
+                lang::verify_str(tree_sitter_integerbasic::language(), &program)?;
+                let mut renumberer = integer::renumber::Renumberer::new();
+                renumberer.set_flags(match reorder {true => 1, false => 0});
+                let new_prog = renumberer.renumber(&program,beg,end,first,step)?;
+                warn!("line number expressions must be manually adjusted");
+                println!("{}",&new_prog);
+                Ok(())
+            }
             _ => Err(Box::new(CommandError::UnsupportedItemType))
         };
     }

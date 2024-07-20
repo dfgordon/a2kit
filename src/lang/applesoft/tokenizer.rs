@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use tree_sitter;
 use tree_sitter_applesoft;
 use crate::lang;
-use crate::lang::Visit;
+use crate::lang::Navigate;
+use super::settings;
 use super::token_maps;
 use crate::{STDRESULT,DYNERR};
 use log::error;
@@ -18,51 +19,50 @@ pub struct Tokenizer
     tokenized_line: Vec<u8>,
     curr_addr: u16,
 	tok_map: HashMap<&'static str,u8>,
-	detok_map: HashMap<u8,&'static str>
+	detok_map: HashMap<u8,&'static str>,
+	config: settings::Settings
 }
 
-impl lang::Visit for Tokenizer
+impl lang::Navigate for Tokenizer
 {
-    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> lang::WalkerChoice
+    fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> Result<lang::Navigation,DYNERR>
     {
 		// At this point we assume we have ASCII in self.line
 
-		let rng = std::ops::Range {start: curs.node().range().start_point.column, end: curs.node().range().end_point.column};
-		let node_str: String = String::from(&self.line[rng]);
+		let node_str = lang::node_text(&curs.node(), &self.line);
+		let cleanupper = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
 		// Primary line number
 		if curs.node().kind()=="linenum" {
 			if let Some(parent) = curs.node().parent() {
 				if parent.kind()=="line" {
-					if let Ok(num) = u16::from_str_radix(&node_str.replace(" ",""),10) {
+					if let Some(num) = lang::node_integer::<u16>(&curs.node(), &self.line) {
 						let bytes = u16::to_le_bytes(num);
 						self.tokenized_line.push(bytes[0]);
 						self.tokenized_line.push(bytes[1]);
-						return lang::WalkerChoice::GotoSibling;
+						return Ok(lang::Navigation::GotoSibling);
 					}
-					panic!("linenum node did not parse as a number")
+					return Err(Box::new(lang::Error::Tokenization));
 				}
 			}
 		}
 		// Anonymous nodes
 		if !curs.node().is_named() {
-			let mut cleaned = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
-			self.tokenized_line.append(&mut cleaned);
-			return lang::WalkerChoice::GotoSibling;
+			self.tokenized_line.append(&mut cleanupper.clone());
+			return Ok(lang::Navigation::GotoSibling);
 		}
 		// Negative ASCII tokens (except DATA will be intercepted by parent statement)
 		if let Some(tok) = self.tok_map.get(curs.node().kind()) {
 			self.tokenized_line.push(*tok);
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(lang::Navigation::GotoSibling);
 		}
 		// Required upper case
 		if curs.node().kind().starts_with("name_") || curs.node().kind()=="real" {
 			if curs.node().kind()=="name_amp" && curs.node().child_count()>0 {
 				// handle overloaded tokens
-				return lang::WalkerChoice::GotoChild;
+				return Ok(lang::Navigation::GotoChild);
 			}
-			let mut cleaned = node_str.to_uppercase().replace(" ","").as_bytes().to_vec();
-			self.tokenized_line.append(&mut cleaned);
-			return lang::WalkerChoice::GotoSibling;
+			self.tokenized_line.append(&mut cleanupper.clone());
+			return Ok(lang::Navigation::GotoSibling);
 		}
 		// Persistent spaces and escapes
 		if curs.node().kind()=="statement" {
@@ -74,27 +74,27 @@ impl lang::Visit for Tokenizer
 					let items: String = String::from(&self.line[std::ops::Range {start: tok.end_byte(),end: curs.node().end_byte()}]);
 					self.tokenized_line.push(*self.tok_map.get("tok_data").unwrap());
 					self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&items,false));
-					return lang::WalkerChoice::GotoSibling;
+					return Ok(lang::Navigation::GotoSibling);
 				}
 			}
 		}
 		if curs.node().kind()=="str" {
 			self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&node_str, true));
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(lang::Navigation::GotoSibling);
 		}
 		if curs.node().kind()=="comment_text" {
 			self.tokenized_line.append(&mut Self::stringlike_node_to_bytes(&node_str, false));
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(lang::Navigation::GotoSibling);
 		}
 
 		// If none of the above, look for terminal nodes and strip spaces
 		if curs.node().named_child_count()==0 {
 			let mut cleaned = node_str.replace(" ","").as_bytes().to_vec();
 			self.tokenized_line.append(&mut cleaned);
-			return lang::WalkerChoice::GotoSibling;
+			return Ok(lang::Navigation::GotoSibling);
 		}
 
-		return lang::WalkerChoice::GotoChild;
+		return Ok(lang::Navigation::GotoChild);
     }
 }
 
@@ -109,8 +109,12 @@ impl Tokenizer
             tokenized_program: Vec::<u8>::new(),
             curr_addr: 2049,
 			tok_map: HashMap::from(token_maps::TOK_MAP),
-			detok_map: HashMap::from(token_maps::DETOK_MAP)
+			detok_map: HashMap::from(token_maps::DETOK_MAP),
+			config: settings::Settings::new()
          }
+    }
+    pub fn set_config(&mut self,config: settings::Settings) {
+        self.config = config;
     }
 	fn stringlike_node_to_bytes(txt: &str,trim: bool) -> Vec<u8> {
 		let ans = match trim { true => txt.trim_start().to_string(), false => txt.to_string() };
@@ -118,8 +122,10 @@ impl Tokenizer
 	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();
-		let tree = parser.parse(&self.line,None).expect("Error parsing file");
-		self.walk(&tree);
+		match parser.parse(&self.line,None) {
+			Some(tree) => self.walk(&tree)?,
+			None => return Err(Box::new(lang::Error::Tokenization))
+		}
 		let next_addr = self.curr_addr + self.tokenized_line.len() as u16 + 3;
 		let by: [u8;2] = u16::to_le_bytes(next_addr);
 		self.tokenized_line.insert(0,by[0]);
@@ -133,7 +139,7 @@ impl Tokenizer
 		self.curr_addr = start_addr;
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.trim_start().len()==0 {
 				continue;
@@ -147,13 +153,14 @@ impl Tokenizer
 		Ok(self.tokenized_program.clone())
 	}
 	/// Detokenize from byte array into a UTF8 string
-	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
+	pub fn detokenize(&self,img: &[u8]) -> Result<String,DYNERR> {
 		const DATA_TOK: u8 = 131;
 		const REM_TOK: u8 = 178;
 		const QUOTE: u8 = 34;
 		let mut addr = 0;
 		let mut code = String::new();
-		while addr < 65536 && addr+1<img.len() && (img[addr]!=0 || img[addr+1]!=0) {
+		let mut line_count = 0;
+		while addr < 65533 && addr+1<img.len() && (img[addr]!=0 || img[addr+1]!=0) && line_count < self.config.detokenizer.max_lines {
 			addr += 2; //skip link address
 			if addr+1 >= img.len() {
 				error!("program ended before end of program marker");
@@ -162,10 +169,12 @@ impl Tokenizer
 			let line_num: u16 = img[addr] as u16 + img[addr+1] as u16*256;
 			code += &(u16::to_string(&line_num) + " ");
 			addr += 2;
-			while addr < img.len() && img[addr]!=0 {
+			let line_addr = addr;
+			while addr < img.len() && img[addr]!=0 && addr < line_addr + self.config.detokenizer.max_line_length as usize {
 				if img[addr]==QUOTE {
 					code += "\"";
-					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[34,0], "str");
+					let (escaped,naddr) = super::bytes_to_escaped_string_ex(img, addr+1,
+						&self.config.detokenizer.escapes, &[34,0], "str");
 					code += &escaped;
 					addr = naddr;
 					if img[addr]==QUOTE {
@@ -174,12 +183,14 @@ impl Tokenizer
 					}
 				} else if img[addr]==REM_TOK {
 					code += " REM ";
-					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[0], "tok_rem");
+					let (escaped,naddr) = super::bytes_to_escaped_string_ex(img, addr+1,
+						&self.config.detokenizer.escapes, &[0], "tok_rem");
 					code += &escaped;
 					addr = naddr;
 				} else if img[addr]==DATA_TOK {
 					code += " DATA ";
-					let (escaped,naddr) = super::super::bytes_to_escaped_string(img, addr+1, &[58,0], "tok_data");
+					let (escaped,naddr) = super::bytes_to_escaped_string_ex(img, addr+1,
+						&self.config.detokenizer.escapes, &[58,0], "tok_data");
 					code += &escaped;
 					addr = naddr;
 				} else if img[addr]>127 {
@@ -195,9 +206,19 @@ impl Tokenizer
 					addr += 1;
 				}
 			}
+			line_count += 1;
 			code += "\n";
 			addr += 1;
 		}
 		return Ok(code);
+	}
+	/// Given a full RAM image, find the Applesoft program and detokenize it
+	pub fn detokenize_from_ram(&self,img: &[u8]) -> Result<String,DYNERR> {
+		if img.len() < 0xc000 {
+			error!("RAM image too small {}",img.len());
+			return Err(Box::new(lang::Error::Detokenization));
+		}
+		let addr = img[103] as usize + img[104] as usize * 256;
+		self.detokenize(&img[addr..])
 	}
 }

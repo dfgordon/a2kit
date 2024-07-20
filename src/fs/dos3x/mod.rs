@@ -27,6 +27,8 @@ use crate::commands::ItemType;
 use crate::lang::applesoft;
 use crate::{STDRESULT,DYNERR};
 
+pub const FS_NAME: &str = "a2 dos";
+
 /// This will accept lower case; case will be automatically converted as appropriate
 fn is_name_valid(s: &str) -> bool {
     for char in s.chars() {
@@ -77,7 +79,7 @@ impl Disk
     fn new_fimg(chunk_len: usize) -> super::FileImage {
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from("a2 dos"),
+            file_system: String::from(FS_NAME),
             fs_type: vec![0],
             aux: vec![],
             eof: vec![],
@@ -689,7 +691,7 @@ impl super::DiskFS for Disk {
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let vtoc = &self.get_vtoc_constants()?;
         Ok(super::Stat {
-            fs_name: "a2 dos".to_string(),
+            fs_name: FS_NAME.to_string(),
             label: vtoc.vol.to_string(),
             users: Vec::new(),
             block_size: 256,
@@ -731,12 +733,45 @@ impl super::DiskFS for Disk {
         error!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
+        if path!="/" && path!="" {
+            return Err(Box::new(Error::VolumeMismatch));
+        }
+        let vconst = self.get_vtoc_constants()?;
+        let typ_map: HashMap<u8,&str> = HashMap::from([(0,"TXT"),(1,"INT"),(2,"BAS"),(4,"BIN"),(128,"TXT"),(129,"INT"),(130,"BAS"),(132,"BIN")]);
+        let mut ts = [vconst.track1,vconst.sector1];
+        let mut buf = vec![0;256];
+        let mut ans = Vec::new();
+        for _try in 0..types::MAX_DIRECTORY_REPS {
+            Self::verify_ts(&vconst,ts[0], ts[1])?;
+            self.read_sector(&mut buf, ts, 0)?;
+            let dir = DirectorySector::from_bytes(&buf);
+            for entry in dir.entries.as_ref() {
+                if entry.tsl_track>0 && entry.tsl_track<255 {
+                    let name = file_name_to_string(entry.name);
+                    let sectors = u16::from_le_bytes(entry.sectors);
+                    let type_as_hex = "$".to_string()+ &hex::encode_upper(vec![entry.file_type]);
+                    let typ = match typ_map.get(&entry.file_type) {
+                        Some(s) => s,
+                        None => type_as_hex.as_str()
+                    };
+                    ans.push(super::universal_row(typ,sectors as usize,&name));
+                }
+            }
+            ts = [dir.next_track,dir.next_sector];
+            if ts == [0,0] {
+                return Ok(ans);
+            }
+        }
+        error!("the disk image directory seems to be damaged");
+        return Err(Box::new(Error::IOError));
+    }
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
         let vconst = self.get_vtoc_constants()?;
         let mut ts = [vconst.track1,vconst.sector1];
         let mut buf = vec![0;256];
         let mut tree = json::JsonValue::new_object();
-        tree["file_system"] = json::JsonValue::String("a2 dos".to_string());
+        tree["file_system"] = json::JsonValue::String(FS_NAME.to_string());
         tree["files"] = json::JsonValue::new_object();
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vconst.vol.to_string());
@@ -893,6 +928,43 @@ impl super::DiskFS for Disk {
         fimg.fs_type = vec![fs_type as u8];
         return self.write_file(name, &fimg);
     }
+    fn fimg_load_address(&self,fimg: &super::FileImage) -> u16 {
+        match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
+            Some(FileType::Integer) => 0,
+            Some(FileType::Applesoft) => {
+                match fimg.chunks.get(&0) {
+                    Some(chunk) => match chunk.len()>2 {
+                        true => applesoft::deduce_address(&chunk[2..]),
+                        false => 0
+                    },
+                    None => 0
+                }
+            },
+            Some(FileType::Binary) => {
+                match fimg.chunks.get(&0) {
+                    Some(chunk) => match chunk.len()>2 {
+                        true => u16::from_le_bytes([chunk[0],chunk[1]]),
+                        false => 0
+                    },
+                    None => 0
+                }
+            },
+            _ => 0
+        }
+    }
+    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
+        if &fimg.file_system != FS_NAME {
+            return Err(Box::new(Error::VolumeMismatch));
+        }
+        let seq = fimg.sequence();
+        match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
+            Some(FileType::Applesoft) => Ok(types::TokenizedProgram::from_bytes(&seq).program),
+            Some(FileType::Integer) => Ok(types::TokenizedProgram::from_bytes(&seq).program),
+            Some(FileType::Text) => Ok(seq),
+            Some(FileType::Binary) => Ok(types::BinaryData::from_bytes(&seq).data),
+            None => Ok(seq)
+        }
+    }
     fn read_raw(&mut self,name: &str,_trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         // eof is not generally available in DOS 3.x
         match self.read_file(name) {
@@ -972,7 +1044,7 @@ impl super::DiskFS for Disk {
         return self.read_file(name);
     }
     fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!="a2 dos" {
+        if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to a2 dos",fimg.file_system);
             return Err(Box::new(Error::IOError));
         }

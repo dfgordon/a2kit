@@ -53,6 +53,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     ];
     let get_put_types = [
         "any",
+        "auto",
         "bin",
         "txt",
         "raw",
@@ -199,6 +200,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true)
                     .value_parser(["atxt", "itxt", "mtxt"]),
             )
+            .arg(
+                arg!(-s --sexpr "write S-expressions to stderr").action(ArgAction::SetTrue)
+            )
+            .arg(
+                arg!(-c --config <JSON> "modify diagnostic configuration")
+                    .required(false)
+                    .default_value(""),
+            )
+            .arg(
+                arg!(-w --workspace <PATH> "workspace directory")
+                    .required(false)
+            )
             .about("read from stdin and error check"),
     );
     main_cmd = main_cmd.subcommand(
@@ -227,12 +240,13 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(
                 arg!(-t --type <TYPE> "type of the file")
                     .required(true)
-                    .value_parser(["atxt"]),
+                    .value_parser(["atxt","itxt"]),
             )
             .arg(arg!(-b --beg <NUM> "lowest number to renumber").required(true))
             .arg(arg!(-e --end <NUM> "highest number to renumber plus 1").required(true))
             .arg(arg!(-f --first <NUM> "first number").required(true))
             .arg(arg!(-s --step <NUM> "step between numbers").required(true))
+            .arg(arg!(-r --reorder "allow reordering of lines").action(ArgAction::SetTrue))
             .about("renumber BASIC program lines"),
     );
     main_cmd = main_cmd.subcommand(
@@ -284,6 +298,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("catalog")
             .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
+            .arg(arg!(--generic "use generic output format").action(ArgAction::SetTrue))
             .arg(
                 arg!(-d --dimg <PATH> "path to disk image")
                     .value_hint(ValueHint::FilePath)

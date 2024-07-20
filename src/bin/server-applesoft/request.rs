@@ -1,0 +1,223 @@
+//! Provide our response to incoming requests
+
+use lsp_types as lsp;
+use lsp::request::Request;
+use lsp_server::{Connection,RequestId,Response};
+use serde_json;
+use std::collections::HashMap;
+use std::sync::Arc;
+use a2kit::lang::server::{send_edit_req,Checkpoint,Tokens};
+use a2kit::lang::disk_server;
+use a2kit::lang::applesoft;
+use super::logger;
+use super::rpc_error::PARSE_ERROR;
+
+fn def_response(req_id: RequestId) -> lsp_server::Response {
+    let mess = req_id.to_string();
+    lsp_server::Response::new_err(req_id,PARSE_ERROR,format!("request {} not understood",mess))
+}
+
+fn renumber_or_move(connection: &Connection, req_id: RequestId, params: &lsp::ExecuteCommandParams, allow_move: bool) -> lsp_server::Response {
+    let mut resp = def_response(req_id.clone());
+    if params.arguments.len()==5 {
+        let doc_r = serde_json::from_value::<lsp::TextDocumentItem>(params.arguments[0].clone());
+        let sel_r = serde_json::from_value::<Option<lsp::Range>>(params.arguments[1].clone());
+        let start_r = serde_json::from_value::<String>(params.arguments[2].clone());
+        let step_r = serde_json::from_value::<String>(params.arguments[3].clone());
+        let update_refs_r = serde_json::from_value::<bool>(params.arguments[4].clone());
+        if let (
+            Ok(doc),
+            Ok(sel),
+            Ok(start),
+            Ok(step),
+            Ok(update_refs)) = (doc_r,sel_r,start_r,step_r,update_refs_r) {
+            let mut renumberer = applesoft::renumber::Renumberer::new();
+            let mut flags = match allow_move { true => applesoft::renumber::flags::REORDER, false => 0 };
+            flags += match update_refs { true => 0, false => applesoft::renumber::flags::PASS_OVER_REFS };
+            renumberer.set_flags(flags);
+            resp = match renumberer.get_edits(&doc.text, sel, &start, &step) {
+                Ok(edits) => {
+                    match send_edit_req(connection, &doc, edits) {
+                        Ok(()) => {},
+                        Err(s) => return lsp_server::Response::new_err(req_id.clone(),PARSE_ERROR,s)
+                    };
+                    lsp_server::Response::new_ok(req_id,serde_json::Value::Null)
+                },
+                Err(s) => lsp_server::Response::new_err(req_id.clone(),PARSE_ERROR,s)
+            };
+        }
+    }
+    resp
+}
+
+/// returns true if there was a shutdown request
+pub fn handle_request(
+    connection: &Connection,
+    req: lsp_server::Request,
+    tools: &mut super::Tools) -> bool {
+
+    let mut resp = def_response(req.id.clone());
+    let mut chkpts = HashMap::new();
+    for (k,v) in &tools.doc_chkpts {
+        chkpts.insert(k.to_string(),Arc::new(v));
+    }
+
+    match req.method.as_str() {
+        lsp::request::GotoDeclaration::METHOD => Checkpoint::goto_dec_response(chkpts, req.clone(), &mut resp),
+        lsp::request::GotoDefinition::METHOD => Checkpoint::goto_def_response(chkpts, req.clone(), &mut resp),
+        lsp::request::DocumentSymbolRequest::METHOD => Checkpoint::symbol_response(chkpts, req.clone(), &mut resp),
+        lsp::request::References::METHOD => Checkpoint::goto_ref_response(chkpts, req.clone(), &mut resp),
+        lsp::request::Rename::METHOD => Checkpoint::rename_response(chkpts, req.clone(), &mut resp),
+        lsp::request::HoverRequest::METHOD => Checkpoint::hover_response(chkpts, &mut tools.hover_provider, req.clone(), &mut resp),
+        lsp::request::Completion::METHOD => Checkpoint::completion_response(chkpts, &mut tools.completion_provider, req.clone(), &mut resp),
+
+        lsp::request::Shutdown::METHOD => {
+            logger(&connection,"shutdown request");
+            resp = lsp_server::Response::new_ok(req.id.clone(), ());
+            connection.sender.send(resp.into()).expect("failed to respond to shutdown request");
+            connection.receiver.recv_timeout(std::time::Duration::from_secs(30)).expect("failure while pausing");
+            return true;
+        },
+        
+        lsp::request::ExecuteCommand::METHOD => {
+            if let Ok(params) = serde_json::from_value::<lsp::ExecuteCommandParams>(req.params) {
+                match params.command.as_str() {
+                    "applesoft.semantic.tokens" => {
+                        if params.arguments.len()==1 {
+                            if let Ok(program) = serde_json::from_value::<String>(params.arguments[0].clone()) {
+                                resp = match tools.highlighter.get(&program) {
+                                    Ok(result) => {
+                                        lsp_server::Response::new_ok(req.id,result)
+                                    },
+                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"semantic tokens failed".to_string())
+                                };
+                            }
+                        }
+                    }
+                    "applesoft.minify" => {
+                        if params.arguments.len()==1 {
+                            if let Ok(program) = serde_json::from_value::<String>(params.arguments[0].clone()) {
+                                resp = match tools.minifier.minify(&program) {
+                                    Ok(result) => {
+                                        lsp_server::Response::new_ok(req.id,result)
+                                    },
+                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"minify failed".to_string())
+                                };
+                            }
+                        }
+                    },
+                    "applesoft.tokenize" => {
+                        if params.arguments.len()==2 {
+                            let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
+                            let addr_res = serde_json::from_value::<u16>(params.arguments[1].clone());
+                            if let (Ok(program),Ok(addr)) = (prog_res,addr_res) {
+                                resp = match tools.tokenizer.tokenize(&program, addr) {
+                                    Ok(result) => {
+                                        lsp_server::Response::new_ok(req.id,result)
+                                    },
+                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"tokenize failed".to_string())
+                                };
+                            }
+                        }
+                    },
+                    "applesoft.detokenize" => {
+                        if params.arguments.len()==1 {
+                            if let Ok(buf) = serde_json::from_value::<Vec<u8>>(params.arguments[0].clone()) {
+                                resp = match tools.tokenizer.detokenize_from_ram(&buf) {
+                                    Ok(result) => {
+                                        lsp_server::Response::new_ok(req.id,result)
+                                    },
+                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"detokenize failed".to_string())
+                                };
+                            }
+                        }
+                    },
+                    "applesoft.renumber" => {
+                        resp = renumber_or_move(&connection,req.id,&params,false);
+                    },
+                    "applesoft.move" => {
+                        resp = renumber_or_move(&connection,req.id,&params,true);
+                    },
+                    "applesoft.disk.mount" => {
+                        if params.arguments.len()==1 {
+                            let maybe_img_path = serde_json::from_value::<String>(params.arguments[0].clone());
+                            let white_list = vec!["a2 dos".to_string(),"prodos".to_string()];
+                            if let Ok(img_path) = maybe_img_path {
+                                resp = match tools.disk.mount(&img_path,&Some(white_list)) {
+                                    Ok(()) => Response::new_ok(req.id,serde_json::Value::Null),
+                                    Err(_) => Response::new_err(req.id,PARSE_ERROR,"unexpected format or file system".to_string())
+                                };
+                            } else {
+                                resp = Response::new_err(req.id,PARSE_ERROR,"bad arguments while mounting image".to_string());
+                            }
+                        }
+                    },
+                    "applesoft.disk.pick" => {
+                        match tools.disk.handle_selection(&params.arguments) {
+                            Ok(item) => {
+                                resp = match item {
+                                    disk_server::SelectionResult::Directory(dir) => Response::new_ok(req.id,serde_json::to_value(dir).expect("json")),
+                                    disk_server::SelectionResult::FileData(sfimg) => {
+                                        match tools.tokenizer.detokenize(&sfimg.data) {
+                                            Ok(prog) => Response::new_ok(req.id,prog),
+                                            Err(e) => Response::new_err(req.id,PARSE_ERROR,e.to_string())
+                                        }
+                                    }
+                                };
+                            },
+                            Err(e) => resp = Response::new_err(req.id,PARSE_ERROR,e.to_string())
+                        }
+                    },
+                    "applesoft.disk.put" => {
+                        if params.arguments.len()==3 {
+                            let maybe_path = serde_json::from_value::<String>(params.arguments[0].clone());
+                            let maybe_prog = serde_json::from_value::<String>(params.arguments[1].clone());
+                            let maybe_addr = serde_json::from_value::<u16>(params.arguments[2].clone());
+                            resp = match (maybe_path,maybe_prog,maybe_addr) {
+                                (Ok(path),Ok(program),Ok(addr)) => {
+                                    match tools.tokenizer.tokenize(&program,addr) {
+                                        Ok(dat) => match tools.disk.write(&path, &dat, a2kit::commands::ItemType::ApplesoftTokens) {
+                                            Ok(()) => Response::new_ok(req.id,serde_json::Value::Null),
+                                            Err(e) => Response::new_err(req.id,PARSE_ERROR,e.to_string())
+                                        },
+                                        Err(e) => Response::new_err(req.id,PARSE_ERROR,e.to_string())
+                                    }
+                                }
+                                _ => Response::new_err(req.id,PARSE_ERROR,"parsing error during put".to_string())
+                            };
+                        }
+                    },
+                    "applesoft.disk.delete" => {
+                        if params.arguments.len()==1 {
+                            resp = match serde_json::from_value::<String>(params.arguments[0].clone()) {
+                                Ok(path) => {
+                                    match tools.disk.delete(&path) {
+                                        Ok(()) => Response::new_ok(req.id,serde_json::Value::Null),
+                                        Err(e) => Response::new_err(req.id,PARSE_ERROR,e.to_string())
+                                    }
+                                }
+                                _ => Response::new_err(req.id,PARSE_ERROR,"parsing error during delete".to_string())
+                            };
+                        }
+                    },
+                    _ => {
+                        logger(&connection,&format!("unhandled command {}",params.command));
+                    }
+                }
+            }
+        },
+        _ => {
+            logger(&connection,&format!("unhandled request: {}",req.method))
+        }
+    }
+    // if let Some(x) = &resp.result {
+    //     logger(&connection,&format!("{} : {}",req.method,x.to_string()));
+    // }
+    // if let Some(x) = &resp.error {
+    //     logger(&connection,&format!("{}",x.message));
+    // }
+    if let Err(_) = connection.sender.send(lsp_server::Message::Response(resp)) {
+        logger(&connection,&format!("could not send response to {}",req.method));
+    }
+    false
+}

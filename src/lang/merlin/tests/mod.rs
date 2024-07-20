@@ -1,0 +1,10 @@
+mod diagnostics_test;
+mod disassembly6502_test;
+mod disassembly65c02_test;
+mod disassembly65816_test;
+mod tokenize_test;
+mod assembly_strings_test;
+mod assembly_data_test;
+mod assembly_6502_test;
+mod assembly_65c02_test;
+mod assembly_65816_test;

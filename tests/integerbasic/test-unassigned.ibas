@@ -1,0 +1,7 @@
+10 dim a$(10): dim b$(10)
+30 for i = 1 to 10: print i: next i
+40 for i = 1 to 10: print j: next i: rem doesn't know about the flow
+50 j = 5
+60 let z = i + j + x
+70 if k = 5 then m = 3
+80 print m: print a$: b$(1) = a$

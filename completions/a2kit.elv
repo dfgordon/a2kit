@@ -140,6 +140,12 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;verify'= {
             cand -t 'type of the file'
             cand --type 'type of the file'
+            cand -c 'modify diagnostic configuration'
+            cand --config 'modify diagnostic configuration'
+            cand -w 'workspace directory'
+            cand --workspace 'workspace directory'
+            cand -s 'write S-expressions to stderr'
+            cand --sexpr 'write S-expressions to stderr'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -162,6 +168,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --first 'first number'
             cand -s 'step between numbers'
             cand --step 'step between numbers'
+            cand -r 'allow reordering of lines'
+            cand --reorder 'allow reordering of lines'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -195,6 +203,7 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --file 'path of directory inside disk image'
             cand -d 'path to disk image'
             cand --dimg 'path to disk image'
+            cand --generic 'use generic output format'
             cand -h 'Print help'
             cand --help 'Print help'
         }

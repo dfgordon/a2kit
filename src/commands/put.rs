@@ -50,6 +50,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
             match crate::create_fs_from_file(img_path) {
                 Ok(mut disk) => {
                     let result = match typ {
+                        Ok(ItemType::Automatic) => Err::<usize,DYNERR>(Box::new(CommandError::UnsupportedItemType)),
                         Ok(ItemType::ApplesoftTokens) => disk.save(&dest_path,&file_data,ItemType::ApplesoftTokens,None),
                         Ok(ItemType::IntegerTokens) => disk.save(&dest_path,&file_data,ItemType::IntegerTokens,None),
                         Ok(ItemType::MerlinTokens) => disk.write_text(&dest_path,&file_data),

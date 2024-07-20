@@ -42,6 +42,8 @@ use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
+pub const FS_NAME: &str = "cpm";
+
 /// Given a CP/M filename string, update the file image
 /// with standard access and equate type with extension
 fn update_fimg_with_name(fimg: &mut super::FileImage,s: &str) {
@@ -111,7 +113,7 @@ impl Disk
     fn new_fimg(chunk_len: usize) -> super::FileImage {
         super::FileImage {
             fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from("cpm"),
+            file_system: String::from(FS_NAME),
             fs_type: vec![0;3],
             aux: vec![],
             eof: vec![0;4],
@@ -568,7 +570,7 @@ impl super::DiskFS for Disk {
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let dir = &self.get_directory();
         Ok(super::Stat {
-            fs_name: "cpm".to_string(),
+            fs_name: FS_NAME.to_string(),
             label: match dir.find_label() {
                 Some(label) => {
                     let (mut res,typ) = label.get_split_string();
@@ -593,6 +595,22 @@ impl super::DiskFS for Disk {
         match opt {
             "/" => display::dir(&dir,&self.dpb,""),
             _ => display::dir(&dir,&self.dpb,opt)
+        }
+    }
+    fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
+        if path!="/" && path!="" {
+            return Err(Box::new(Error::FileNotFound));
+        }
+        let dir = self.get_directory();
+        match dir.build_files(&self.dpb, [3,0,0]) {
+            Ok(files) => {
+                let mut ans = Vec::new();
+                for (_,info) in files {
+                    ans.push(super::universal_row(&info.typ,info.blocks_allocated,&info.name));
+                }
+                Ok(ans)
+            },
+            Err(e) => Err(e)
         }
     }
     fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
@@ -738,11 +756,15 @@ impl super::DiskFS for Disk {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
+    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
+        let eof: usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        Ok(fimg.sequence_limited(eof))
+    }
     fn read_raw(&mut self,xname: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.read_file(xname) {
             Ok(fimg) => {
                 if trunc {
-                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+                    let eof: usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
                     Ok((0,fimg.sequence_limited(eof)))
                 } else {
                     Ok((0,fimg.sequence()))
@@ -801,7 +823,7 @@ impl super::DiskFS for Disk {
         return self.read_file(xname);
     }
     fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!="cpm" {
+        if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to cpm",fimg.file_system);
             return Err(Box::new(Error::Select));
         }
