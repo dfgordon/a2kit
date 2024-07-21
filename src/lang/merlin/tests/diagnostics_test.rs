@@ -7,7 +7,6 @@ use super::super::{MerlinVersion,diagnostics};
 fn test_diagnostics(prog_name: &str, vers: Option<MerlinVersion>, expected_messages: &[&str]) {
     use crate::lang::server::Analysis;
     let ws = std::env::current_dir().expect("no cwd").join("tests").join("merlin");
-    assert_eq!(ws.to_str().unwrap(),"C:\\Users\\Daniel Gordon\\codes\\a2kit\\tests\\merlin");
     let path = ws.join(prog_name);
     let ws_uri = lsp_types::Url::from_directory_path(ws).expect("could not create workspace URL");
     let doc = crate::lang::Document::from_file_path(&path).expect("failed to create doc");
