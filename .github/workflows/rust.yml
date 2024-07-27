@@ -48,14 +48,14 @@ jobs:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install musl GCC wrapper
         run: |
           if [[ $OS =~ ^ubuntu.*$ ]]; then
             sudo apt install musl-tools
           fi
       - name: Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -82,16 +82,18 @@ jobs:
           fi
           cli_list="completions"
           for i in ${CLI[@]}; do
-            cli_list+=" ./target/$TARGET/release/${i}$EXE"
+            mv ./target/$TARGET/release/${i}$EXE ./${i}$EXE
+            cli_list+=" ${i}$EXE"
           done
           tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz $cli_list
           server_list=""
           for i in ${SERVERS[@]}; do
-            server_list+=" ./target/$TARGET/release/${i}$EXE"
+            mv ./target/$TARGET/release/${i}$EXE ./${i}$EXE
+            server_list+=" ${i}$EXE"
           done
           tar -czf ./artifacts/server-$TARGET-$TAG.tar.gz $server_list
       - name: Archive artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: result
           path: ./artifacts
