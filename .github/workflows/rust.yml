@@ -45,8 +45,6 @@ jobs:
     needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      CLI: ("a2kit")
-      SERVERS: ("server-applesoft" "server-integerbasic" "server-merlin")
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -70,6 +68,8 @@ jobs:
       - name: Compress
         run: |
           mkdir -p ./artifacts
+          CLI=("a2kit")
+          SERVERS=("server-applesoft" "server-integerbasic" "server-merlin")
           if [[ $OS =~ ^windows.*$ ]]; then
               EXE=".exe"
           else
