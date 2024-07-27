@@ -25,6 +25,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand mkdsk 'write a blank disk image to the given path'
             cand mkdir 'create a new directory inside a disk image'
             cand delete 'delete a file or directory inside a disk image'
+            cand del 'delete a file or directory inside a disk image'
+            cand era 'delete a file or directory inside a disk image'
             cand protect 'password protect a disk or file'
             cand unprotect 'remove password protection from a disk or file'
             cand lock 'write protect a file or directory inside a disk image'
@@ -37,11 +39,18 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand get 'read from stdin, local, or disk image, write to stdout'
             cand put 'read from stdin, write to local or disk image'
             cand catalog 'write disk image catalog to stdout'
+            cand cat 'write disk image catalog to stdout'
+            cand dir 'write disk image catalog to stdout'
+            cand ls 'write disk image catalog to stdout'
             cand tree 'write directory tree as a JSON string to stdout'
             cand stat 'write FS statistics as a JSON string to stdout'
             cand geometry 'write disk geometry as a JSON string to stdout'
             cand tokenize 'read from stdin, tokenize, write to stdout'
+            cand tok 'read from stdin, tokenize, write to stdout'
             cand detokenize 'read from stdin, detokenize, write to stdout'
+            cand dtok 'read from stdin, detokenize, write to stdout'
+            cand asm 'read from stdin, assemble, write to stdout'
+            cand dasm 'read from stdin, disassemble, write to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'a2kit;mkdsk'= {
@@ -71,6 +80,22 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --help 'Print help'
         }
         &'a2kit;delete'= {
+            cand -f 'path inside disk image to delete'
+            cand --file 'path inside disk image to delete'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;del'= {
+            cand -f 'path inside disk image to delete'
+            cand --file 'path inside disk image to delete'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;era'= {
             cand -f 'path inside disk image to delete'
             cand --file 'path inside disk image to delete'
             cand -d 'path to disk image itself'
@@ -207,6 +232,33 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'a2kit;cat'= {
+            cand -f 'path of directory inside disk image'
+            cand --file 'path of directory inside disk image'
+            cand -d 'path to disk image'
+            cand --dimg 'path to disk image'
+            cand --generic 'use generic output format'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;dir'= {
+            cand -f 'path of directory inside disk image'
+            cand --file 'path of directory inside disk image'
+            cand -d 'path to disk image'
+            cand --dimg 'path to disk image'
+            cand --generic 'use generic output format'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;ls'= {
+            cand -f 'path of directory inside disk image'
+            cand --file 'path of directory inside disk image'
+            cand -d 'path to disk image'
+            cand --dimg 'path to disk image'
+            cand --generic 'use generic output format'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'a2kit;tree'= {
             cand -d 'path to disk image'
             cand --dimg 'path to disk image'
@@ -234,9 +286,40 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'a2kit;tok'= {
+            cand -a 'address of tokenized code (Applesoft only)'
+            cand --addr 'address of tokenized code (Applesoft only)'
+            cand -t 'type of the file'
+            cand --type 'type of the file'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'a2kit;detokenize'= {
             cand -t 'type of the file'
             cand --type 'type of the file'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;dtok'= {
+            cand -t 'type of the file'
+            cand --type 'type of the file'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;asm'= {
+            cand -a 'assembler variant'
+            cand --assembler 'assembler variant'
+            cand -w 'workspace directory'
+            cand --workspace 'workspace directory'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;dasm'= {
+            cand -p 'processor target'
+            cand --proc 'processor target'
+            cand --mx 'MX status bits'
+            cand -o 'starting address'
+            cand --org 'starting address'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -261,6 +344,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand geometry 'write disk geometry as a JSON string to stdout'
             cand tokenize 'read from stdin, tokenize, write to stdout'
             cand detokenize 'read from stdin, detokenize, write to stdout'
+            cand asm 'read from stdin, assemble, write to stdout'
+            cand dasm 'read from stdin, disassemble, write to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'a2kit;help;mkdsk'= {
@@ -302,6 +387,10 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;help;tokenize'= {
         }
         &'a2kit;help;detokenize'= {
+        }
+        &'a2kit;help;asm'= {
+        }
+        &'a2kit;help;dasm'= {
         }
         &'a2kit;help;help'= {
         }

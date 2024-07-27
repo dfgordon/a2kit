@@ -9,7 +9,6 @@ use std::io::{Read,Write};
 use std::str::FromStr;
 #[cfg(windows)]
 use colored;
-use log::error;
 use a2kit::commands;
 use a2kit::commands::{ItemType,CommandError};
 use a2kit::lang;
@@ -18,7 +17,6 @@ use a2kit::lang::integer;
 use a2kit::lang::merlin;
 use a2kit::lang::server::Analysis;
 use colored::Colorize;
-use log::warn;
 
 mod cli;
 
@@ -150,7 +148,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
 
     if let Some(cmd) = matches.subcommand_matches("minify") {
         if atty::is(atty::Stream::Stdin) {
-            error!("line entry is not supported for `minify`, please pipe something in");
+            log::error!("line entry is not supported for `minify`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
@@ -158,12 +156,12 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
             Err(e) => {
-                error!("the file to minify could not be interpreted as a string");
+                log::error!("the file to minify could not be interpreted as a string");
                 return Err(Box::new(e));
             }
         }
         if program.len()==0 {
-            error!("minify did not receive any data from previous node");
+            log::error!("minify did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         return match typ
@@ -189,7 +187,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
 
     if let Some(cmd) = matches.subcommand_matches("renumber") {
         if atty::is(atty::Stream::Stdin) {
-            error!("line entry is not supported for `renumber`, please pipe something in");
+            log::error!("line entry is not supported for `renumber`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
@@ -202,12 +200,12 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
             Err(e) => {
-                error!("the file to renumber could not be interpreted as a string");
+                log::error!("the file to renumber could not be interpreted as a string");
                 return Err(Box::new(e));
             }
         }
         if program.len()==0 {
-            error!("renumber did not receive any data from previous node");
+            log::error!("renumber did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         return match typ
@@ -225,7 +223,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
                 let mut renumberer = integer::renumber::Renumberer::new();
                 renumberer.set_flags(match reorder {true => 1, false => 0});
                 let new_prog = renumberer.renumber(&program,beg,end,first,step)?;
-                warn!("line number expressions must be manually adjusted");
+                log::warn!("line number expressions must be manually adjusted");
                 println!("{}",&new_prog);
                 Ok(())
             }
@@ -237,7 +235,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
 
     if let Some(cmd) = matches.subcommand_matches("tokenize") {
         if atty::is(atty::Stream::Stdin) {
-            error!("line entry is not supported for `tokenize`, please pipe something in");
+            log::error!("line entry is not supported for `tokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
@@ -246,12 +244,12 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         match std::io::stdin().read_to_string(&mut program) {
             Ok(_) => {},
             Err(e) => {
-                error!("the file to tokenize could not be interpreted as a string");
+                log::error!("the file to tokenize could not be interpreted as a string");
                 return Err(Box::new(e));
             }
         }
         if program.len()==0 {
-            error!("tokenize did not receive any data from previous node");
+            log::error!("tokenize did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         return match typ
@@ -259,7 +257,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             Ok(ItemType::ApplesoftText) => {
                 lang::verify_str(tree_sitter_applesoft::language(),&program)?;
                 if addr_opt==None {
-                    error!("address needed to tokenize Applesoft");
+                    log::error!("address needed to tokenize Applesoft");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 if let Ok(addr) = u16::from_str_radix(addr_opt.expect(RCH),10) {
@@ -277,7 +275,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             Ok(ItemType::IntegerText) => {
                 lang::verify_str(tree_sitter_integerbasic::language(),&program)?;
                 if let Some(_addr) = addr_opt {
-                    error!("unnecessary address argument");
+                    log::error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
@@ -292,7 +290,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             Ok(ItemType::MerlinText) => {
                 lang::verify_str(tree_sitter_merlin6502::language(),&program)?;
                 if let Some(_addr) = addr_opt {
-                    error!("unnecessary address argument");
+                    log::error!("unnecessary address argument");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
@@ -312,14 +310,14 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
 
     if let Some(cmd) = matches.subcommand_matches("detokenize") {
         if atty::is(atty::Stream::Stdin) {
-            error!("line entry is not supported for `detokenize`, please pipe something in");
+            log::error!("line entry is not supported for `detokenize`, please pipe something in");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         let typ = ItemType::from_str(cmd.get_one::<String>("type").expect(RCH));
         let mut tok: Vec<u8> = Vec::new();
         std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
         if tok.len()==0 {
-            error!("detokenize did not receive any data from previous node");
+            log::error!("detokenize did not receive any data from previous node");
             return Err(Box::new(CommandError::InvalidCommand));
         }
         return match typ
@@ -350,6 +348,97 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             },
             _ => Err(Box::new(CommandError::UnsupportedItemType))
         };
+    }
+
+    // Assemble source code
+
+    if let Some(cmd) = matches.subcommand_matches("asm") {
+        let mut config = merlin::settings::Settings::new();
+        config.version = match cmd.get_one::<String>("assembler").expect(RCH).as_str() {
+            "m8" => merlin::MerlinVersion::Merlin8,
+            "m16" => merlin::MerlinVersion::Merlin16,
+            "m16+" => merlin::MerlinVersion::Merlin16Plus,
+            "m32" => merlin::MerlinVersion::Merlin32,
+            _ => panic!("{}",RCH)
+        };
+        let mut analyzer = lang::merlin::diagnostics::Analyzer::new();
+        analyzer.set_config(config.clone());
+        // if cmd.value_source("config").unwrap()==ValueSource::CommandLine {
+        //     analyzer.update_config(cmd.get_one::<String>("config").unwrap())?;
+        // }
+        let doc = lang::Document::from_string(analyzer.read_stdin(),0);
+        if let Some(ws_path) = cmd.get_one::<String>("workspace") {
+            match lsp_types::Url::from_directory_path(ws_path) {
+                Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
+                Err(_) => return Err(Box::new(lang::Error::PathNotFound))
+            }
+        }
+        analyzer.analyze(&doc)?;
+        let symbols = analyzer.get_symbols();
+        for diag in analyzer.get_diags(&doc) {
+            lang::eprint_diagnostic(&diag,&doc.text);
+        }
+        let [err,_warn,_info] = analyzer.err_warn_info_counts();
+        if err==0 {
+            let mut asm = merlin::assembly::Assembler::new();
+            asm.set_config(config);
+            asm.use_shared_symbols(std::sync::Arc::new(symbols));
+            let object = asm.spot_assemble(doc.text.clone(), 0, doc.text.len() as isize)?;
+            if atty::is(atty::Stream::Stdout) {
+                a2kit::display_block(0,&object);
+            } else {
+                std::io::stdout().write_all(&object).expect("could not write output stream");
+            }
+            return Ok(());
+        } else {
+            eprintln!("\u{2717} {} {}",err.to_string().red(),"errors".red());
+            return Err(Box::new(lang::Error::Syntax));
+        }
+    }
+
+    // Disassemble binary to Merlin source
+
+    if let Some(cmd) = matches.subcommand_matches("dasm") {
+        if atty::is(atty::Stream::Stdin) {
+            log::error!("line entry is not supported for `dasm`, please pipe something in");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+        let proc = match cmd.get_one::<String>("proc").expect(RCH).as_str() {
+            "6502" => merlin::ProcessorType::_6502,
+            "65c02" => merlin::ProcessorType::_65c02,
+            "65802" => merlin::ProcessorType::_65802,
+            "65816" => merlin::ProcessorType::_65c816,
+            _ => panic!("{}",RCH)
+        };
+        let (m8bit,x8bit) = match cmd.get_one::<String>("mx").expect(RCH).as_str() {
+            "00" => (false,false),
+            "01" => (false,true),
+            "10" => (true,false),
+            "11" => (true,true),
+            _ => panic!("{}",RCH)
+        };
+        let org = match u16::from_str(cmd.get_one::<String>("org").expect(RCH)) {
+            Ok(x) => x,
+            Err(_) => {
+                log::error!("origin did not parse as decimal unsigned 16 bit integer");
+                return Err(Box::new(CommandError::OutOfRange))
+            }
+        };
+        let mut tok: Vec<u8> = Vec::new();
+        tok.append(&mut vec![0;org as usize]);
+        std::io::stdin().read_to_end(&mut tok).expect("could not read input stream");
+        if tok.len()==org as usize {
+            log::error!("dasm did not receive any data from previous node");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+        let mut dasm = merlin::disassembly::Disassembler::new();
+        dasm.set_mx(m8bit,x8bit);
+        let rng =  merlin::disassembly::DasmRange::Range([org as usize,tok.len()]);
+        let program = dasm.disassemble(&tok, rng, proc, "some")?;
+        for line in program.lines() {
+            println!("{}",line);
+        }
+        return Ok(());
     }
 
     // Create directory inside disk image
@@ -473,7 +562,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         return commands::get::get(cmd);
     }
     
-    error!("No subcommand was found, try `a2kit --help`");
+    log::error!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
 
 }

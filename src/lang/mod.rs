@@ -224,10 +224,13 @@ pub fn node_integer<T: FromStr>(node: &tree_sitter::Node,source: &str) -> Option
 }
 
 /// Parse a node that may use a prefix to indicate radix, e.g., `$0F` or `%00001111`.
-/// This will ignore all spaces and underscores.
+/// This will ignore all spaces and underscores, except for an underscore prefix.
 pub fn node_radix<T: Num>(node: &tree_sitter::Node, source: &str, hex: &str, bin: &str) -> Option<T> {
     if let Ok(s) = node.utf8_text(source.as_bytes()) {
-        let trimmed = s.to_string().replace(" ","").replace("_","");
+        let mut trimmed = s.to_string().replace(" ","").replace("_","");
+        if s.starts_with("_") && (hex=="_" || bin=="_") {
+            trimmed = ["_",&trimmed].concat();
+        }
         if trimmed.starts_with(hex) {
             match T::from_str_radix(&trimmed[1..],16) {
                 Ok(ans) => Some(ans),

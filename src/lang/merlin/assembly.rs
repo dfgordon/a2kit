@@ -17,6 +17,7 @@ use crate::lang::merlin::{Operation,ProcessorType};
 use crate::lang::{node_radix, node_text, Navigation, Navigate};
 use crate::{STDRESULT,DYNERR};
 
+const IGNORED_PSOPS: [&str;16] = ["ast", "cas", "cyc", "dsk", "exp", "kbd", "lst", "lstdo", "obj", "pag", "pau", "sav", "skp", "tr", "ttl", "typ"];
 
 /// closely parallels Merlin 8/16 error messages
 #[derive(Error,Debug)]
@@ -314,11 +315,73 @@ impl Assembler {
                     None => Err(Box::new(Error::ExpressionEvaluation))
                 }
             },
+            "pchar" => {
+                let txt = node.utf8_text(source.as_bytes())?;
+                Ok(txt.as_bytes()[1] as i64)
+            },
+            "nchar" => {
+                let txt = node.utf8_text(source.as_bytes())?;
+                Ok(txt.as_bytes()[1] as i64 + 0x80)
+            },
+            "current_addr" => {
+                match self.pc {
+                    Some(pc) => Ok(pc as i64),
+                    None => Err(Box::new(Error::UnresolvedProgramCounter))
+                }
+            },
             "label_ref" => {
                 let txt = node_text(node, source);
-                match (txt.starts_with("_"),node_radix(node, source, "_", "%")) {
-                    (true,Some(v)) => Ok(v),
-                    _ => Err(Box::new(Error::ExpressionEvaluation))
+                if let Some(sym) = self.symbols.globals.get(&txt) {
+                    if let Some(val) = sym.value {
+                        return Ok(val);
+                    }
+                }
+                if let Some(sym) = self.symbols.vars.get(&txt) {
+                    if let Some(val) = sym.value {
+                        return Ok(val);
+                    }
+                }
+                Err(Box::new(Error::UndefinedLabel))
+            },
+            "unary_aexpr" => {
+                if node.child_count() != 2 {
+                    Err(Box::new(Error::Syntax))
+                } else {
+                    let raw = self.eval_expr(&node.named_child(0).unwrap(), source)?;
+                    if node.named_child(1).unwrap().kind() == "eop_minus" {
+                        Ok(-raw)
+                    } else {
+                        Ok(raw)
+                    }
+                }
+            },
+            "binary_aexpr" => {
+                if node.child_count() != 3 {
+                    Err(Box::new(Error::Syntax))
+                } else {
+                    let val1 = self.eval_expr(&node.named_child(0).unwrap(), source)?;
+                    let val2 = self.eval_expr(&node.named_child(2).unwrap(), source)?;
+                    match node.named_child(1).unwrap().kind() {
+                        "eop_plus" => Ok(val1 + val2),
+                        "eop_minus" => Ok(val1 - val2),
+                        "eop_times" => Ok(val1 * val2),
+                        "eop_div" => Ok(val1 / val2),
+                        "eop_or" => Ok(val1 | val2),
+                        "eop_and" => Ok(val1 & val2),
+                        "eop_xor" => Ok(val1 ^ val2),
+                        "cop_less" => Ok(match val1 < val2 { true => 1, false => 0}),
+                        "cop_gtr" => Ok(match val1 > val2 { true => 1, false => 0}),
+                        "cop_eq" => Ok(match val1 == val2 { true => 1, false => 0}),
+                        "cop_neq" => Ok(match val1 != val2 { true => 1, false => 0}),
+                        _ => Err(Box::new(Error::ExpressionEvaluation))
+                    }
+                }
+            },
+            "braced_aexpr" => {
+                if let Some(child) = node.named_child(0) {
+                    self.eval_expr(&child, source)
+                } else {
+                    Err(Box::new(Error::Syntax))
                 }
             },
             _ => Err(Box::new(Error::ExpressionEvaluation))
@@ -472,6 +535,9 @@ impl Navigate for Assembler {
 		}
 
 		if curs.node().kind().starts_with("psop_") {
+            if IGNORED_PSOPS.contains(&&curs.node().kind()[5..]) {
+                return Ok(Navigation::Exit);
+            }
             match curs.node().next_named_sibling() {
                 Some(arg) => {
                     match arg.kind() {

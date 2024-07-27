@@ -45,7 +45,8 @@ jobs:
     needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      NAME: a2kit
+      CLI: ("a2kit")
+      SERVERS: ("server-applesoft" "server-integerbasic" "server-merlin")
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -69,19 +70,26 @@ jobs:
       - name: Compress
         run: |
           mkdir -p ./artifacts
-          # windows is the only OS using a different convention for executable file name
           if [[ $OS =~ ^windows.*$ ]]; then
-              EXEC=$NAME.exe
+              EXE=".exe"
           else
-              EXEC=$NAME
+              EXE=""
           fi
           if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
             TAG=$GITHUB_REF_NAME
           else
             TAG=$GITHUB_SHA
           fi
-          mv ./target/$TARGET/release/$EXEC ./$EXEC
-          tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz $EXEC completions
+          cli_list="completions"
+          for i in ${CLI[@]}; do
+            cli_list+=" ./target/$TARGET/release/${i}$EXE"
+          done
+          tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz $cli_list
+          server_list=""
+          for i in ${SERVERS[@]}; do
+            server_list+=" ./target/$TARGET/release/${i}$EXE"
+          done
+          tar -czf ./artifacts/server-$TARGET-$TAG.tar.gz $server_list
       - name: Archive artifact
         uses: actions/upload-artifact@v3
         with:

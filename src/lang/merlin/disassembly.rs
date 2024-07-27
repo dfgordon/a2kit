@@ -51,16 +51,44 @@ impl Operand {
     }
 }
 
+struct DasmLine {
+    address: usize,
+    instruction: String,
+    prefix: String,
+    suffix: String,
+    operand: Option<Operand>,
+    references: Vec<usize>
+}
+
+impl DasmLine {
+    fn new() -> Self {
+        Self {
+            address: 0,
+            instruction: String::new(),
+            prefix: String::new(),
+            suffix: String::new(),
+            operand: None,
+            references: Vec::new()
+        }
+    }
+    fn basic(addr: usize, ins: String, op: Operand) -> Self {
+        Self {
+            address: addr,
+            instruction: ins,
+            prefix: String::new(),
+            suffix: String::new(),
+            operand: Some(op),
+            references: Vec::new()
+        }
+    }
+}
+
 pub struct Disassembler {
     config: Settings,
     m8bit: bool,
     x8bit: bool,
     dasm_map: HashMap<u8,MachineOperation>,
-    instructions: Vec<String>,
-    prefixes: Vec<String>,
-    suffixes: Vec<String>,
-    operands: Vec<Option<Operand>>,
-    addresses: Vec<usize>,
+    dasm_lines: Vec<DasmLine>,
     std_patt: regex::Regex,
     mov_patt: regex::Regex
 }
@@ -117,11 +145,7 @@ impl Disassembler {
             m8bit: true,
             x8bit: true,
             dasm_map: book.create_dasm_map(),
-            instructions: Vec::new(),
-            prefixes: Vec::new(),
-            suffixes: Vec::new(),
-            operands: Vec::new(),
-            addresses: Vec::new(),
+            dasm_lines: Vec::new(),
             std_patt: regex::Regex::new(r"[0-9]").expect(super::RCH),
             mov_patt: regex::Regex::new(r"[0-9][0-9]").expect(super::RCH)
         }
@@ -141,45 +165,39 @@ impl Disassembler {
 		}
 		return s.to_uppercase();
 	}
-    fn push_data_psop(&mut self, ins: String, dat: String) {
-        self.instructions.push(ins);
-        self.operands.push(Some(Operand::txt(dat)));
+    fn push_data_psop(&mut self, addr: usize, ins: String, dat: String) {
+        self.dasm_lines.push(DasmLine::basic(addr, ins, Operand::txt(dat)));
     }
     fn push_data_pattern(&mut self, addr: usize, img: &[u8], length: usize, reps: usize) {
 		if reps > 1 {
-			self.addresses.push(addr);
-			self.push_data_psop(self.modify("LUP"), reps.to_string());
+			self.push_data_psop(addr, self.modify("LUP"), reps.to_string());
 		}
         let v: Vec<u8> = img[addr..addr+length].to_vec();
-		self.push_data_psop(self.modify("HEX"),v.encode_hex_upper());
+		self.push_data_psop(addr, self.modify("HEX"),v.encode_hex_upper());
 		if reps > 1 {
-			self.addresses.push(addr);
-			self.push_data_psop("--^".to_string(), "".to_string());
+			self.push_data_psop(addr, "--^".to_string(), "".to_string());
 		}
     }
     /// * `neg` indicates the string that was found is negative ASCII
     /// * `s` is the string that was found
     /// * `lookahead` is the byte value that follows the string
     /// * returns 0, or 1 if a terminating byte was included
-    fn push_string(&mut self, neg: bool, s: String, lookahead: Option<u8>) -> usize {
+    fn push_string(&mut self, addr: usize, neg: bool, s: String, lookahead: Option<u8>) -> usize {
 		let mut delim = match neg { true => "\"" , false => "'"};
 		if s.starts_with(delim) {
 			delim = match neg { true=> "&", false => "/"};
 		}
         let off = match neg { true => 0, false => 128 };
 		if lookahead.is_some() && lookahead.unwrap() == 0 {
-			self.instructions.push(self.modify("ASC"));
-			self.operands.push(Some(Operand::txt([delim,&s,delim,",00"].concat())));
+            self.dasm_lines.push(DasmLine::basic(addr,self.modify("ASC"),Operand::txt([delim,&s,delim,",00"].concat())));
 			return 1;
 		}
 		if lookahead.is_some() && probably_string(lookahead.unwrap(), off) {
             let term = String::from_utf8(vec![lookahead.unwrap() - off]).expect(super::RCH);
-			self.instructions.push(self.modify("DCI"));
-			self.operands.push(Some(Operand::txt([delim,&s,&term,delim].concat())));
+			self.dasm_lines.push(DasmLine::basic(addr,self.modify("DCI"),Operand::txt([delim,&s,&term,delim].concat())));
 			return 1;
 		}
-		self.instructions.push(self.modify("ASC"));
-		self.operands.push(Some(Operand::txt([delim, &s, delim].concat())));
+        self.dasm_lines.push(DasmLine::basic(addr, self.modify("ASC"), Operand::txt([delim, &s, delim].concat())));
 		return 0;
     }
 	fn try_data_run(&mut self, img: &[u8], mut ptr: usize, end: usize) -> usize {
@@ -237,7 +255,7 @@ impl Disassembler {
 			pat4.0 -= pat4.0 % 4;
 		}
 		if uniform.0 > 0 && uniform.0 >= pat2.0 && uniform.0 >= pat4.0 && uniform.0 >= pos_str.0 && uniform.0 >= neg_str.0 {
-			self.push_data_psop("DS".to_string(), [uniform.0.to_string(), ",$".to_string(), vec![img[ptr0]].encode_hex_upper()].concat());
+			self.push_data_psop(ptr0, "DS".to_string(), [uniform.0.to_string(), ",$".to_string(), vec![img[ptr0]].encode_hex_upper()].concat());
 			return uniform.0;
 		}
 		if pat2.0 > 0 && pat2.0 >= pat4.0 && pat2.0 >= pos_str.0 && pat2.0 >= neg_str.0 {
@@ -255,7 +273,7 @@ impl Disassembler {
             };
             let v = img[ptr0..ptr0+pos_str.0].to_vec();
 			let s = String::from_utf8(v).expect(super::RCH);
-			return s.len() + self.push_string(false, s, lookahead);
+			return s.len() + self.push_string(ptr0, false, s, lookahead);
 		}
 		if neg_str.0 > 0 {
 			let lookahead: Option<u8> = match ptr0 + neg_str.0 < end {
@@ -265,7 +283,7 @@ impl Disassembler {
             let mut v = img[ptr0..ptr0+neg_str.0].to_vec();
             v = v.iter().map(|x| x - 128).collect();
 			let s = String::from_utf8(v).expect(super::RCH);
-			return s.len() + self.push_string(true, s, lookahead);
+			return s.len() + self.push_string(ptr0, true, s, lookahead);
 		}
 		return 0
 	}
@@ -301,6 +319,52 @@ impl Disassembler {
         }
         None
     }
+    fn push_instruction(&mut self, img: &[u8], mut addr: usize, op: MachineOperation, operand_bytes: usize) -> Result<usize,DYNERR> {
+        let mut new_line = DasmLine::new();
+        new_line.address = addr;
+        new_line.instruction = self.modify(&op.mnemonic);
+        addr += 1;
+        if self.mov_patt.is_match(&op.operand_snippet) {
+            new_line.operand = Some(Operand::mov(img[addr+1],img[addr]));
+            addr += 2;
+        } else if operand_bytes > 0 {
+            let mut val = u32_from_operand(&img[addr..addr+operand_bytes]) as usize;
+            if op.relative {
+                let ival = match operand_bytes {
+                    1 => match val < 128 {
+                        true => (addr + operand_bytes + val) as i64,
+                        false => addr as i64 + operand_bytes as i64 + val as i64 - 256
+                    },
+                    _ => match val < 0x8000 {
+                        true => (addr + operand_bytes + val) as i64,
+                        false => addr as i64 + operand_bytes as i64 + val as i64 - 0x10000
+                    }
+                };
+                val = usize::try_from(ival)?;
+            }
+            if !op.operand_snippet.starts_with("#") {
+                new_line.references.push(val);
+            }
+            if op.relative {
+                new_line.operand = Some(Operand::rel_addr(val as u32,operand_bytes,&op.operand_snippet));
+            } else {
+                // suffix forcing appears to be the most universal
+                new_line.suffix = match operand_bytes {
+                    2 if val < 0x100 && op.abs_suffixable => ":".to_string(),
+                    3 if val < 0x10000 && op.absl_suffixable => "L".to_string(),
+                    _ => String::new()
+                };
+                new_line.prefix = match operand_bytes {
+                    3 if op.absl_prefixable => ">".to_string(),
+                    _ => String::new()
+                };
+                new_line.operand = Some(Operand::abs_addr(val as u32,operand_bytes,&self.modify(&op.operand_snippet)));
+            }
+            addr += operand_bytes;
+        }
+        self.dasm_lines.push(new_line);
+        Ok(addr)
+    }
 	pub fn disassemble(&mut self, img: &[u8], range: DasmRange, proc: ProcessorType, labeling: &str) -> Result<String,DYNERR> {
         let addr_range = match range {
             DasmRange::All => [0,img.len()],
@@ -310,77 +374,34 @@ impl Disassembler {
         };
 		let mut addr = addr_range[0];
 		let mut code = String::new();
-		self.addresses = Vec::new();
-		self.instructions = Vec::new();
-        self.prefixes = Vec::new();
-        self.suffixes = Vec::new();
-		self.operands = Vec::new();
-		let mut references = HashSet::new();
+
+		self.dasm_lines = Vec::new();
 		let mut labels = HashSet::new();
 		while addr < addr_range[1] {
-            let mut prefix = String::new();
-            let mut suffix = String::new();
-			self.addresses.push(addr);
             if let Some((op,operand_bytes)) = self.is_instruction(img[addr],addr,addr_range[1],&proc) {
-				self.instructions.push(self.modify(&op.mnemonic));
-				addr += 1;
-                if self.mov_patt.is_match(&op.operand_snippet) {
-                    self.operands.push(Some(Operand::mov(img[addr+1],img[addr])));
-					addr += 2;
-                } else if operand_bytes > 0 {
-                    let mut val = u32_from_operand(&img[addr..addr+operand_bytes]) as usize;
-                    if op.relative {
-                        let ival = match operand_bytes {
-                            1 => match val < 128 {
-                                true => (addr + operand_bytes + val) as i64,
-                                false => addr as i64 + operand_bytes as i64 + val as i64 - 256
-                            },
-                            _ => match val < 0x8000 {
-                                true => (addr + operand_bytes + val) as i64,
-                                false => addr as i64 + operand_bytes as i64 + val as i64 - 0x10000
-                            }
-                        };
-                        val = usize::try_from(ival)?;
-                    }
-                    if !op.operand_snippet.starts_with("#") {
-                        references.insert(val);
-                    }
-                    if op.relative {
-                        self.operands.push(Some(Operand::rel_addr(val as u32,operand_bytes,&op.operand_snippet)));
-                    } else {
-                        // suffix forcing appears to be the most universal
-                        suffix = match operand_bytes {
-                            2 if val < 0x100 && op.abs_suffixable => ":".to_string(),
-                            3 if val < 0x10000 && op.absl_suffixable => "L".to_string(),
-                            _ => String::new()
-                        };
-                        prefix = match operand_bytes {
-                            3 if op.absl_prefixable => ">".to_string(),
-                            _ => String::new()
-                        };
-                        self.operands.push(Some(Operand::abs_addr(val as u32,operand_bytes,&self.modify(&op.operand_snippet))));
-                    }
-                    addr += operand_bytes;
-                } else {
-                    self.operands.push(None);
-                }
+                addr = self.push_instruction(img, addr, op, operand_bytes)?;
 			} else {
 				let data_bytes = self.try_data_run(img, addr, addr_range[1]);
 				addr += data_bytes;
 				if data_bytes == 0 {
-					self.push_data_psop(self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
+					self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
 					addr += 1;
 				}
 			}
-            self.prefixes.push(prefix);
-            self.suffixes.push(suffix);
 		}
-		// first pass determine labels
-		for i in 0..self.addresses.len()	{
+        // gather references
+        let mut references = HashSet::new();
+        for line in &self.dasm_lines {
+            for r in &line.references {
+                references.insert(*r);
+            }
+        }
+		// determine labels
+		for i in 0..self.dasm_lines.len()	{
 			if labeling.contains("all") {
-				labels.insert(self.addresses[i]);
-            } else if labeling.contains("some") && references.contains(&self.addresses[i]) {
-				labels.insert(self.addresses[i]);
+				labels.insert(self.dasm_lines[i].address);
+            } else if labeling.contains("some") && references.contains(&self.dasm_lines[i].address) {
+				labels.insert(self.dasm_lines[i].address);
             }
 		}
         let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
@@ -388,18 +409,18 @@ impl Disassembler {
             ProcessorType::_65c816 => 3,
             _ => 2
         };
-		for i in 0..self.addresses.len() {
+		for i in 0..self.dasm_lines.len() {
 			let mut line = String::new();
-			if labels.contains(&self.addresses[i]) {
+			if labels.contains(&self.dasm_lines[i].address) {
 				line += "_";
-                line += &hex_from_val("",self.addresses[i] as u32,pc_bytes);
+                line += &hex_from_val("",self.dasm_lines[i].address as u32,pc_bytes);
             }
 			line.push(super::COLUMN_SEPARATOR);
-            line += &self.instructions[i];
-            line += &self.suffixes[i];
-            if let Some(operand) = &self.operands[i] {
+            line += &self.dasm_lines[i].instruction;
+            line += &self.dasm_lines[i].suffix;
+            if let Some(operand) = &self.dasm_lines[i].operand {
                 line.push(super::COLUMN_SEPARATOR);
-                line += &self.prefixes[i];
+                line += &self.dasm_lines[i].prefix;
                 if operand.num.len() == 1 && labels.contains(&(operand.num[0] as usize)) {
                     line += "_";
                     line += &hex_from_val("",operand.num[0] as u32,pc_bytes);
@@ -416,24 +437,21 @@ impl Disassembler {
 	pub fn disassemble_as_data(&mut self, img: &[u8]) -> String {
 		let mut addr = 0;
 		let mut code = String::new();
-		self.addresses = Vec::new();
-		self.instructions = Vec::new();
-		self.operands = Vec::new();
+		self.dasm_lines = Vec::new();
 		while addr < img.len() {
-			self.addresses.push(addr);
 			let data_bytes = self.try_data_run(img, addr, img.len());
 			addr += data_bytes;
             if data_bytes == 0 {
-                self.push_data_psop(self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
+                self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
                 addr += 1;
             }
 		}
         let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
-		for i in 0..self.addresses.len() {
+		for i in 0..self.dasm_lines.len() {
 			let mut line = String::new();
 			line.push(super::COLUMN_SEPARATOR);
-            line += &self.instructions[i];
-            if let Some(operand) = &self.operands[i] {
+            line += &self.dasm_lines[i].instruction;
+            if let Some(operand) = &self.dasm_lines[i].operand {
                 line.push(super::COLUMN_SEPARATOR);
                 line += &operand.txt;
             }

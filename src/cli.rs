@@ -1,4 +1,4 @@
-use clap::{arg, crate_version, ArgAction, ArgGroup, Command, ValueHint};
+use clap::{arg, crate_version, Arg, ArgAction, ArgGroup, Command, ValueHint};
 
 const RNG_HELP: &str = "some types support ranges using `..` and `,,` separators,
 e.g., `1..4,,7..10` would mean 1,2,3,7,8,9";
@@ -344,11 +344,11 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("tokenize")
             .arg(
-                arg!(-a --addr <ADDRESS> "address of tokenized code (Applesoft only)")
+                Arg::new("addr").short('a').long("addr").help("address of tokenized code (Applesoft only)").value_name("ADDRESS")
                     .required(false),
             )
             .arg(
-                arg!(-t --type <TYPE> "type of the file")
+                Arg::new("type").short('t').long("type").help("type of the file").value_name("TYPE")
                     .required(true)
                     .value_parser(["atxt", "itxt", "mtxt"]),
             )
@@ -358,13 +358,46 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("detokenize")
             .arg(
-                arg!(-t --type <TYPE> "type of the file")
+                Arg::new("type").short('t').long("type").help("type of the file").value_name("TYPE")
                     .required(true)
                     .value_parser(["atok", "itok", "mtok"]),
             )
             .visible_alias("dtok")
             .about("read from stdin, detokenize, write to stdout"),
     );
-
+    main_cmd = main_cmd.subcommand(
+        Command::new("asm")
+            .arg(
+                Arg::new("assembler").short('a').long("assembler").help("assembler variant").value_name("NAME")
+                    .required(false)
+                    .value_parser(["m8","m16","m16+","m32"])
+                    .default_value("m8")
+            )
+            .arg(
+                Arg::new("workspace").short('w').long("workspace").help("workspace directory").value_name("PATH")
+                    .required(false)
+            )
+            .about("read from stdin, assemble, write to stdout")
+            .after_help("At present this is limited, it will error out if program counter or symbol value cannot be determined.")
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("dasm")
+            .arg(
+                Arg::new("proc").short('p').long("proc").help("processor target").value_name("NAME")
+                    .required(true)
+                    .value_parser(["6502","65c02","65802","65816"])
+            )
+            .arg(
+                Arg::new("mx").long("mx").help("MX status bits").value_name("BINARY")
+                    .required(false)
+                    .value_parser(["00","01","10","11"])
+                    .default_value("11")
+            )
+            .arg(
+                Arg::new("org").short('o').long("org").help("starting address").value_name("ADDRESS")
+                    .required(true)
+            )
+            .about("read from stdin, disassemble, write to stdout")
+    );
     return main_cmd;
 }

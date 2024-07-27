@@ -28,6 +28,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('mkdsk', 'mkdsk', [CompletionResultType]::ParameterValue, 'write a blank disk image to the given path')
             [CompletionResult]::new('mkdir', 'mkdir', [CompletionResultType]::ParameterValue, 'create a new directory inside a disk image')
             [CompletionResult]::new('delete', 'delete', [CompletionResultType]::ParameterValue, 'delete a file or directory inside a disk image')
+            [CompletionResult]::new('del', 'del', [CompletionResultType]::ParameterValue, 'delete a file or directory inside a disk image')
+            [CompletionResult]::new('era', 'era', [CompletionResultType]::ParameterValue, 'delete a file or directory inside a disk image')
             [CompletionResult]::new('protect', 'protect', [CompletionResultType]::ParameterValue, 'password protect a disk or file')
             [CompletionResult]::new('unprotect', 'unprotect', [CompletionResultType]::ParameterValue, 'remove password protection from a disk or file')
             [CompletionResult]::new('lock', 'lock', [CompletionResultType]::ParameterValue, 'write protect a file or directory inside a disk image')
@@ -40,11 +42,18 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'read from stdin, local, or disk image, write to stdout')
             [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
             [CompletionResult]::new('catalog', 'catalog', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
+            [CompletionResult]::new('cat', 'cat', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
+            [CompletionResult]::new('dir', 'dir', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
+            [CompletionResult]::new('ls', 'ls', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('tree', 'tree', [CompletionResultType]::ParameterValue, 'write directory tree as a JSON string to stdout')
             [CompletionResult]::new('stat', 'stat', [CompletionResultType]::ParameterValue, 'write FS statistics as a JSON string to stdout')
             [CompletionResult]::new('geometry', 'geometry', [CompletionResultType]::ParameterValue, 'write disk geometry as a JSON string to stdout')
             [CompletionResult]::new('tokenize', 'tokenize', [CompletionResultType]::ParameterValue, 'read from stdin, tokenize, write to stdout')
+            [CompletionResult]::new('tok', 'tok', [CompletionResultType]::ParameterValue, 'read from stdin, tokenize, write to stdout')
             [CompletionResult]::new('detokenize', 'detokenize', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
+            [CompletionResult]::new('dtok', 'dtok', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
+            [CompletionResult]::new('asm', 'asm', [CompletionResultType]::ParameterValue, 'read from stdin, assemble, write to stdout')
+            [CompletionResult]::new('dasm', 'dasm', [CompletionResultType]::ParameterValue, 'read from stdin, disassemble, write to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -77,6 +86,24 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             break
         }
         'a2kit;delete' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;del' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;era' {
             [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path inside disk image to delete')
             [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
@@ -226,6 +253,36 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'a2kit;cat' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;dir' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;ls' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'a2kit;tree' {
             [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
             [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
@@ -257,9 +314,44 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'a2kit;tok' {
+            [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'address of tokenized code (Applesoft only)')
+            [CompletionResult]::new('--addr', 'addr', [CompletionResultType]::ParameterName, 'address of tokenized code (Applesoft only)')
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'a2kit;detokenize' {
             [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the file')
             [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;dtok' {
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the file')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;asm' {
+            [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'assembler variant')
+            [CompletionResult]::new('--assembler', 'assembler', [CompletionResultType]::ParameterName, 'assembler variant')
+            [CompletionResult]::new('-w', 'w', [CompletionResultType]::ParameterName, 'workspace directory')
+            [CompletionResult]::new('--workspace', 'workspace', [CompletionResultType]::ParameterName, 'workspace directory')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;dasm' {
+            [CompletionResult]::new('-p', 'p', [CompletionResultType]::ParameterName, 'processor target')
+            [CompletionResult]::new('--proc', 'proc', [CompletionResultType]::ParameterName, 'processor target')
+            [CompletionResult]::new('--mx', 'mx', [CompletionResultType]::ParameterName, 'MX status bits')
+            [CompletionResult]::new('-o', 'o', [CompletionResultType]::ParameterName, 'starting address')
+            [CompletionResult]::new('--org', 'org', [CompletionResultType]::ParameterName, 'starting address')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -285,6 +377,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('geometry', 'geometry', [CompletionResultType]::ParameterValue, 'write disk geometry as a JSON string to stdout')
             [CompletionResult]::new('tokenize', 'tokenize', [CompletionResultType]::ParameterValue, 'read from stdin, tokenize, write to stdout')
             [CompletionResult]::new('detokenize', 'detokenize', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
+            [CompletionResult]::new('asm', 'asm', [CompletionResultType]::ParameterValue, 'read from stdin, assemble, write to stdout')
+            [CompletionResult]::new('dasm', 'dasm', [CompletionResultType]::ParameterValue, 'read from stdin, disassemble, write to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -346,6 +440,12 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             break
         }
         'a2kit;help;detokenize' {
+            break
+        }
+        'a2kit;help;asm' {
+            break
+        }
+        'a2kit;help;dasm' {
             break
         }
         'a2kit;help;help' {
