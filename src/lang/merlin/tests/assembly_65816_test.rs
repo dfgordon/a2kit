@@ -10,9 +10,8 @@ fn test_assembler(hex: &str, code: String, pc: usize) {
     symbols.processor = ProcessorType::_65c816;
     symbols.assembler = MerlinVersion::Merlin32;
     assembler.use_shared_symbols(std::sync::Arc::new(symbols));
-    assembler.set_program_counter(pc);
     let actual = assembler
-        .spot_assemble(code, 0, line_count as isize)
+        .spot_assemble(code, 0, line_count as isize, Some(pc))
         .expect("asm error");
     assert_eq!(actual, img);
 }

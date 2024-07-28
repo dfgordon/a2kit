@@ -192,7 +192,7 @@ _a2kit() {
             return 0
             ;;
         a2kit__asm)
-            opts="-a -w -h --assembler --workspace --help"
+            opts="-a -w -h --assembler --workspace --literals --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

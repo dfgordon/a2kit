@@ -311,6 +311,7 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --assembler 'assembler variant'
             cand -w 'workspace directory'
             cand --workspace 'workspace directory'
+            cand --literals 'assign values to disassembled hex labels'
             cand -h 'Print help'
             cand --help 'Print help'
         }

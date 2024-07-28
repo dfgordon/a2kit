@@ -7,7 +7,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use a2kit::lang::server::{Checkpoint, Tokens};
-use a2kit::lang::{normalize_client_uri,normalize_client_uri_str,disk_server};
+use a2kit::lang::{disk_server, merlin, normalize_client_uri, normalize_client_uri_str};
 use a2kit::lang::merlin::formatter;
 use a2kit::lang::merlin::disassembly::DasmRange;
 use a2kit::lang::merlin::ProcessorType;
@@ -235,8 +235,9 @@ pub fn handle_request(
                             if let (Ok(program),Ok(uri),Ok(beg),Ok(end)) = (prog_res,uri_res,beg_res,end_res) {
                                 let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
                                 if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
-                                    tools.assembler.use_shared_symbols(chk.shared_symbols());
-                                    resp = match tools.assembler.spot_assemble(program, beg, end) {
+                                    let dasm_symbols = merlin::assembly::Assembler::dasm_symbols(chk.shared_symbols());
+                                    tools.assembler.use_shared_symbols(Arc::new(dasm_symbols));
+                                    resp = match tools.assembler.spot_assemble(program, beg, end, None) {
                                         Ok(img) => {
                                             let dasm = tools.disassembler.disassemble_as_data(&img);
                                             lsp_server::Response::new_ok(req.id,dasm)

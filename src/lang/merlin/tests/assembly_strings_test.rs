@@ -10,7 +10,7 @@ fn test_assembler(test_code: &str,expected: &str,vers: MerlinVersion) {
     config.version = vers;
     assembler.set_config(config);
 	// get actual into hex string
-	let bytes = assembler.spot_assemble(test_code.to_string(),0,1).expect("assembler failed");
+	let bytes = assembler.spot_assemble(test_code.to_string(),0,1,None).expect("assembler failed");
     let actual = hex::encode_upper(bytes);
 	assert_eq!(actual,expected.replace(" ",""));
 }

@@ -1,4 +1,4 @@
-//! Module to transform ojbect code and data to Merlin source files
+//! Module to transform object code and data to Merlin source files
 //! 
 //! This is not intended to be entirely automatic, rather it is meant to be
 //! part of a language server, wherein live human intervention is possible.
@@ -409,12 +409,14 @@ impl Disassembler {
             ProcessorType::_65c816 => 3,
             _ => 2
         };
+        let mut last_addr = usize::MAX;
 		for i in 0..self.dasm_lines.len() {
 			let mut line = String::new();
-			if labels.contains(&self.dasm_lines[i].address) {
+			if labels.contains(&self.dasm_lines[i].address) && self.dasm_lines[i].address != last_addr {
 				line += "_";
                 line += &hex_from_val("",self.dasm_lines[i].address as u32,pc_bytes);
             }
+            last_addr = self.dasm_lines[i].address;
 			line.push(super::COLUMN_SEPARATOR);
             line += &self.dasm_lines[i].instruction;
             line += &self.dasm_lines[i].suffix;

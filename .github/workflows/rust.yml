@@ -68,7 +68,6 @@ jobs:
       - name: Compress
         run: |
           mkdir -p ./artifacts
-          CLI=("a2kit")
           SERVERS=("server-applesoft" "server-integerbasic" "server-merlin")
           if [[ $OS =~ ^windows.*$ ]]; then
               EXE=".exe"
@@ -80,18 +79,11 @@ jobs:
           else
             TAG=$GITHUB_SHA
           fi
-          cli_list="completions"
-          for i in ${CLI[@]}; do
-            mv ./target/$TARGET/release/${i}$EXE ./${i}$EXE
-            cli_list+=" ${i}$EXE"
-          done
-          tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz $cli_list
-          server_list=""
+          mv ./target/$TARGET/release/a2kit$EXE ./a2kit$EXE
+          tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz completions a2kit$EXE
           for i in ${SERVERS[@]}; do
-            mv ./target/$TARGET/release/${i}$EXE ./${i}$EXE
-            server_list+=" ${i}$EXE"
+            mv ./target/$TARGET/release/${i}$EXE ./artifacts/${i}-${TARGET}$EXE
           done
-          tar -czf ./artifacts/server-$TARGET-$TAG.tar.gz $server_list
       - name: Archive artifact
         uses: actions/upload-artifact@v4
         with:

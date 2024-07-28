@@ -23,9 +23,7 @@
 //! FLS | wrong lower case | wrong lower case | refuses lower case
 //! FLS | flashes specials | flashes specials | does not flash specials
 //! REV | hex ignored | unknown | hex incorporated into string (2)
-//! 
 //! DS | bit shift not allowed | unknown | bit shift works
-//!
 //! JML | n/a | unknown | cannot produce $DC opcode
 //!
 //! 1. lower case is only invertible in the alternate character set

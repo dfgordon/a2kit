@@ -10,7 +10,8 @@ fn test_assembler(test_code: &str,expected: &str,vers: MerlinVersion) {
     config.version = vers;
     assembler.set_config(config);
 	// get actual into hex string
-	let bytes = assembler.spot_assemble(test_code.to_string(),0,1).expect("assembler failed");
+    let end = test_code.lines().count() as isize;
+	let bytes = assembler.spot_assemble(test_code.to_string(),0,end,None).expect("assembler failed");
     let actual = hex::encode_upper(bytes);
 	assert_eq!(actual,expected.replace(" ",""));
 }
@@ -72,5 +73,18 @@ fn ds() {
     test_assembler(test_code,expected,MerlinVersion::Merlin16Plus);
     let test_code = "   ds  5,>$fded\n";
     let expected = "FD FD FD FD FD";
+    test_assembler(test_code,expected,MerlinVersion::Merlin16Plus);
+    let test_code = "   ds  5\n";
+    let expected = "00 00 00 00 00";
+    test_assembler(test_code,expected,MerlinVersion::Merlin16Plus);
+}
+
+#[test]
+fn ds_new_page() {
+    let test_code = " org $40f8\n   ds  \\,1\n";
+    let expected = "01 01 01 01 01 01 01 01";
+    test_assembler(test_code,expected,MerlinVersion::Merlin16Plus);
+    let test_code = " org $4000\n   ds  \\,1\n";
+    let expected = "";
     test_assembler(test_code,expected,MerlinVersion::Merlin16Plus);
 }

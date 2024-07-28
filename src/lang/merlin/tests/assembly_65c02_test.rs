@@ -9,9 +9,8 @@ fn test_assembler(hex: &str, code: String, pc: usize) {
     let mut symbols = Symbols::new();
     symbols.processor = ProcessorType::_65c02;
     assembler.use_shared_symbols(std::sync::Arc::new(symbols));
-    assembler.set_program_counter(pc);
     let actual = assembler
-        .spot_assemble(code, 0, line_count as isize)
+        .spot_assemble(code, 0, line_count as isize, Some(pc))
         .expect("asm error");
     assert_eq!(actual, img);
 }

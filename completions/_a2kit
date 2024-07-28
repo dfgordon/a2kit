@@ -412,6 +412,7 @@ _arguments "${_arguments_options[@]}" : \
 '--assembler+[assembler variant]:NAME:(m8 m16 m16+ m32)' \
 '-w+[workspace directory]:PATH: ' \
 '--workspace+[workspace directory]:PATH: ' \
+'--literals[assign values to disassembled hex labels]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

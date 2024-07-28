@@ -313,18 +313,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("tree")
             .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
+                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
                     .value_hint(ValueHint::FilePath)
                     .required(false),
             )
-            .arg(arg!(--meta "include metadata").action(ArgAction::SetTrue))
+            .arg(Arg::new("meta").long("meta").help("include metadata").action(ArgAction::SetTrue))
             .about("write directory tree as a JSON string to stdout")
             .after_help(IN_HELP),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("stat")
             .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
+                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
                     .value_hint(ValueHint::FilePath)
                     .required(false),
             )
@@ -334,7 +334,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("geometry")
             .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
+                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
                     .value_hint(ValueHint::FilePath)
                     .required(false),
             )
@@ -376,6 +376,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(
                 Arg::new("workspace").short('w').long("workspace").help("workspace directory").value_name("PATH")
                     .required(false)
+            )
+            .arg(
+                Arg::new("literals").long("literals").help("assign values to disassembled hex labels").action(ArgAction::SetTrue)
             )
             .about("read from stdin, assemble, write to stdout")
             .after_help("At present this is limited, it will error out if program counter or symbol value cannot be determined.")

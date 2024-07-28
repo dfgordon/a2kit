@@ -382,8 +382,13 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         if err==0 {
             let mut asm = merlin::assembly::Assembler::new();
             asm.set_config(config);
-            asm.use_shared_symbols(std::sync::Arc::new(symbols));
-            let object = asm.spot_assemble(doc.text.clone(), 0, doc.text.len() as isize)?;
+            if cmd.get_flag("literals") {
+                let dsyms = merlin::assembly::Assembler::dasm_symbols(std::sync::Arc::new(symbols));
+                asm.use_shared_symbols(std::sync::Arc::new(dsyms));
+            } else {
+                asm.use_shared_symbols(std::sync::Arc::new(symbols));
+            }
+            let object = asm.spot_assemble(doc.text.clone(), 0, doc.text.len() as isize, None)?;
             if atty::is(atty::Stream::Stdout) {
                 a2kit::display_block(0,&object);
             } else {

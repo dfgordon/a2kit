@@ -316,7 +316,7 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
         push(rng, "macro substitution variable referenced outside macro", lsp::DiagnosticSeverity::ERROR);
     } else if child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();
-        if ck == "global_label" {
+        if ck == "global_label" && !in_macro {
             ctx.enter_scope(&txt,symbols);
         } else if ck=="local_label" {
             if let Some(next) = node.next_named_sibling() {

@@ -35,8 +35,9 @@ const UNPARSING_MAP: [(&'static str,&'static str);26] =  [
 ];
 
 /// Map used to find a machine addressing mode based on a reduced
-/// addressing mode used by the parser, and an operand length
-const PARSING_MAP: [(&'static str,&'static str);27] =  [
+/// addressing mode used by the parser, and an operand length.
+/// Relative addressing has to be handled separately.
+const PARSING_MAP: [(&'static str,&'static str);25] =  [
     ("imm 1","imm"), // selected based on MX
     ("imm 2","imm"), // selected based on MX
     ("data 1","imm_zp"),
@@ -44,8 +45,6 @@ const PARSING_MAP: [(&'static str,&'static str);27] =  [
     ("addr 1","zp"),
     ("addr 2","abs"),
     ("addr 3","absl"),
-    ("addr r1","rel"),
-    ("addr r2","rell"),
     ("iaddr_ix 1","(zp,x)"),
     ("iaddr_ix 2","(abs,x)"),
     ("iaddr_y 1","(zp),y"),
@@ -246,21 +245,30 @@ impl Operation {
         }
     }
     /// Use parsing information to get an exact address mode.
-    /// * parsing_mode - the string slice representing the tree node's kind
+    /// * parsing_mode - the string slice representing the tree node's kind (e.g. imm, addr, ...)
     /// * byte_count - the number of bytes required to represent the expression, accounting for prefix modifiers
     pub fn get_address_mode(&self,parsing_mode: &str,byte_count: usize) -> Result<AddressMode,crate::DYNERR> {
         let map = HashMap::from(PARSING_MAP);
-        let mut keys = Vec::new();
-		keys.push(format!("{} {}",parsing_mode,byte_count));
-        keys.push(format!("{} r{}",parsing_mode,byte_count));
-        log::trace!("keys {:?}",&keys);
-        for key in keys {
-            if let Some(target_mode) = map.get(&key.as_str()) {
-                for mode in &self.modes {
-                    log::trace!("testing mode {} against mnemonic {}",target_mode,&mode.mnemonic);
-                    if &mode.mnemonic == *target_mode {
-                        return Ok(mode.clone());
-                    }
+        let key = format!("{} {}",parsing_mode,byte_count);
+        if let Some(target_mode) = map.get(&key.as_str()) {
+            log::trace!("given {} look for {}",&key,target_mode);
+            for mode in &self.modes {
+                log::trace!("found {}",&mode.mnemonic);
+                if &mode.mnemonic == *target_mode {
+                    return Ok(mode.clone());
+                }
+            }
+        }
+        if parsing_mode=="addr" {
+            log::trace!("try a relative address");
+            for mode in &self.modes {
+                if &mode.mnemonic == "rel" {
+                    log::trace!("found rel");
+                    return Ok(mode.clone());
+                }
+                if &mode.mnemonic == "rell" {
+                    log::trace!("found rell");
+                    return Ok(mode.clone());
                 }
             }
         }

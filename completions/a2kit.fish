@@ -163,6 +163,7 @@ complete -c a2kit -n "__fish_a2kit_using_subcommand dtok" -s t -l type -d 'type 
 complete -c a2kit -n "__fish_a2kit_using_subcommand dtok" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_a2kit_using_subcommand asm" -s a -l assembler -d 'assembler variant' -r -f -a "{m8\t'',m16\t'',m16+\t'',m32\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand asm" -s w -l workspace -d 'workspace directory' -r
+complete -c a2kit -n "__fish_a2kit_using_subcommand asm" -l literals -d 'assign values to disassembled hex labels'
 complete -c a2kit -n "__fish_a2kit_using_subcommand asm" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_a2kit_using_subcommand dasm" -s p -l proc -d 'processor target' -r -f -a "{6502\t'',65c02\t'',65802\t'',65816\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand dasm" -l mx -d 'MX status bits' -r -f -a "{00\t'',01\t'',10\t'',11\t''}"

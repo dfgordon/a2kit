@@ -9,9 +9,8 @@ fn test_assembler(hex: &str, code: String, pc: usize) {
     let mut symbols = Symbols::new();
     symbols.processor = ProcessorType::_6502;
     assembler.use_shared_symbols(std::sync::Arc::new(symbols));
-    assembler.set_program_counter(pc);
     let actual = assembler
-        .spot_assemble(code, 0, line_count as isize)
+        .spot_assemble(code, 0, line_count as isize, Some(pc))
         .expect("asm error");
     assert_eq!(actual, img);
 }
@@ -251,15 +250,15 @@ mod branching {
     fn forward_branch() {
         let hex = "907fb010f0003000d000100050007000";
         let mut test_code = String::new();
-        test_code += "         BCC   $0081\n";
-        test_code += "         BCS   $0014\n";
-        test_code += "         BEQ   $0006\n";
-        test_code += "         BMI   $0008\n";
-        test_code += "         BNE   $000A\n";
-        test_code += "         BPL   $000C\n";
-        test_code += "         BVC   $000E\n";
-        test_code += "         BVS   $0010\n";
-        super::test_assembler(hex, test_code, 0);
+        test_code += "         BCC   $0381\n";
+        test_code += "         BCS   $0314\n";
+        test_code += "         BEQ   $0306\n";
+        test_code += "         BMI   $0308\n";
+        test_code += "         BNE   $030A\n";
+        test_code += "         BPL   $030C\n";
+        test_code += "         BVC   $030E\n";
+        test_code += "         BVS   $0310\n";
+        super::test_assembler(hex, test_code, 768);
     }
     #[test]
     fn reverse_branch() {

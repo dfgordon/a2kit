@@ -1,11 +1,37 @@
-//! Assembler for any Merlin version.
+//! # Assembler for any Merlin version.
 //! 
-//! Currently we provide only "spot assembly," which is useful
-//! for overriding the disassembler's preference for code over data.  This operates
-//! on lines where neither the program counter nor the symbol values are needed, and makes
-//! an assumption that labels of the form `_XXXX` are hex strings giving a literal address.
+//! Currently we provide only "spot assembly," which is useful for re-assembling sections
+//! of code as data after disassembly.
 //! 
-//! If assembly fails an error should be returned gracefully.
+//! The spot assembler is designed to work under conditions where the program counter and/or
+//! symbol information are not necessarily known, i.e., it will proceed as far as it can
+//! under these conditions.  It will acquire the program counter from ORG or symbol data if possible.
+//! 
+//! ## Scope
+//! 
+//! The assembler handles the full 65816 instruction set.  It handles all data and string pseudo-operations.
+//! It handles any valid Merlin expression, assuming symbol values can be resolved.  It handles all Merlin
+//! prefix and suffix modifiers.  It responds to the MX pseudo-operation based on processor target.
+//! 
+//! The following pseudo-operations are not handled and will yield an error:
+//! 
+//! * Includes (PUT, USE)
+//! * Macros (MAC, PMC, EOM)
+//! * Modules (REL, EXT, EXD, ENT)
+//! * Control (IF, DO, ELSE, FIN, LUP, --^, END, DUM, DEND, CHK, ERR)
+//! * Assignment (EQU, VAR)
+//! 
+//! The following pseudo-operations are silently ignored: AST, CAS, CYC, DSK, EXP, KBD, LST, LSTDO, OBJ, PAG, PAU, SAV, SKP, TR, TTL, TYP, XC.
+//! 
+//! ## Configuration and Symbols
+//! 
+//! The assembler can be configured using `set_config`, but `use_shared_symbols` is more important.
+//! In particular, the processor target and assembler variant are packaged within `merlin::Symbols`, and these
+//! will take precedence, since they reflect the configuration at the time the symbols were generated.  For this
+//! reason XC is ignored.
+//! 
+//! If symbol values are available, the spot-assembler will use them.  It does not calculate symbol values, but it does
+//! check them against the program counter.
 
 use std::sync::Arc;
 use super::settings::Settings;
@@ -17,7 +43,7 @@ use crate::lang::merlin::{Operation,ProcessorType};
 use crate::lang::{node_radix, node_text, Navigation, Navigate};
 use crate::{STDRESULT,DYNERR};
 
-const IGNORED_PSOPS: [&str;16] = ["ast", "cas", "cyc", "dsk", "exp", "kbd", "lst", "lstdo", "obj", "pag", "pau", "sav", "skp", "tr", "ttl", "typ"];
+const IGNORED_PSOPS: [&str;17] = ["ast", "cas", "cyc", "dsk", "exp", "kbd", "lst", "lstdo", "obj", "pag", "pau", "sav", "skp", "tr", "ttl", "typ", "xc"];
 
 /// closely parallels Merlin 8/16 error messages
 #[derive(Error,Debug)]
@@ -52,7 +78,7 @@ pub enum Error {
     ForwardRef,
     #[error("illegal relative address")]
     IllegalRelAddr,
-    #[error("latest pass changed value")]
+    #[error("label value changed unexpectedly")]
     Misalignment,
     #[error("nesting too deep")]
     Nesting,
@@ -441,11 +467,26 @@ impl Assembler {
         self.code.append(&mut ans);
         Ok(())
     }
+    /// Assign values to labels with textual form `_XXXX...`, where X is a hex digit.
+    /// The text is assumed to give the value, as is the case after disassembly.
+    /// The returned symbols are generally turned into a new Arc pointer that is fed into the assembler.
+    pub fn dasm_symbols(symbols: Arc<Symbols>) -> Symbols {
+        let mut ans = symbols.as_ref().clone();
+        for (txt,sym) in &mut ans.globals {
+            if txt.starts_with("_") {
+                if let Ok(val) = u32::from_str_radix(&txt[1..], 16) {
+                    sym.value = Some(val as i64);
+                }
+            }
+        }
+        ans
+    }
     /// Try to assemble lines in a circumstance where the symbol values and program counter
     /// are not necessarily known.  The spot assembler will proceed as far as it can with
     /// whatever information is available, and error out if it hits something that cannot
     /// be handled (e.g. a relative branch with unknown PC).
-	pub fn spot_assemble(&mut self, txt: String, beg: isize, end: isize) -> Result<Vec<u8>,DYNERR> {
+	pub fn spot_assemble(&mut self, txt: String, beg: isize, end: isize, pc: Option<usize>) -> Result<Vec<u8>,DYNERR> {
+        self.pc = pc;
         self.code = Vec::new();
 		self.row = 0;
 		for line in txt.lines() {
@@ -473,12 +514,37 @@ impl Assembler {
 
 impl Navigate for Assembler {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
-		if ["macro_call","program_counter","comment","heading"].contains(&curs.node().kind()) {
+		if curs.node().kind() == "macro_call" {
+            log::error!("macro calls are not supported");
 			return Err(Box::new(Error::CannotAssemble));
 		}
 		if curs.node().has_error() {
 			return Err(Box::new(Error::Syntax));
 		}
+
+        // If no program counter, initialize using the first label definition with a value.
+        // (this is useful for assembling data following disassembly)
+        // Check subsequent label definitions with values for misalignment.
+        if curs.node().kind()=="label_def" {
+            let txt = node_text(&curs.node(), &self.line);
+            if let Some(sym) = self.symbols.globals.get(&txt) {
+                if sym.flags & super::symbol_flags::EXT > 0 {
+                    return Ok(Navigation::GotoSibling);
+                }
+                if let Some(val) = sym.value {
+                    if let Some(pc) = self.pc {
+                        if val != pc as i64 {
+                            log::error!("label value is {} but PC is {}",val,pc);
+                            return Err(Box::new(Error::Misalignment));
+                        }
+                    } else {
+                        log::debug!("set program counter to {}",val);
+                        self.pc = Some(usize::try_from(val)?);
+                    }
+                }
+                return Ok(Navigation::GotoSibling);
+            }
+        }
 
 		if curs.node().kind().starts_with("op_") {
             let txt = node_text(&curs.node(), &self.line);
@@ -497,6 +563,9 @@ impl Navigate for Assembler {
                                     let src = self.code.pop().unwrap();
                                     self.code.push(dst);
                                     self.code.push(src);
+                                    if let Some(pc) = self.pc.as_mut() {
+                                        *pc += 3;
+                                    }
                                     return Ok(Navigation::Exit);
                                 }
                                 return Err(Box::new(Error::Syntax));
@@ -526,6 +595,9 @@ impl Navigate for Assembler {
                         for mode in op.modes {
                             if ["accum","impl","s"].contains(&mode.mnemonic.as_str()) {
                                 self.code.push(mode.code as u8);
+                                if let Some(pc) = self.pc.as_mut() {
+                                    *pc += 1;
+                                }
                                 return Ok(Navigation::Exit);
                             }
                         }
@@ -543,17 +615,35 @@ impl Navigate for Assembler {
                     match arg.kind() {
                         "arg_mx" => {
                             if let Some(child) = arg.named_child(0) {
-                                // TODO: should we allow prefixes here?
                                 match self.eval_expr(&child,&self.line) {
                                     Ok(val) => {
                                         self.m8bit = val & 0b10 > 0;
                                         self.x8bit = val & 0b01 > 0;
+                                        if self.symbols.processor == ProcessorType::_6502 || self.symbols.processor == ProcessorType::_65c02 {
+                                            if !self.m8bit || !self.x8bit {
+                                                return Err(Box::new(Error::BadAddressMode))
+                                            }
+                                        }
                                         return Ok(Navigation::Exit); 
                                     },
                                     Err(e) => return Err(e)
                                 }
                             }
                             return Err(Box::new(Error::Syntax));
+                        },
+                        "arg_org" => {
+                            if self.code.len() > 0 {
+                                return Err(Box::new(Error::BadOrg));
+                            }
+                            if let Some(child) = arg.named_child(0) {
+                                match self.eval_expr(&child,&self.line) {
+                                    Ok(val) => {
+                                        log::debug!("set program counter to {}",val);
+                                        self.pc = Some(usize::try_from(val)?);
+                                    },
+                                    Err(e) => return Err(e)
+                                }
+                            }
                         },
                         "arg_asc" => {
                             if let Some(child) = arg.named_child(0) {
@@ -631,6 +721,9 @@ impl Navigate for Assembler {
                         "arg_hex" => {
                             let txt = node_text(&arg, &self.line).replace(",","");
                             let mut hex = hex::decode(&txt)?;
+                            if let Some(pc) = self.pc.as_mut() {
+                                *pc += hex.len();
+                            }
                             self.code.append(&mut hex);
                             return Ok(Navigation::Exit);
                         },
@@ -640,7 +733,15 @@ impl Navigate for Assembler {
                             let mut maybe_reps: Option<usize> = None;
                             while let Some(child) = iter.next() {
                                 if child.kind() == "new_page" {
-                                    return Err(Box::new(Error::CannotAssemble));
+                                    if let Some(pc) = self.pc {
+                                        let page_boundary = 256 * (pc / 256 + 1);
+                                        if page_boundary - pc == 256 {
+                                            return Ok(Navigation::Exit);
+                                        }
+                                        maybe_reps = Some(page_boundary - pc);
+                                    } else {
+                                        return Err(Box::new(Error::UnresolvedProgramCounter));
+                                    }
                                 } else if child.kind() == "data" {
                                     let val = self.eval_data(&child, 1, false)?;
                                     if let Some(reps) = maybe_reps {
@@ -653,6 +754,11 @@ impl Navigate for Assembler {
                                     }
                                 } else {
                                     return Err(Box::new(Error::Syntax));
+                                }
+                            }
+                            if arg.named_child_count() == 1 && maybe_reps.is_some() {
+                                for _i in 0..maybe_reps.unwrap() {
+                                    self.push_data(0,1,false);
                                 }
                             }
                             return Ok(Navigation::Exit);

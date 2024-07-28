@@ -342,6 +342,7 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--assembler', 'assembler', [CompletionResultType]::ParameterName, 'assembler variant')
             [CompletionResult]::new('-w', 'w', [CompletionResultType]::ParameterName, 'workspace directory')
             [CompletionResult]::new('--workspace', 'workspace', [CompletionResultType]::ParameterName, 'workspace directory')
+            [CompletionResult]::new('--literals', 'literals', [CompletionResultType]::ParameterName, 'assign values to disassembled hex labels')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break

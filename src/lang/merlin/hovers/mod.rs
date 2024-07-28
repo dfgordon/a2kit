@@ -59,12 +59,12 @@ impl HoverProvider {
 }
 
 impl Hovers for HoverProvider {
-    fn get(&mut self, line: String, _row: isize, raw_col: isize) -> Option<lsp::Hover> {
+    fn get(&mut self, line: String, row: isize, raw_col: isize) -> Option<lsp::Hover> {
         self.markup = lsp::MarkupContent {
             kind: lsp::MarkupKind::Markdown,
             value: "".to_string()
         };
-        self.pos = lsp::Position::new(0,raw_col as u32);
+        self.pos = lsp::Position::new(row as u32,raw_col as u32);
         if let Ok(tree) = self.parser.parse(&line,&self.symbols) {
             if let Ok(()) = self.walk(&tree) {
                 if self.markup.value.len() > 0 {
@@ -81,7 +81,7 @@ impl Hovers for HoverProvider {
 
 impl Navigate for HoverProvider {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
-        self.rng = lsp_range(curs.node().range(),0,self.parser.col_offset());
+        self.rng = lsp_range(curs.node().range(),self.pos.line as isize,self.parser.col_offset());
         let txt = node_text(&curs.node(),self.parser.line());
         if range_contains_pos(&self.rng, &self.pos) {
 
@@ -199,11 +199,15 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                         self.markup.value += "variable defined right here";
                         return Ok(Navigation::Exit);
                     } else if inner.kind() == "global_label" {
-                        for (name,sym) in &self.symbols.macros {
-                            if sym.children.contains_key(name) {
-                                self.markup.value += "scoped to macro ";
-                                self.markup.value += name;
-                                return Ok(Navigation::Exit);
+                        for (name,parent) in &self.symbols.macros {
+                            if let Some(child) = parent.children.get(&txt) {
+                                for def in &child.defs {
+                                    if def.range.start.line == self.pos.line && def.uri.to_string() == self.symbols.display_doc_uri {
+                                        self.markup.value += "scoped to macro ";
+                                        self.markup.value += name;
+                                        return Ok(Navigation::Exit);
+                                    }
+                                }
                             }
                         }
                         if let Some(sym) = self.symbols.globals.get(&txt) {
