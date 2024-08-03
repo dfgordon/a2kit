@@ -6,6 +6,7 @@
 
 use crate::img;
 use crate::fs::Block;
+use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
 use crate::{STDRESULT,DYNERR};
 
@@ -86,14 +87,14 @@ impl img::DiskImage for D13 {
         self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
         Ok(())
     }
-    fn from_bytes(data: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         // reject anything that cannot be a DOS 3.2 volume
         if data.len()%TRACK_SIZE > 0 || data.len()/TRACK_SIZE < MIN_TRACKS {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
-        Some(Self {
+        Ok(Self {
             tracks: (data.len()/TRACK_SIZE) as u16,
-            data: data.clone()
+            data: data.to_vec()
         })
     }
     fn what_am_i(&self) -> img::DiskImageType {
@@ -121,16 +122,16 @@ impl img::DiskImage for D13 {
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
         let [c,h] = self.track_2_ch(trk);
-        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..13 {
-            chs_map.push([c,h,crate::bios::skew::DOS32_PHYSICAL[i]]);
+            chss_map.push([c,h,crate::bios::skew::DOS32_PHYSICAL[i],256]);
         }
         return Ok(Some(img::TrackSolution {
             cylinder: c,
             head: h,
             flux_code: img::FluxCode::GCR,
             nib_code: img::NibbleCode::N53,
-            chs_map
+            chss_map
         }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

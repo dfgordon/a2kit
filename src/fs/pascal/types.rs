@@ -2,7 +2,7 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStruct, DiskStructError};
 use super::super::TextEncoder;
 use log::{debug,error};
 
@@ -306,12 +306,14 @@ impl DiskStruct for SequentialText {
     }
     /// Create structure using flattened bytes (typically from disk)
     /// Due to the pagination, we must keep all the nulls.
-    fn from_bytes(dat: &Vec<u8>) -> Self {
-        debug!("from_bytes: {}",dat.len());
-        Self {
+    fn from_bytes(dat: &[u8]) -> Result<Self,DiskStructError> {
+        if dat.len() < TEXT_PAGE + 1 {
+            return Err(DiskStructError::OutOfData);
+        }
+        Ok(Self {
             header: dat[0..TEXT_PAGE].to_vec(),
             text: dat[TEXT_PAGE..].to_vec()
-        }
+        })
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
@@ -322,9 +324,10 @@ impl DiskStruct for SequentialText {
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
-    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
-        let temp = SequentialText::from_bytes(&dat);
+    fn update_from_bytes(&mut self,dat: &[u8]) -> Result<(),DiskStructError> {
+        let temp = SequentialText::from_bytes(&dat)?;
         self.text = temp.text.clone();
+        Ok(())
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {

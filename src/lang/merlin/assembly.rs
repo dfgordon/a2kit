@@ -98,6 +98,8 @@ pub enum Error {
     Externals,
     #[error("program counter could not be resolved")]
     UnresolvedProgramCounter,
+    #[error("label value could not be resolved")]
+    UnresolvedValue,
     #[error("unsupported (pseudo) operations or arguments")]
     CannotAssemble
 }
@@ -367,7 +369,7 @@ impl Assembler {
                         return Ok(val);
                     }
                 }
-                Err(Box::new(Error::UndefinedLabel))
+                Err(Box::new(Error::UnresolvedValue))
             },
             "unary_aexpr" => {
                 if node.child_count() != 2 {

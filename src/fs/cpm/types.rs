@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use std::fmt;
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use super::super::TextEncoder;
 
 /// Status byte for a deleted file, also fill value for unused blocks.
@@ -209,14 +209,14 @@ impl DiskStruct for SequentialText {
         }
     }
     /// Create structure using flattened bytes (typically from disk)
-    fn from_bytes(dat: &Vec<u8>) -> Self {
-        Self {
+    fn from_bytes(dat: &[u8]) -> Result<Self,DiskStructError> {
+        Ok(Self {
             text: match dat.split(|x| *x==0x1a).next() {
                 Some(v) => v.to_vec(),
-                _ => dat.clone()
+                _ => dat.to_vec()
             },
             terminator: 0x1a
-        }
+        })
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
@@ -229,10 +229,11 @@ impl DiskStruct for SequentialText {
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
-    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
-        let temp = SequentialText::from_bytes(&dat);
+    fn update_from_bytes(&mut self,dat: &[u8]) -> Result<(),DiskStructError> {
+        let temp = SequentialText::from_bytes(&dat)?;
         self.text = temp.text.clone();
         self.terminator = 0x1a;
+        Ok(())
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {

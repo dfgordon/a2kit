@@ -13,8 +13,7 @@ use crate::{STDRESULT,DYNERR};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 /// Size of the directory entry in bytes, always 32
@@ -341,20 +340,25 @@ impl DiskStruct for Directory {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.entries = Vec::new();
         let num_entries = bytes.len()/DIR_ENTRY_SIZE;
         if bytes.len()%DIR_ENTRY_SIZE!=0 {
             warn!("directory buffer wrong size");
         }
         for i in 0..num_entries {
-            self.entries.push(bytes[i*DIR_ENTRY_SIZE..(i+1)*DIR_ENTRY_SIZE].try_into().expect("bad slice length"));
+            let entry_buf = match bytes[i*DIR_ENTRY_SIZE..(i+1)*DIR_ENTRY_SIZE].try_into() {
+                Ok(buf) => buf,
+                Err(_) => return Err(DiskStructError::OutOfData)
+            };
+            self.entries.push(entry_buf);
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         return DIR_ENTRY_SIZE*(self.entries.len());
@@ -394,7 +398,7 @@ impl Directory {
     }
     pub fn get_entry(&self,ptr: &Ptr) -> Entry {
         match ptr {
-            Ptr::Entry(idx) => Entry::from_bytes(&self.entries[*idx].to_vec()),
+            Ptr::Entry(idx) => Entry::from_bytes(&self.entries[*idx]).expect("unexpected size"),
             _ => panic!("wrong pointer type")
         }
     }

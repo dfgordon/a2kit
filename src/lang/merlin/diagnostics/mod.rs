@@ -25,26 +25,47 @@ mod addressing;
 mod pseudo;
 pub mod workspace;
 
-fn node_path_terminus(node: &tree_sitter::Node, source: &str) -> String {
-    let txt = super::super::node_text(node,source);
-    let parts = txt.split("/");
-    if let Some(last) = parts.last() {
-        last.to_string()
-    } else {
-        txt
+fn node_path(node: &tree_sitter::Node, source: &str) -> Vec<String> {
+    let mut txt = super::super::node_text(node,source);
+    if !txt.ends_with(".S") && !txt.ends_with(".s") {
+        txt.push_str(".S");
     }
+    txt.split("/").map(|x| x.to_string()).collect::<Vec<String>>()
 }
 
-fn node_matches_doc(node: &tree_sitter::Node, source: &str, doc: &Document) -> bool {
-    let term = node_path_terminus(node, source) + ".S";
+/// Return a value indicating the quality of the match of a ProDOS path to a path in the
+/// local file system.  Any value >0 means the filename itself matched case insensitively.
+/// Higher values mean there were additional matches, such as parent directories.
+fn match_prodos_path(node: &tree_sitter::Node, source: &str, doc: &Document) -> usize {
+    let mut quality = 0;
     if !doc.uri.cannot_be_a_base() {
-        if let Some(fname_os) = std::path::Path::new(doc.uri.path()).file_name() {
-            if let Some(fname) = fname_os.to_str() {
-                return fname.to_lowercase() == term.to_lowercase();
+        let mut doc_segs = std::path::Path::new(doc.uri.path()).iter().rev();
+        for node_seg in node_path(node,source).iter().rev() {
+            if let Some(doc_seg) = doc_segs.next() {
+                if let Some(s) = doc_seg.to_str() {
+                    if s.to_lowercase() == node_seg.to_lowercase() {
+                        quality += 1;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
-    false
+    quality
+}
+
+/// Starting from someplace in an argument tree, go up to find the arg_* node kind.
+/// This is useful if we need to adjust the processing based on the specific operation.
+fn find_arg_node(node: &tree_sitter::Node) -> Option<String> {
+    let mut check = node.parent();
+    while let Some(parent) = check {
+        if parent.kind().starts_with("arg_") {
+            return Some(parent.kind().to_string());
+        }
+        check = parent.parent();
+    }
+    None
 }
 
 pub struct Analyzer {
@@ -115,8 +136,10 @@ impl Analyzer {
     /// If `gather` is false, use only previously checkpointed documents.
     pub fn rescan_workspace(&mut self,gather: bool) -> STDRESULT {
         if gather {
+            log::debug!("GATHER WORKSPACE DOCUMENTS");
             self.scanner.gather_docs(&self.workspace_folders, 1000)?;
         }
+        log::debug!("SCAN WORKSPACE DOCUMENTS");
         self.scanner.scan()
     }
     /// Move diagnostics for current document from temporary vector to permanent map of vectors.
@@ -197,6 +220,7 @@ impl Analysis for Analyzer {
     fn analyze(&mut self,doc: &Document) -> Result<(),DYNERR> {
         self.reset_results();
         self.ctx.reset_xc();
+        self.scanner.update_doc(doc);
         let ws = self.scanner.get_workspace();
         self.symbols.display_doc_type = ws.source_type(&doc.uri, self.ctx.linker_threshold());
         if self.symbols.display_doc_type == super::SourceType::Linker {
@@ -211,6 +235,7 @@ impl Analysis for Analyzer {
         self.symbols.processor = self.ctx.curr_proc();
         info!("Use master {}",master.uri.to_string());
         for pass in 1..4 {
+            log::debug!("ANALYSIS PASS {}",pass);
             self.pass = pass;
             self.reset_for_pass();
             self.analyze_recursively(super::SourceType::Master,Arc::clone(&master))?;

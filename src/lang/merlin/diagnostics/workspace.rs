@@ -23,22 +23,16 @@ impl Workspace {
     /// Get all masters of this URI
 	pub fn get_masters(&self, uri: &lsp::Url) -> HashSet<String> {
         let mut ans = HashSet::new();
-		if let Ok(path) = uri.to_file_path() {
-            if let Some(key) = path.file_stem() {
-                if let Some(skey) = key.to_str() {
-                    if let Some(masters) = self.put_map.get(skey) {
-                        for master in masters {
-                            ans.insert(master.to_owned());
-                        }
-                    }
-                    if let Some(masters) = self.use_map.get(skey) {
-                        for master in masters {
-                            ans.insert(master.to_owned());
-                        }
-                    }
-                }
+        if let Some(masters) = self.put_map.get(&uri.to_string()) {
+            for master in masters {
+                ans.insert(master.to_owned());
             }
-        };
+        }
+        if let Some(masters) = self.use_map.get(&uri.to_string()) {
+            for master in masters {
+                ans.insert(master.to_owned());
+            }
+        }
 		ans
 	}
 	/// find document's master based on what is in workspace and preference,
@@ -64,28 +58,37 @@ impl Workspace {
         }
 		return include.clone();
 	}
-	/// Count documents that match the include.
-    /// The cursor starts on a `USE` or `PUT` pseudo-operation.
-	pub fn include_candidates(&self, curs: &TreeCursor, source: &str) -> usize {
-        let mut matches = 0;
-		if let Some(file_node) = curs.node().next_named_sibling() {
+	/// Get the document URL that is the best match to the ProDOS path at the *next* cursor location.
+    /// This may return an empty vector, or a vector with more than one match, where the latter
+    /// means there were multiple equally good matches.
+	pub fn get_include_doc(&self, node: &tree_sitter::Node, source: &str) -> Vec<lsp::Url> {
+        let mut ans = Vec::new();
+        let mut best_quality = 0;
+		if let Some(file_node) = node.next_named_sibling() {
+            log::debug!("search for include `{}`",node_text(&file_node,source));
             for doc in &self.docs {
-                if super::node_matches_doc(&file_node, source, &doc) {
-                    matches += 1;
+                let quality = super::match_prodos_path(&file_node, source, &doc);
+                log::trace!("match {} to {} Q={}",node_text(&file_node, source),doc.uri.as_str(),quality);
+                if quality > best_quality {
+                    ans = vec![doc.uri.clone()];
+                    best_quality = quality;
+                } else if quality > 0 && quality == best_quality {
+                    if doc.uri.as_str().len() < ans.last().unwrap().as_str().len() {
+                        ans = vec![doc.uri.clone()];
+                    } else {
+                        ans.push(doc.uri.clone());
+                    }
                 }
             }
         }
-		return matches;
+        log::debug!("found {} include candidates",ans.len());
+        for uri in &ans {
+            log::trace!("  {}",uri.as_str());
+        }
+		ans
 	}
     pub fn source_type(&self, uri: &lsp::Url, linker_threshold: f64) -> SourceType {
-        let mut key = uri.to_string();
-        if let Ok(path) = uri.to_file_path() {
-            if let Some(fname) = path.file_stem() {
-                if let Some(s) = fname.to_str() {
-                    key = s.to_string();
-                }
-            }
-        }
+        let key = uri.to_string();
         if uri.scheme() == "macro" {
             return SourceType::Macro;
         }
@@ -129,6 +132,16 @@ impl WorkspaceScanner {
             ws: Workspace::new(),
             scan_patt: regex::Regex::new(r"^\S*\s+(ENT|PUT|USE|REL|ent|put|use|rel)(\s+|$)").expect(RCH),
             link_patt: regex::Regex::new(r"^\S*\s+(LNK|LKV|ASM|lnk|lkv|asm)\s+").expect(RCH)
+        }
+    }
+    /// Workspace scanner has its own copies that are not always up to date.
+    /// This is needed especially when an include is being handed to the analyzer.
+    pub fn update_doc(&mut self,doc: &Document) {
+        for old in &mut self.ws.docs {
+            if old.uri == doc.uri {
+                old.text = doc.text.clone();
+                old.version = doc.version;
+            }
         }
     }
     /// Borrow the workspace data
@@ -267,7 +280,7 @@ impl Navigate for WorkspaceScanner {
 
         if curr.kind() == "label_def" && next.is_some() && next.unwrap().kind() == "psop_ent" {
             let mut sym = Symbol::new(&node_text(&curr, &self.line));
-            sym.add_node(loc, false, &curr, &self.line);
+            sym.add_node(loc, &curr, &self.line);
             self.ws.entries.insert(node_text(&curr, &self.line),sym);
             return Ok(Navigation::Exit);
         }
@@ -279,7 +292,7 @@ impl Navigate for WorkspaceScanner {
             while sib.is_some() && sib.unwrap().kind() == "label_ref" {
                 let sib_txt = &node_text(&sib.unwrap(),&self.line);
                 let mut sym = Symbol::new(sib_txt);
-                sym.add_node(loc.clone(), false, &sib.unwrap(), &self.line);
+                sym.add_node(loc.clone(), &sib.unwrap(), &self.line);
                 self.ws.entries.insert(sib_txt.to_owned(),sym);
                 sib = sib.unwrap().next_named_sibling();
             }
@@ -291,34 +304,34 @@ impl Navigate for WorkspaceScanner {
         if curr.kind() == "label_def" {
             return Ok(Navigation::GotoSibling);
         }
-        if curr.kind() == "psop_use" && next.is_some() {
-            let fname = super::node_path_terminus(&next.unwrap(),&self.line);
-            let mut masters = match self.ws.use_map.get(&fname) {
-                Some(m) => m.to_owned(),
-                None => HashSet::new()
-            };
-            masters.insert(curr_uri.to_string());
-            self.ws.use_map.insert(fname,masters);
-            // track all the URI that could be this include
-            for doc in &self.ws.docs {
-                if super::node_matches_doc(&next.unwrap(), &self.line, &doc) {
-                    self.ws.includes.insert(doc.uri.to_string());
-                }
+        if curr.kind() == "psop_use" {
+            let matching_docs = self.ws.get_include_doc(&curr,&self.line);
+            if matching_docs.len()==1 {
+                let include_uri = matching_docs[0].to_string();
+                let mut masters = match self.ws.use_map.get(&include_uri) {
+                    Some(m) => m.to_owned(),
+                    None => HashSet::new()
+                };
+                masters.insert(curr_uri.to_string());
+                self.ws.use_map.insert(include_uri.clone(),masters);
+                self.ws.includes.insert(include_uri);
+            } else {
+                log::debug!("USE resulted in no unique match ({})",matching_docs.len());
             }
         }
-        if curr.kind() == "psop_put" && next.is_some() {
-            let fname = super::node_path_terminus(&next.unwrap(),&self.line);
-            let mut masters = match self.ws.put_map.get(&fname) {
-                Some(m) => m.to_owned(),
-                None => HashSet::new()
-            };
-            masters.insert(curr_uri.to_string());
-            self.ws.put_map.insert(fname,masters);
-            // track all the URI that could be this include
-            for doc in &self.ws.docs {
-                if super::node_matches_doc(&next.unwrap(), &self.line, &doc) {
-                    self.ws.includes.insert(doc.uri.to_string());
-                }
+        if curr.kind() == "psop_put" {
+            let matching_docs = self.ws.get_include_doc(&curr,&self.line);
+            if matching_docs.len()==1 {
+                let include_uri = matching_docs[0].to_string();
+                let mut masters = match self.ws.put_map.get(&include_uri) {
+                    Some(m) => m.to_owned(),
+                    None => HashSet::new()
+                };
+                masters.insert(curr_uri.to_string());
+                self.ws.put_map.insert(include_uri.clone(),masters);
+                self.ws.includes.insert(include_uri);
+            } else {
+                log::debug!("PUT resulted in no unique match ({})",matching_docs.len());
             }
         }
         // If none of the above we can go straight to the next line

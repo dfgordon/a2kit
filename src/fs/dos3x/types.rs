@@ -2,7 +2,7 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use super::TextEncoder;
 
 pub const VTOC_TRACK: u8 = 17;
@@ -156,16 +156,19 @@ impl DiskStruct for TokenizedProgram {
         }
     }
     /// Create structure using flattened bytes (typically from disk)
-    fn from_bytes(dat: &Vec<u8>) -> Self {
-        let end_byte = u16::from_le_bytes([dat[0],dat[1]]) as usize;
+    fn from_bytes(dat: &[u8]) -> Result<Self,DiskStructError> {
+        if dat.len() < 2 {
+            return Err(DiskStructError::OutOfData);
+        }
+        let end_byte = 2 + u16::from_le_bytes([dat[0],dat[1]]) as usize;
         // equality is not required because there could be sector padding
         if end_byte > dat.len() {
-            panic!("inconsistent tokenized program length, try raw");
+            return Err(DiskStructError::OutOfData);
         }
-        return Self {
+        return Ok(Self {
             length: [dat[0],dat[1]],
-            program: dat[2..end_byte+2].to_vec().clone()
-        }
+            program: dat[2..end_byte].to_vec().clone()
+        })
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
@@ -175,10 +178,11 @@ impl DiskStruct for TokenizedProgram {
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
-    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
-        let temp = TokenizedProgram::from_bytes(&dat);
+    fn update_from_bytes(&mut self,dat: &[u8]) -> Result<(),DiskStructError> {
+        let temp = TokenizedProgram::from_bytes(&dat)?;
         self.length = temp.length;
         self.program = temp.program.clone();
+        Ok(())
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {
@@ -231,14 +235,14 @@ impl DiskStruct for SequentialText {
         }
     }
     /// Create structure using flattened bytes (typically from disk)
-    fn from_bytes(dat: &Vec<u8>) -> Self {
-        Self {
+    fn from_bytes(dat: &[u8]) -> Result<Self,DiskStructError> {
+        Ok(Self {
             text: match dat.split(|x| *x==0).next() {
                 Some(v) => v.to_vec(),
-                _ => dat.clone()
+                _ => dat.to_vec()
             },
             terminator: 0
-        }
+        })
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
@@ -248,10 +252,11 @@ impl DiskStruct for SequentialText {
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
-    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
-        let temp = SequentialText::from_bytes(&dat);
+    fn update_from_bytes(&mut self,dat: &[u8]) -> Result<(),DiskStructError> {
+        let temp = SequentialText::from_bytes(&dat)?;
         self.text = temp.text.clone();
         self.terminator = 0;
+        Ok(())
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {
@@ -288,16 +293,19 @@ impl DiskStruct for BinaryData {
         }
     }
     /// Create structure using flattened bytes (typically from disk)
-    fn from_bytes(dat: &Vec<u8>) -> Self {
-        let end_byte = u16::from_le_bytes([dat[2],dat[3]]) + 4;
-        if end_byte as usize > dat.len() {
-            panic!("inconsistent binary file length, try raw");
+    fn from_bytes(dat: &[u8]) -> Result<Self,DiskStructError> {
+        if dat.len() < 4 {
+            return Err(DiskStructError::OutOfData);
         }
-        Self {
+        let end_byte = 4 + u16::from_le_bytes([dat[2],dat[3]]) as usize;
+        if end_byte > dat.len() {
+            return Err(DiskStructError::OutOfData);
+        }
+        Ok(Self {
             start: [dat[0],dat[1]],
             length: [dat[2],dat[3]],
-            data: dat[4..end_byte as usize].to_vec()
-        }
+            data: dat[4..end_byte].to_vec()
+        })
     }
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
@@ -308,11 +316,12 @@ impl DiskStruct for BinaryData {
         return ans;
     }
     /// Update with flattened bytes (useful mostly as a crutch within a2kit_macro)
-    fn update_from_bytes(&mut self,dat: &Vec<u8>) {
-        let temp = BinaryData::from_bytes(&dat);
+    fn update_from_bytes(&mut self,dat: &[u8]) -> Result<(),DiskStructError> {
+        let temp = BinaryData::from_bytes(&dat)?;
         self.start = temp.start;
         self.length = temp.length;
         self.data = temp.data.clone();
+        Ok(())
     }
     /// Length of the flattened structure
     fn len(&self) -> usize {

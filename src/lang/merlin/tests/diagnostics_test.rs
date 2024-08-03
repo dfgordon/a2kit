@@ -204,3 +204,13 @@ mod equates {
         ]);
     }
 }
+
+mod forward {
+    #[test]
+    fn psop_fwd() {
+        super::test_diagnostics("test-ill-fwd.S", None, &[
+            "illegal forward reference",
+            "illegal forward reference"
+        ])
+    }
+}

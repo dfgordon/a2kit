@@ -71,7 +71,7 @@ impl Hovers for HoverProvider {
             kind: lsp::MarkupKind::Markdown,
             value: "".to_string()
         };
-        self.pos = lsp::Position::new(0,col as u32);
+        self.pos = lsp::Position::new(row as u32,col as u32);
         if let Some(tree) = self.parser.parse(&self.line,None) {
             if let Ok(()) = self.walk(&tree) {
                 if self.markup.value.len() > 0 {
@@ -88,7 +88,7 @@ impl Hovers for HoverProvider {
 
 impl Navigate for HoverProvider {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
-        self.rng = lsp_range(curs.node().range(),0,0);
+        self.rng = lsp_range(curs.node().range(),self.pos.line as isize,0);
         if range_contains_pos(&self.rng, &self.pos) {
 
             if self.config.hovers.special_addresses {

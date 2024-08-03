@@ -52,6 +52,7 @@ impl Disk {
             fs_type: vec![0;3],
             aux: vec![],
             eof: vec![0;4],
+            accessed: created.clone(),
             created: created.clone(),
             modified: vec![created[1],created[2],created[3],created[4]],
             access: vec![0], // attributes, do not confuse with access time
@@ -67,45 +68,45 @@ impl Disk {
     /// If maybe_boot is Some, the provided boot sector is buffered and written to the image.
     /// If disk layout matches a 160K or 180K disk, the BPB foundation is overwritten with hard coded values,
     /// but only in the buffer, i.e., without affecting the boot sector on the image.
-    pub fn from_img(mut img: Box<dyn img::DiskImage>,maybe_boot: Option<bpb::BootSector>) -> Self {
+    pub fn from_img(mut img: Box<dyn img::DiskImage>,maybe_boot: Option<bpb::BootSector>) -> Result<Self,DYNERR> {
         let mut boot_sector = match maybe_boot {
             None => {
-                let buf = img.read_sector(0, 0, 1).expect("failed to read boot sector");
-                bpb::BootSector::from_bytes(&buf)
+                let buf = img.read_sector(0, 0, 1)?;
+                bpb::BootSector::from_bytes(&buf)?
             },
             Some(b) => {
-                img.write_sector(0, 0, 1, &b.to_bytes()).expect("failed to write boot sector");
+                img.write_sector(0, 0, 1, &b.to_bytes())?;
                 b
             }
         };
         match img.kind() {
             img::DiskKind::D525(img::names::IBM_SSDD_8) => {
-                boot_sector.replace_foundation(&img.kind()).expect("intrinsic BPB missing");
+                boot_sector.replace_foundation(&img.kind())?;
             }
             img::DiskKind::D525(img::names::IBM_SSDD_9) => {
-                boot_sector.replace_foundation(&img.kind()).expect("intrinsic BPB missing");
+                boot_sector.replace_foundation(&img.kind())?;
             }
             _ => {}
         }
         let typ = boot_sector.fat_type();
-        Self {
+        Ok(Self {
             img,
             boot_sector,
             maybe_fat: None,
             typ
-        }
+        })
     }
     /// Create an MS-DOS 1.0 file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
-    pub fn from_img_dos1x(img: Box<dyn img::DiskImage>) -> Self {
-        let boot_sector = bpb::BootSector::create(&img.kind()).expect("boot sector mismatch");
+    pub fn from_img_dos1x(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
+        let boot_sector = bpb::BootSector::create(&img.kind())?;
         let typ = boot_sector.fat_type();
-        Self {
+        Ok(Self {
             img,
             boot_sector,
             maybe_fat: None,
             typ
-        }
+        })
     }
     /// Test an image for the FAT file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
@@ -315,7 +316,7 @@ impl Disk {
             _ => bytes as usize
         };
         let cluster = self.export_clus(iblock);
-        self.img.write_block(cluster, &data[offset..offset+actual_len].to_vec())
+        self.img.write_block(cluster, &data[offset..offset+actual_len])
     }
     fn get_available_block(&mut self) -> Result<Option<usize>,DYNERR> {
         for block in fat::FIRST_DATA_CLUSTER as usize..self.boot_sector.cluster_count_usable() as usize {
@@ -537,7 +538,7 @@ impl Disk {
                 let cluster = Ptr::Cluster(self.boot_sector.root_dir_cluster1() as usize);
                 debug!("get FAT32 root at cluster {}",cluster.unwrap());
                 let buf = self.get_cluster_chain_data(&cluster)?;
-                Directory::from_bytes(&buf)
+                Directory::from_bytes(&buf)?
             },
             _ => {
                 let mut buf = Vec::new();
@@ -547,7 +548,7 @@ impl Disk {
                     let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(lsec))?;
                     buf.append(&mut self.img.read_sector(cyl, head, sec)?);
                 }
-                Directory::from_bytes(&buf)
+                Directory::from_bytes(&buf)?
             }
         };
         let vol_name = match root.find_label() {
@@ -567,7 +568,7 @@ impl Disk {
         match cluster1 {
             Some(cluster) => {
                 let dir_buf = self.get_cluster_chain_data(&cluster)?;
-                Ok(Directory::from_bytes(&dir_buf))
+                Ok(Directory::from_bytes(&dir_buf)?)
             },
             None => {
                 if self.typ==32 {
@@ -1187,6 +1188,9 @@ impl super::DiskFS for Disk {
         error!("MS-DOS implementation does not support operation");
         return Err(Box::new(Error::Syntax));
     }
+    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
+        0
+    }
     fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
         if &fimg.file_system != FS_NAME {
             return Err(Box::new(Error::IncorrectDOS));
@@ -1289,7 +1293,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        let file = types::SequentialText::from_bytes(&dat)?;
         Ok(file.to_string())
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
@@ -1401,7 +1405,7 @@ fn test_path_normalize() {
     let kind = img::DiskKind::D525(img::names::IBM_SSDD_9);
     let img = Box::new(crate::img::imd::Imd::create(kind));
     let boot_sec = bpb::BootSector::create(&kind).expect("can't create boot sector");
-    let mut disk = Disk::from_img(img,Some(boot_sec));
+    let mut disk = Disk::from_img(img,Some(boot_sec)).expect("bad disk");
     disk.format(&String::from("DISK 1"),None).expect("disk error");
     match disk.normalize_path("/") {
         Ok(res) => assert_eq!(res,[""]),

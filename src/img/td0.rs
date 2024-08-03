@@ -8,7 +8,7 @@ use chrono::Timelike;
 use num_traits::FromPrimitive;
 use num_derive::FromPrimitive;
 use log::{warn,info,trace,debug,error};
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use retrocompressor;
 use crate::img;
@@ -57,7 +57,7 @@ macro_rules! optional_get_slice {
             },
             false => {
                 debug!("out of data in {}",$loc);
-                return None;
+                return Err(DiskStructError::OutOfData);
             }
         }
     };
@@ -420,12 +420,12 @@ impl DiskStruct for Sector {
     fn to_bytes(&self) -> Vec<u8> {
         let header = match self.unpack() {
             Ok(unpacked) => {
-                let mut header = SectorHeader::from_bytes(&self.header.to_bytes());
+                let mut header = SectorHeader::from_bytes(&self.header.to_bytes()).expect("header mismatch");
                 header.crc = (crc16(0,&unpacked) & 0xff) as u8;
                 header
             },
             _ => {
-                SectorHeader::from_bytes(&self.header.to_bytes())
+                SectorHeader::from_bytes(&self.header.to_bytes()).expect("header mismatch")
             }
         };
         [
@@ -433,13 +433,13 @@ impl DiskStruct for Sector {
             self.data.clone()
         ].concat()
     }
-    fn update_from_bytes(&mut self,_bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,_bytes: &[u8]) -> Result<(),DiskStructError> {
         panic!("unreachable was reached"); // do not use
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Sector::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
 }
 
@@ -468,13 +468,13 @@ impl DiskStruct for Track {
         }
         ans
     }
-    fn update_from_bytes(&mut self,_bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,_bytes: &[u8]) -> Result<(),DiskStructError> {
         panic!("unreachable was reached"); // do not use
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Track::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
 }
 
@@ -750,38 +750,38 @@ impl img::DiskImage for Td0 {
         error!("sector {} not found",sec);
         Err(Box::new(img::Error::SectorAccess))
     }
-    fn from_bytes(compressed: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(compressed: &[u8]) -> Result<Self,DiskStructError> {
         let mut ptr: usize = 0;
         let mut header_slice = optional_get_slice!(compressed,ptr,12,"image header").to_vec();
-        let test_header = ImageHeader::from_bytes(&header_slice);
+        let test_header = ImageHeader::from_bytes(&header_slice)?;
         if &test_header.signature==b"td" {
             info!("TD0 signature found (advanced compression)");
         } else if &test_header.signature==b"TD" {
             info!("TD0 signature found (no advanced compression)");
         } else {
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         // CRC of image header
         if u16::from_le_bytes(test_header.crc)!=crc16(0,&compressed[0..10]) {
             warn!("image header CRC mismatch");
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         let expanded = match &test_header.signature {
             b"td" => {
                 match retrocompressor::td0::expand_slice(&compressed) {
                     Ok(x) => x,
-                    Err(_) => return None
+                    Err(_) => return Err(DiskStructError::IllegalValue)
                 }
             },
             b"TD" => {
-                compressed.clone()
+                compressed.to_vec()
             },
             _ => panic!("unreachable was reached")
         };
         let has_comment = test_header.stepping & COMMENT_MASK > 0;
         ptr = 0;
         header_slice = optional_get_slice!(expanded,ptr,12,"image header").to_vec();
-        let header = ImageHeader::from_bytes(&header_slice);
+        let header = ImageHeader::from_bytes(&header_slice)?;
         let mut ans = Self {
             kind: img::DiskKind::Unknown,
             heads: match header.sides { 1 => 1, _ => 2 },
@@ -792,19 +792,19 @@ impl img::DiskImage for Td0 {
             end: 0xff
         };
         if has_comment {
-            ans.comment_header = Some(CommentHeader::from_bytes(&optional_get_slice!(expanded,ptr,10,"comment header").to_vec()));
+            ans.comment_header = Some(CommentHeader::from_bytes(&optional_get_slice!(expanded,ptr,10,"comment header").to_vec()).expect("unreachable"));
             let comment_len = u16::from_le_bytes(ans.comment_header.as_ref().unwrap().data_length) as usize;
             ans.comment_data = Some(String::from_utf8_lossy(&optional_get_slice!(expanded,ptr,comment_len,"comment data").to_vec()).to_string());
             debug!("comment data `{}`",ans.comment_data.as_ref().unwrap());
             // CRC of comment
             if u16::from_le_bytes(ans.comment_header.as_ref().unwrap().crc)!=crc16(0,&expanded[14..22+comment_len]) {
                 warn!("comment area CRC mismatch");
-                return None;
+                return Err(DiskStructError::IllegalValue);
             }
         }
         // don't use Track::from_bytes because it may panic
         while expanded[ptr]!=0xff {
-            let header = TrackHeader::from_bytes(&optional_get_slice!(expanded,ptr,4,"track header").to_vec());
+            let header = TrackHeader::from_bytes(&optional_get_slice!(expanded,ptr,4,"track header").to_vec()).expect("unreachable");
             // CRC of track header
             // We will not stop for bad track CRC, but do warn
             let expected_track_crc = crc16(0,&header.to_bytes()[0..3]);
@@ -819,7 +819,7 @@ impl img::DiskImage for Td0 {
             trace!("found cyl {} head {} with {} sectors",trk.header.cylinder,trk.header.head,trk.header.sectors);
             for i in 0..trk.header.sectors {
                 let mut sec = Sector::new();
-                sec.header = SectorHeader::from_bytes(&optional_get_slice!(expanded,ptr,6,"sector header").to_vec());
+                sec.header = SectorHeader::from_bytes(&optional_get_slice!(expanded,ptr,6,"sector header").to_vec()).expect("unreachable");
                 trace!("get sector {}, size {}",sec.header.id,128 << sec.header.sector_shift);
                 if sec.header.flags & NO_DATA_MASK == 0 {
                     let size_bytes = optional_get_slice!(expanded,ptr,2,"sector data header").to_vec();
@@ -831,7 +831,7 @@ impl img::DiskImage for Td0 {
                     } else {
                         debug!("end of data in sector record {} with id {}",i,sec.header.id);
                         debug!("sector wants eof {}, actual {} ",ptr+data_size-1,expanded.len());
-                        return None;
+                        return Err(DiskStructError::UnexpectedSize);
                     }
                 }
                 // CRC for sector data
@@ -875,7 +875,7 @@ impl img::DiskImage for Td0 {
             (1018368,26) => img::names::NABU_CPM_KIND,
             _ => img::DiskKind::Unknown
         };
-        return Some(ans);
+        return Ok(ans);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -934,16 +934,16 @@ impl img::DiskImage for Td0 {
             true => img::FluxCode::FM,
             false => img::FluxCode::MFM
         };
-        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        let mut chss_map: Vec<[usize;4]> = Vec::new();
         for sec in &trk_obj.sectors {
-            chs_map.push([sec.header.cylinder as usize,sec.header.head as usize,sec.header.id as usize]);
+            chss_map.push([sec.header.cylinder as usize,sec.header.head as usize,sec.header.id as usize,SECTOR_SIZE_BASE << sec.header.sector_shift]);
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.header.cylinder as usize,
             head: trk_obj.header.head as usize,
             flux_code,
             nib_code: img::NibbleCode::None,
-            chs_map
+            chss_map
         }))
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

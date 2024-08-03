@@ -21,8 +21,7 @@ use crate::DYNERR;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
@@ -561,7 +560,7 @@ impl<T: Header + HasName + DiskStruct> HasEntries for KeyBlock<T> {
         };
     }
     fn get_entry(&self,loc: &EntryLocation) -> Entry {
-        return Entry::from_bytes(&self.entries[loc.idx-2].to_bytes());
+        return Entry::from_bytes(&self.entries[loc.idx-2].to_bytes()).expect("unexpected entry size");
     }
     fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
         self.entries[loc.idx-2] = entry;
@@ -602,7 +601,7 @@ impl HasEntries for EntryBlock {
         };
     }
     fn get_entry(&self,loc: &EntryLocation) -> Entry {
-        return Entry::from_bytes(&self.entries[loc.idx-1].to_bytes());
+        return Entry::from_bytes(&self.entries[loc.idx-1].to_bytes()).expect("unexpected entry size");
     }
     fn set_entry(&mut self,loc: &EntryLocation,entry: Entry) {
         self.entries[loc.idx-1] = entry;
@@ -644,21 +643,22 @@ impl<T: Header + HasName + DiskStruct> DiskStruct for KeyBlock<T> {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.prev_block = [bytes[0],bytes[1]];
         self.next_block = [bytes[2],bytes[3]];
         let mut offset = 4;
-        self.header.update_from_bytes(&bytes[offset..self.header.len()+offset].to_vec());
+        self.header.update_from_bytes(&bytes[offset..self.header.len()+offset])?;
         offset += self.header.len();
         for i in 0..self.entries.len() {
-            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()].to_vec());
+            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()])?;
             offset += self.entries[i].len();
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         return 511;
@@ -696,19 +696,20 @@ impl DiskStruct for EntryBlock {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.prev_block = [bytes[0],bytes[1]];
         self.next_block = [bytes[2],bytes[3]];
         let mut offset = 4;
         for i in 0..self.entries.len() {
-            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()].to_vec());
+            self.entries[i].update_from_bytes(&bytes[offset..offset+self.entries[i].len()])?;
             offset += self.entries[i].len();
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         return 511;

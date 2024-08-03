@@ -4,6 +4,7 @@
 //! If the sector sequence is ordered as in DOS 3.3, we have a DO variant.
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
+use a2kit_macro::DiskStructError;
 use log::{trace,error};
 use crate::img;
 use crate::fs::Block;
@@ -147,24 +148,24 @@ impl img::DiskImage for DO {
         self.data[offset..offset+SECTOR_SIZE].copy_from_slice(&padded);
         Ok(())
     }
-    fn from_bytes(data: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
         if data.len()%BLOCK_SIZE > 0 || data.len()/BLOCK_SIZE > MAX_BLOCKS || data.len()/BLOCK_SIZE < MIN_BLOCKS {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
         // further demand integral number of tracks
         if (data.len()/BLOCK_SIZE)%8 >0 {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
         let tracks = (data.len()/BLOCK_SIZE/8) as u16;
-        Some(Self {
+        Ok(Self {
             kind: match tracks {
                 35 => img::names::A2_DOS33_KIND,
                 _ => img::DiskKind::Unknown
             },
             tracks,
             sectors: 16,
-            data: data.clone()
+            data: data.to_vec()
         })
     }
     fn what_am_i(&self) -> img::DiskImageType {
@@ -192,16 +193,16 @@ impl img::DiskImage for DO {
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
         let [c,h] = self.track_2_ch(trk);
-        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..16 {
-            chs_map.push([c,h,i]);
+            chss_map.push([c,h,i,256]);
         }
         return Ok(Some(img::TrackSolution {
             cylinder: c,
             head: h,
             flux_code: img::FluxCode::GCR,
             nib_code: img::NibbleCode::N62,
-            chs_map
+            chss_map
         }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

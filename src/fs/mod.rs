@@ -26,7 +26,6 @@ pub mod fat;
 use std::fmt;
 use std::str::FromStr;
 use std::collections::{BTreeMap,HashMap};
-use log::{warn,error};
 use crate::img;
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
@@ -170,9 +169,11 @@ pub struct FileImage {
     pub aux: Vec<u8>,
     /// The access control bits, encoding varies by file system
     pub access: Vec<u8>,
-    /// The creation time, encoding varies by file system
+    /// The time last accessed, encoding varies by file system
+    pub accessed: Vec<u8>,
+    /// The time created, encoding varies by file system
     pub created: Vec<u8>,
-    /// The modified time, encoding varies by file system
+    /// The time last modified, encoding varies by file system
     pub modified: Vec<u8>,
     /// Some version
     pub version: Vec<u8>,
@@ -185,7 +186,12 @@ pub struct FileImage {
 
 impl FileImage {
     pub fn fimg_version() -> String {
-        "2.0.0".to_string()
+        "2.1.0".to_string()
+    }
+    /// the string slices must be in the form X.Y.Z or else we panic
+    pub fn version_tuple(vers: &str) -> (usize,usize,usize) {
+        let v: Vec<usize> = vers.split(".").map(|s| usize::from_str(s).expect("bad version format")).collect();
+        (v[0],v[1],v[2])
     }
     pub fn ordered_indices(&self) -> Vec<usize> {
         let copy = self.chunks.clone();
@@ -277,27 +283,32 @@ impl FileImage {
                 return Ok(bytes);
             }
         }
-        error!("a record is missing in the file image");
+        log::error!("a record is missing in the file image");
         return Err(Box::new(Error::FileImageFormat));
     }
     pub fn parse_usize(key: &str,parsed: &json::JsonValue) -> Result<usize,DYNERR> {
         if let Some(val) = parsed[key].as_usize() {
             return Ok(val);
         }
-        error!("a record is missing in the file image");
+        log::error!("a record is missing in the file image");
         return Err(Box::new(Error::FileImageFormat));
     }
     pub fn parse_str(key: &str,parsed: &json::JsonValue) -> Result<String,DYNERR> {
         if let Some(s) = parsed[key].as_str() {
             return Ok(s.to_string());
         }
-        error!("a record is missing in the file image");
+        log::error!("a record is missing in the file image");
         return Err(Box::new(Error::FileImageFormat));
     }
     /// Get chunks from the JSON string representation
     pub fn from_json(json_str: &str) -> Result<FileImage,DYNERR> {
         let parsed = json::parse(json_str)?;
         let fimg_version = FileImage::parse_str("fimg_version",&parsed)?;
+        let vers_tup = Self::version_tuple(&fimg_version);
+        if vers_tup < (2,0,0) {
+            log::error!("file image v2 or higher is required");
+            return Err(Box::new(Error::FileFormat));
+        }
         let fs = FileImage::parse_str("file_system",&parsed)?;
         let chunk_len = FileImage::parse_usize("chunk_len", &parsed)?;
         let fs_type = FileImage::parse_hex_to_vec("fs_type",&parsed)?;
@@ -308,10 +319,14 @@ impl FileImage {
         let modified = FileImage::parse_hex_to_vec("modified",&parsed)?;
         let version = FileImage::parse_hex_to_vec("version",&parsed)?;
         let min_version = FileImage::parse_hex_to_vec("min_version",&parsed)?;
+        let accessed = match vers_tup > (2,0,0) {
+            true => FileImage::parse_hex_to_vec("accessed",&parsed)?,
+            false => vec![]
+        };
         let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
         let map_obj = &parsed["chunks"];
         if map_obj.entries().len()==0 {
-            warn!("file image contains metadata, but no data");
+            log::warn!("file image contains metadata, but no data");
         }
         for (key,hex) in map_obj.entries() {
             let prev_len = chunks.len();
@@ -323,7 +338,7 @@ impl FileImage {
                 }
             }
             if chunks.len()==prev_len {
-                error!("could not read hex string from chunk");
+                log::error!("could not read hex string from chunk");
                 return Err(Box::new(Error::FileImageFormat));
             }
         }
@@ -335,6 +350,7 @@ impl FileImage {
             fs_type,
             aux,
             access,
+            accessed,
             created,
             modified,
             version,
@@ -360,6 +376,7 @@ impl FileImage {
             fs_type: hex::encode_upper(self.fs_type.clone()),
             aux: hex::encode_upper(self.aux.clone()),
             access: hex::encode_upper(self.access.clone()),
+            accessed: hex::encode_upper(self.accessed.clone()),
             created: hex::encode_upper(self.created.clone()),
             modified: hex::encode_upper(self.modified.clone()),
             version: hex::encode_upper(self.version.clone()),
@@ -505,7 +522,7 @@ impl Records {
                         let mut records: HashMap<usize,String> = HashMap::new();
                         let map_obj = &parsed["records"];
                         if map_obj.entries().len()==0 {
-                            error!("no object entries in json records");
+                            log::error!("no object entries in json records");
                             return Err(Box::new(Error::FileImageFormat));
                         }
                         for (key,lines) in map_obj.entries() {
@@ -515,13 +532,13 @@ impl Records {
                                     if let Some(line) = maybe_field.as_str() {
                                         fields = fields + line + "\n";
                                     } else {
-                                        error!("record is not a string");
+                                        log::error!("record is not a string");
                                         return Err(Box::new(Error::FileImageFormat));
                                     }
                                 }
                                 records.insert(num,fields);
                             } else {
-                                error!("key is not a number");
+                                log::error!("key is not a number");
                                 return Err(Box::new(Error::FileImageFormat));
                             }
                         }
@@ -530,11 +547,11 @@ impl Records {
                             map: records
                         });    
                     } else {
-                        error!("json metadata type mismatch");
+                        log::error!("json metadata type mismatch");
                         return Err(Box::new(Error::FileImageFormat));
                     }
                 }
-                error!("json records missing metadata");
+                log::error!("json records missing metadata");
                 Err(Box::new(Error::FileImageFormat))
             },
             Err(_e) => Err(Box::new(Error::FileImageFormat))
@@ -633,11 +650,9 @@ pub trait DiskFS {
     /// Tokenization is handled in a different module.
     fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
     /// Get load address for this file image, if applicable.
-    fn fimg_load_address(&self,fimg: &FileImage) -> u16 {
-        0
-    }
+    fn fimg_load_address(&self,fimg: &FileImage) -> u16;
     /// Extract file's data using the file image's metadata to select the methodology.
-    /// In particular, any header maintained by the file system is stripped.
+    /// In particular, the stream starts after any FS-defined headers and stops before any FS-defined EOF.
     fn fimg_file_data(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
     /// Convenience function, returns (load address,data), using `fimg` methods.
     /// Default method should usually be fine.

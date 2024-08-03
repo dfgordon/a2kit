@@ -10,8 +10,7 @@ use crate::{STDRESULT,DYNERR};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 use super::fat::FIRST_DATA_CLUSTER;
@@ -245,35 +244,36 @@ impl DiskStruct for BootSector {
     fn len(&self) -> usize {
         13 + self.foundation.len() + self.extension32.len() + self.tail.len() 
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         // suppose we have a FAT32
         let tentative = Self {
             jmp: [0,0,0],
             oem: [0;8],
-            foundation: BPBFoundation::from_bytes(&bytes[11..36].to_vec()),
-            extension32: BPBExtension32::from_bytes(&bytes[36..64].to_vec()),
-            tail: BPBTail::from_bytes(&bytes[64..90].to_vec()),
+            foundation: BPBFoundation::from_bytes(&bytes[11..36].to_vec())?,
+            extension32: BPBExtension32::from_bytes(&bytes[36..64].to_vec())?,
+            tail: BPBTail::from_bytes(&bytes[64..90].to_vec())?,
             remainder: bytes[90..].to_vec()
         };
         // Setup the right FAT type using info from the supposed FAT32.
         // This can panic if the FAT data is unverified.
         self.jmp = bytes[0..3].try_into().expect(RCH);
         self.oem = bytes[3..11].try_into().expect(RCH);
-        self.foundation = BPBFoundation::from_bytes(&bytes[11..36].to_vec());
-        self.extension32 = BPBExtension32::from_bytes(&bytes[36..64].to_vec());
+        self.foundation = BPBFoundation::from_bytes(&bytes[11..36].to_vec())?;
+        self.extension32 = BPBExtension32::from_bytes(&bytes[36..64].to_vec())?;
         self.tail = match tentative.fat_type() {
-            32 => BPBTail::from_bytes(&bytes[64..90].to_vec()),
-            _ => BPBTail::from_bytes(&bytes[36..62].to_vec())
+            32 => BPBTail::from_bytes(&bytes[64..90].to_vec())?,
+            _ => BPBTail::from_bytes(&bytes[36..62].to_vec())?
         };
         self.remainder = match tentative.fat_type() {
             32 => bytes[90..].to_vec(),
             _ => bytes[62..].to_vec()
         };
+        Ok(())
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -357,9 +357,9 @@ impl BootSector {
             debug!("signature mismatch");
             ans = false;
         }
-        let bpb = BPBFoundation::from_bytes(&sec_data[11..36].to_vec());
+        let bpb = BPBFoundation::from_bytes(&sec_data[11..36].to_vec()).expect(RCH);
         ans |= bpb.verify();
-        let ext32 = BPBExtension32::from_bytes(&sec_data[36..64].to_vec());
+        let ext32 = BPBExtension32::from_bytes(&sec_data[36..64].to_vec()).expect(RCH);
         let fat_secs = match bpb.fat_size_16 {
             [0,0] => u32::from_le_bytes(ext32.fat_size_32) as u64,
             _ => u16::from_le_bytes(bpb.fat_size_16) as u64

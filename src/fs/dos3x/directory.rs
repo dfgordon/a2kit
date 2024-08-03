@@ -6,8 +6,7 @@
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 // Following are representations of disk directory structures
@@ -24,7 +23,7 @@ use a2kit_macro_derive::DiskStruct;
 pub struct VolumeConstants {
     pub track1: u8,
     pub sector1: u8,
-    pub version: u8,
+    pub _version: u8,
     pub vol: u8,
     pub max_pairs: u8,
     pub tracks: u8,
@@ -57,7 +56,7 @@ impl VTOC {
         VolumeConstants {
             track1: self.track1, 
             sector1: self.sector1, 
-            version: self.version, 
+            _version: self.version, 
             vol: self.vol,
             max_pairs: self.max_pairs,
             tracks: self.tracks, 
@@ -124,7 +123,10 @@ impl DiskStruct for DirectorySector {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
+        if bytes.len()<11 {
+            return Err(DiskStructError::OutOfData);
+        }
         self.pad1 = bytes[0];
         self.next_track = bytes[1];
         self.next_sector = bytes[2];
@@ -133,14 +135,15 @@ impl DiskStruct for DirectorySector {
         }
         let mut offset = 0;
         for i in 0..7 {
-            self.entries[i].update_from_bytes(&bytes[11+offset..11+offset+self.entries[i].len()].to_vec());
+            self.entries[i].update_from_bytes(&bytes[11+offset..11+offset+self.entries[i].len()])?;
             offset += self.entries[i].len();
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         return 256;

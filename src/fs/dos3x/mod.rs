@@ -83,6 +83,7 @@ impl Disk
             fs_type: vec![0],
             aux: vec![],
             eof: vec![],
+            accessed: vec![],
             created: vec![],
             modified: vec![],
             access: vec![],
@@ -94,15 +95,18 @@ impl Disk
     }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
-    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
-        Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
+        Ok(Self {
             maybe_vtoc: None,
             img
-        }
+        })
     }
     fn test_img_13(img: &mut Box<dyn img::DiskImage>) -> bool {
         if let Ok(dat) = img.read_block(Block::D13([17,0])) {
-            let vtoc = VTOC::from_bytes(&dat);
+            let vtoc = match VTOC::from_bytes(&dat) {
+                Ok(res) => res,
+                Err(_) => return false
+            };
             let (tlen,slen) = (35,13);
             if vtoc.version>2 {
                 debug!("D13: VTOC wrong version {}",vtoc.version);
@@ -127,7 +131,10 @@ impl Disk
     }
     fn test_img_16(img: &mut Box<dyn img::DiskImage>) -> bool {
         if let Ok(dat) = img.read_block(Block::DO([17,0])) {
-            let vtoc = VTOC::from_bytes(&dat);
+            let vtoc = match VTOC::from_bytes(&dat) {
+                Ok(res) => res,
+                Err(_) => return false
+            };
             let (tlen,slen) = (35,16);
             if vtoc.version<3 {
                 debug!("VTOC wrong version {}",vtoc.version);
@@ -179,7 +186,10 @@ impl Disk
                 debug!("open VTOC buffer");
                 // We can use physical addressing for either DOS if sector = 0
                 let buf = self.img.read_sector(VTOC_TRACK as usize, 0, 0)?;
-                self.maybe_vtoc = Some(VTOC::from_bytes(&buf));
+                self.maybe_vtoc = match VTOC::from_bytes(&buf) {
+                    Ok(vtoc) => Some(vtoc),
+                    Err(e) => return Err(Box::new(e))
+                };
                 Ok(())
             }
         }
@@ -324,7 +334,7 @@ impl Disk
         if ts==[VTOC_TRACK,0] {
             self.maybe_vtoc = None;
         }
-        self.img.write_block(self.addr(ts), &data[offset..offset+actual_len].to_vec())
+        self.img.write_block(self.addr(ts), &data[offset..offset+actual_len])
     }
     /// Create any DOS 3.x volume
     pub fn init(&mut self,vol:u8,bootable:bool,last_track_written:u8,tracks:u8,sectors:u8) -> STDRESULT {
@@ -469,7 +479,7 @@ impl Disk
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,ts[0], ts[1])?;
             self.read_sector(&mut buf, ts, 0)?;
-            let dir = DirectorySector::from_bytes(&buf);
+            let dir = DirectorySector::from_bytes(&buf)?;
             for e in 0..7 {
                 if dir.entries[e].tsl_track==0 || dir.entries[e].tsl_track==255 {
                     return Ok((ts,e as u8));
@@ -492,7 +502,7 @@ impl Disk
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,ts[0], ts[1])?;
             self.read_sector(&mut buf, ts, 0)?;
-            let dir = DirectorySector::from_bytes(&buf);
+            let dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_ref() {
                 if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
                     return Ok(Some(([entry.tsl_track,entry.tsl_sector],entry.file_type)));
@@ -521,7 +531,7 @@ impl Disk
         // loop up to a maximum, if it is reached return error
         for _try in 0..types::MAX_TSLIST_REPS {
             self.read_sector(&mut buf,next_tslist,0)?;
-            let tslist = TrackSectorList::from_bytes(&buf);
+            let tslist = TrackSectorList::from_bytes(&buf)?;
             for p in 0..vconst.max_pairs as usize {
                 let next = [tslist.pairs[p*2],tslist.pairs[p*2+1]];
                 if next[0]>0 {
@@ -583,7 +593,7 @@ impl Disk
         let (ts,e) = self.get_next_directory_slot()?;
         let mut dir_buf = vec![0;256];
         self.read_sector(&mut dir_buf, ts, 0)?;
-        let mut dir = DirectorySector::from_bytes(&dir_buf);
+        let mut dir = DirectorySector::from_bytes(&dir_buf)?;
         dir.entries[e as usize].tsl_track = tslist_ts[0];
         dir.entries[e as usize].tsl_sector = tslist_ts[1];
         match fimg.fs_type.len() {
@@ -651,7 +661,7 @@ impl Disk
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,dir_ts[0], dir_ts[1])?;
             self.read_sector(&mut buf, dir_ts, 0)?;
-            let mut dir = DirectorySector::from_bytes(&buf);
+            let mut dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_mut() {
                 if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
                     if entry.file_type > 127 && maybe_new_name!=None {
@@ -712,7 +722,7 @@ impl super::DiskFS for Disk {
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,ts[0], ts[1])?;
             self.read_sector(&mut buf, ts, 0)?;
-            let dir = DirectorySector::from_bytes(&buf);
+            let dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_ref() {
                 if entry.tsl_track>0 && entry.tsl_track<255 {
                     let name = file_name_to_string(entry.name);
@@ -745,7 +755,7 @@ impl super::DiskFS for Disk {
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,ts[0], ts[1])?;
             self.read_sector(&mut buf, ts, 0)?;
-            let dir = DirectorySector::from_bytes(&buf);
+            let dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_ref() {
                 if entry.tsl_track>0 && entry.tsl_track<255 {
                     let name = file_name_to_string(entry.name);
@@ -778,7 +788,7 @@ impl super::DiskFS for Disk {
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,ts[0], ts[1])?;
             self.read_sector(&mut buf, ts, 0)?;
-            let dir = DirectorySector::from_bytes(&buf);
+            let dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_ref() {
                 if entry.tsl_track>0 && entry.tsl_track<255 {
                     let name = file_name_to_string(entry.name);
@@ -789,7 +799,7 @@ impl super::DiskFS for Disk {
                         ts = [entry.tsl_track,entry.tsl_sector];
                         Self::verify_ts(&vconst,ts[0], ts[1])?;
                         self.read_sector(&mut buf,ts,0)?;
-                        let tslist = TrackSectorList::from_bytes(&buf);
+                        let tslist = TrackSectorList::from_bytes(&buf)?;
                         ts = [tslist.pairs[0],tslist.pairs[1]];
                         Self::verify_ts(&vconst,ts[0], ts[1])?;
                         self.read_sector(&mut buf,ts,0)?;
@@ -827,7 +837,7 @@ impl super::DiskFS for Disk {
         for _try in 0..types::MAX_DIRECTORY_REPS {
             Self::verify_ts(&vconst,dir_ts[0], dir_ts[1])?;
             self.read_sector(&mut buf, dir_ts, 0)?;
-            let mut dir = DirectorySector::from_bytes(&buf);
+            let mut dir = DirectorySector::from_bytes(&buf)?;
             for entry in dir.entries.as_mut() {
                 if fname==entry.name && entry.tsl_track>0 && entry.tsl_track<255 {
                     if entry.file_type > 127 {
@@ -836,7 +846,7 @@ impl super::DiskFS for Disk {
                     let mut tslist_ts = [entry.tsl_track,entry.tsl_sector];
                     for _try2 in 0..types::MAX_TSLIST_REPS {
                         self.read_sector(&mut buf, tslist_ts, 0)?;
-                        let tslist = TrackSectorList::from_bytes(&buf);
+                        let tslist = TrackSectorList::from_bytes(&buf)?;
                         for p in 0..vconst.max_pairs as usize {
                             if tslist.pairs[p*2]>0 && tslist.pairs[p*2]<255 {
                                 self.deallocate_sector(tslist.pairs[p*2], tslist.pairs[p*2+1])?;
@@ -886,7 +896,7 @@ impl super::DiskFS for Disk {
     fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.read_file(name) {
             Ok(fimg) => {
-                let ans = types::BinaryData::from_bytes(&fimg.sequence());
+                let ans = types::BinaryData::from_bytes(&fimg.sequence())?;
                 Ok((u16::from_le_bytes(ans.start),ans.data))
             },
             Err(e) => Err(e)
@@ -906,7 +916,7 @@ impl super::DiskFS for Disk {
     fn load(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
         match self.read_file(name) {
             Ok(fimg) => {
-                let tokens = types::TokenizedProgram::from_bytes(&fimg.sequence()).program;
+                let tokens = types::TokenizedProgram::from_bytes(&fimg.sequence())?.program;
                 match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
                     Some(FileType::Integer) => Ok((0,tokens)),
                     Some(FileType::Applesoft) => Ok((applesoft::deduce_address(&tokens),tokens)),
@@ -958,10 +968,10 @@ impl super::DiskFS for Disk {
         }
         let seq = fimg.sequence();
         match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
-            Some(FileType::Applesoft) => Ok(types::TokenizedProgram::from_bytes(&seq).program),
-            Some(FileType::Integer) => Ok(types::TokenizedProgram::from_bytes(&seq).program),
-            Some(FileType::Text) => Ok(seq),
-            Some(FileType::Binary) => Ok(types::BinaryData::from_bytes(&seq).data),
+            Some(FileType::Applesoft) => Ok(types::TokenizedProgram::from_bytes(&seq)?.program),
+            Some(FileType::Integer) => Ok(types::TokenizedProgram::from_bytes(&seq)?.program),
+            Some(FileType::Text) => Ok(types::SequentialText::from_bytes(&seq)?.text),
+            Some(FileType::Binary) => Ok(types::BinaryData::from_bytes(&seq)?.data),
             None => Ok(seq)
         }
     }
@@ -1055,7 +1065,7 @@ impl super::DiskFS for Disk {
         return self.write_file(name,fimg);
     }
     fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        let file = types::SequentialText::from_bytes(dat)?;
         Ok(file.to_string())
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {

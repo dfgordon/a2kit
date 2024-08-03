@@ -9,8 +9,7 @@ use regex;
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use crate::img::{disk35,disk525};
 use crate::img;
@@ -357,25 +356,27 @@ impl DiskStruct for Trks {
     fn len(&self) -> usize {
         8 + u32::from_le_bytes(self.size) as usize
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.id = [bytes[0],bytes[1],bytes[2],bytes[3]];
         self.size = [bytes[4],bytes[5],bytes[6],bytes[7]];
         self.tracks = Vec::new();
         self.bits = Vec::new();
         for track in 0..160 {
-            let trk = Trk::from_bytes(&bytes[8+track*8..16+track*8].to_vec());
+            let trk = Trk::from_bytes(&bytes[8+track*8..16+track*8].to_vec())?;
             self.tracks.push(trk);
         }
         let bitstream_bytes = u32::from_le_bytes(self.size) - 1280;
         if bitstream_bytes%512>0 {
-            panic!("WOZ bitstream is not an even number of blocks");
+            error!("WOZ bitstream is not an even number of blocks");
+            return Err(DiskStructError::IllegalValue);
         }
         self.bits.append(&mut bytes[1288..].to_vec());
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Trks::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -469,7 +470,7 @@ impl DiskStruct for Meta {
         let bytes = self.to_bytes();
         bytes.len()
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.id = [bytes[0],bytes[1],bytes[2],bytes[3]];
         self.size = [bytes[4],bytes[5],bytes[6],bytes[7]];
         if let Err(_) = String::from_utf8(bytes[8..].to_vec()) {
@@ -485,11 +486,12 @@ impl DiskStruct for Meta {
                 self.recs.push((cols[0].to_string(),cols[1].to_string()));
             }
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Meta::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -701,29 +703,29 @@ impl img::DiskImage for Woz2 {
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         super::woz::write_sector(self, cyl, head, sec, dat)
     }
-    fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
+    fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         if buf.len()<12 {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
         let mut ans = Woz2::new();
-        ans.header.update_from_bytes(&buf[0..12].to_vec());
+        ans.header.update_from_bytes(&buf[0..12].to_vec())?;
         if ans.header.vers!=[0x57,0x4f,0x5a,0x32] {
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         info!("identified WOZ v2 header");
         let mut ptr: usize= 12;
         while ptr>0 {
             let (next,id,maybe_chunk) = img::woz::get_next_chunk(ptr, buf);
             match (id,maybe_chunk) {
-                (INFO_ID,Some(chunk)) => ans.info.update_from_bytes(&chunk),
-                (TMAP_ID,Some(chunk)) => ans.tmap.update_from_bytes(&chunk),
+                (INFO_ID,Some(chunk)) => ans.info.update_from_bytes(&chunk)?,
+                (TMAP_ID,Some(chunk)) => ans.tmap.update_from_bytes(&chunk)?,
                 (TRKS_ID,Some(chunk)) => {
                     ans.track_bits_offset = ptr + 1288;
-                    ans.trks.update_from_bytes(&chunk)
+                    ans.trks.update_from_bytes(&chunk)?
                 },
                 (META_ID,Some(chunk)) => {
                     let mut new_meta = Meta::new();
-                    new_meta.update_from_bytes(&chunk);
+                    new_meta.update_from_bytes(&chunk)?;
                     ans.meta = Some(new_meta);
                 },
                 (WRIT_ID,Some(chunk)) => ans.writ = Some(chunk),
@@ -735,7 +737,7 @@ impl img::DiskImage for Woz2 {
         }
         if ans.info.vers>=3 && ans.info.flux_block!=[0,0] && ans.info.largest_flux_track!=[0,0] {
             error!("WOZ uses flux data (not supported)");
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         if u32::from_le_bytes(ans.info.id)>0 && u32::from_le_bytes(ans.tmap.id)>0 && u32::from_le_bytes(ans.trks.id)>0 {
             ans.kind = match (ans.info.disk_type,ans.info.boot_sector_format,ans.info.disk_sides) {
@@ -752,10 +754,10 @@ impl img::DiskImage for Woz2 {
             } else {
                 warn!("Could not solve track 0, continuing with {}",ans.kind);
             }
-            return Some(ans);
+            return Ok(ans);
         }
         debug!("WOZ v2 sanity checks failed, refusing");
-        return None;
+        return Err(DiskStructError::IllegalValue);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
         if self.track_bits_offset!=1536 {
@@ -802,37 +804,37 @@ impl img::DiskImage for Woz2 {
                 _ => return Err(Box::new(img::Error::UnknownImageType))
             };
             let mut reader = self.new_rw_obj(track as u8);
-            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
                     flux_code: img::FluxCode::GCR,
                     nib_code: img::NibbleCode::N62,
-                    chs_map
+                    chss_map
                 }));
             }
             return Ok(None);
         } else if self.info.disk_type==1 {
             self.kind = img::names::A2_DOS32_KIND;
             let mut reader = self.new_rw_obj(track as u8);
-            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
                     flux_code: img::FluxCode::GCR,
                     nib_code: img::NibbleCode::N53,
-                    chs_map
+                    chss_map
                 }));
             }
             self.kind = img::names::A2_DOS33_KIND;
             reader = self.new_rw_obj(track as u8);
-            if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
                     flux_code: img::FluxCode::GCR,
                     nib_code: img::NibbleCode::N62,
-                    chs_map
+                    chss_map
                 }));
             }
             return Ok(None);

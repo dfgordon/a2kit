@@ -47,6 +47,7 @@ impl Disk {
             fs_type: vec![0],
             aux: vec![0;2],
             eof: vec![0;3],
+            accessed: vec![],
             created: vec![0;4],
             modified: vec![0;4],
             access: vec![0],
@@ -59,15 +60,15 @@ impl Disk {
     /// Use the given image as storage for a new DiskFS.
     /// The DiskFS takes ownership of the image.
     /// The image may or may not be formatted.
-    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
         let total_blocks = img.byte_capacity()/512;
-        Self {
+        Ok(Self {
             img,
             total_blocks,
             // bitmap buffer is designed to work transparently
             maybe_bitmap: None,
             bitmap_blocks: Vec::new()
-        }
+        })
     }
     /// Test an image for the ProDOS file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
@@ -75,7 +76,10 @@ impl Disk {
         if let Ok(buf) = img.read_block(Block::PO(2)) {
             let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
             let char_patt = [first_char_patt,"0123456789"].concat();
-            let vol_key: KeyBlock<VolDirHeader> = KeyBlock::from_bytes(&buf);
+            let vol_key: KeyBlock<VolDirHeader> = match KeyBlock::from_bytes(&buf) {
+                Ok(k) => k,
+                Err(_) => return false
+            };
             let (nibs,name) = vol_key.header.fname();
             let total_blocks = u16::from_le_bytes([buf[0x29],buf[0x2A]]);
             if total_blocks<280 {
@@ -222,7 +226,7 @@ impl Disk {
         if self.bitmap_blocks.contains(&iblock) {
             self.maybe_bitmap = None;
         }
-        self.img.write_block(Block::PO(iblock), &data[offset..offset+actual_len].to_vec())
+        self.img.write_block(Block::PO(iblock), &data[offset..offset+actual_len])
     }
     fn get_available_block(&mut self) -> Result<Option<u16>,DYNERR> {
         for block in 0..self.total_blocks {
@@ -237,7 +241,7 @@ impl Disk {
         // make sure we start with all 0
         trace!("formatting: zero all");
         for iblock in 0..self.total_blocks {
-            self.zap_block(&[0;512].to_vec(),iblock,0)?;
+            self.zap_block(&[0;512],iblock,0)?;
         }
         // calculate volume parameters and setup volume directory
         let mut volume_dir = KeyBlock::<VolDirHeader>::new();
@@ -266,10 +270,10 @@ impl Disk {
         // boot loader blocks
         trace!("formatting: boot loader");
         if floppy {
-            self.write_block(&boot::FLOPPY_BLOCK0.to_vec(),0,0)?;
+            self.write_block(&boot::FLOPPY_BLOCK0,0,0)?;
         }
         else {
-            self.write_block(&boot::HD_BLOCK0.to_vec(), 0, 0)?;
+            self.write_block(&boot::HD_BLOCK0, 0, 0)?;
         }
         self.write_block(&vec![0;512],1,0)?;
 
@@ -289,7 +293,7 @@ impl Disk {
     fn get_vol_header(&mut self) -> Result<VolDirHeader,DYNERR> {
         let mut buf: Vec<u8> = vec![0;512];
         self.read_block(&mut buf,VOL_KEY_BLOCK as usize,0)?;
-        let volume_dir = KeyBlock::<VolDirHeader>::from_bytes(&buf);
+        let volume_dir = KeyBlock::<VolDirHeader>::from_bytes(&buf)?;
         Ok(volume_dir.header)
     }
     /// Return the correct trait object assuming this block is a directory block.
@@ -298,10 +302,10 @@ impl Disk {
         let mut buf: Vec<u8> = vec![0;512];
         self.read_block(&mut buf,iblock,0)?;
         match (iblock==VOL_KEY_BLOCK as usize,buf[0]==0 && buf[1]==0) {
-            (true,true) => Ok(Box::new(KeyBlock::<VolDirHeader>::from_bytes(&buf))),
-            (true,false) => Ok(Box::new(KeyBlock::<VolDirHeader>::from_bytes(&buf))),
-            (false,true) => Ok(Box::new(KeyBlock::<SubDirHeader>::from_bytes(&buf))),
-            (false,false) => Ok(Box::new(EntryBlock::from_bytes(&buf)))
+            (true,true) => Ok(Box::new(KeyBlock::<VolDirHeader>::from_bytes(&buf)?)),
+            (true,false) => Ok(Box::new(KeyBlock::<VolDirHeader>::from_bytes(&buf)?)),
+            (false,true) => Ok(Box::new(KeyBlock::<SubDirHeader>::from_bytes(&buf)?)),
+            (false,false) => Ok(Box::new(EntryBlock::from_bytes(&buf)?))
         }
     }
     /// Find the key block assuming this block is a directory block, and return the
@@ -1248,7 +1252,7 @@ impl super::DiskFS for Disk {
         }
     }
     fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        let file = types::SequentialText::from_bytes(&dat)?;
         Ok(file.to_string())
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
@@ -1315,7 +1319,7 @@ impl super::DiskFS for Disk {
 #[test]
 fn test_path_normalize() {
     let img = Box::new(crate::img::dsk_po::PO::create(280));
-    let mut disk = Disk::from_img(img);
+    let mut disk = Disk::from_img(img).expect("failed to create disk");
     disk.format(&String::from("NEW.DISK"),true,None).expect("disk error");
     match disk.normalize_path("NEW.DISK","DIR1") {
         Ok(res) => assert_eq!(res,["NEW.DISK","DIR1"]),

@@ -6,7 +6,7 @@
 use chrono;
 use std::str::FromStr;
 use log::{warn,debug,info,error};
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use crate::img;
 use crate::img::meta;
@@ -161,14 +161,14 @@ impl img::DiskImage for Dot2mg {
         }
         self.raw_img.write_sector(cyl,head,sec,dat)
     }
-    fn from_bytes(data: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         if data.len()<64 {
-            return None;
+            return Err(DiskStructError::OutOfData);
         }
-        let header = Header::from_bytes(&data[0..64].to_vec());
+        let header = Header::from_bytes(&data[0..64].to_vec())?;
         match header.magic {
             [0x32,0x49,0x4D,0x47] => info!("identified 2MG header"),
-            _ => return None
+            _ => return Err(DiskStructError::UnexpectedValue)
         }
         if u16::from_le_bytes(header.header_len)!=64 {
             warn!("unexpected 2MG header length {}",u16::from_le_bytes(header.header_len));
@@ -179,36 +179,27 @@ impl img::DiskImage for Dot2mg {
         let fmt = u32::from_le_bytes(header.img_fmt);
         if fmt>2 {
             error!("illegal 2MG format {}",fmt);
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         let blocks = u32::from_le_bytes(header.blocks);
         let offset = u32::from_le_bytes(header.data_offset) as usize;
         let len = u32::from_le_bytes(header.data_len) as usize;
         if data.len()<offset+len {
             error!("end of data {} runs past EOF",offset+len);
-            return None;
+            return Err(DiskStructError::OutOfData);
         }
-        let maybe_raw_img: Option<Box<dyn img::DiskImage>> = match fmt {
+        let raw_img: Box<dyn img::DiskImage> = match fmt {
             0 => {
                 info!("2MG flagged as DOS ordered");
-                match img::dsk_do::DO::from_bytes(&data[offset..offset+len].to_vec()) {
-                    Some(im) => Some(Box::new(im)),
-                    None => None
-                }
+                Box::new(img::dsk_do::DO::from_bytes(&data[offset..offset+len])?)
             },
             1 => {
                 info!("2MG flagged as ProDOS ordered");
-                match img::dsk_po::PO::from_bytes(&data[offset..offset+len].to_vec()) {
-                    Some(im) => Some(Box::new(im)),
-                    None => None
-                }
+                Box::new(img::dsk_po::PO::from_bytes(&data[offset..offset+len])?)
             },
             2 => {
                 info!("2MG flagged as nibbles");
-                match img::nib::Nib::from_bytes(&data[offset..offset+len].to_vec()) {
-                    Some(im) => Some(Box::new(im)),
-                    None => None
-                }
+                Box::new(img::nib::Nib::from_bytes(&data[offset..offset+len])?)
             },
             _ => panic!("unhandled format")
         };
@@ -246,20 +237,17 @@ impl img::DiskImage for Dot2mg {
                 }
             };
         }
-        if let Some(raw_img) = maybe_raw_img {
-            if fmt==1 && blocks as usize * BLOCK_SIZE as usize != raw_img.byte_capacity() {
-                error!("2MG block count does not match data size");
-                return None;
-            }
-            return Some(Self {
-                kind: raw_img.kind(),
-                header,
-                raw_img,
-                comment,
-                creator_info 
-            })
+        if fmt==1 && blocks as usize * BLOCK_SIZE as usize != raw_img.byte_capacity() {
+            error!("2MG block count does not match data size");
+            return Err(DiskStructError::UnexpectedSize);
         }
-        return None;
+        Ok(Self {
+            kind: raw_img.kind(),
+            header,
+            raw_img,
+            comment,
+            creator_info 
+        })
     }
     fn what_am_i(&self) -> img::DiskImageType {
         img::DiskImageType::DOT2MG

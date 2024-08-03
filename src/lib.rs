@@ -89,28 +89,30 @@ pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
     Ok(())
 }
 
-/// Return the file system on a disk image, or None if one cannot be found.
-/// If found, the file system takes ownership of the disk image.
-fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
+/// Return the file system on a disk image, if all goes well we have `Ok(Some(fs))`.
+/// If the file system cannot be identified we have `Ok(None)`.
+/// If the file system is identified, but broken, we have `Err(_)`.
+/// If `Ok(Some(_))`, the file system takes ownership of the disk image.
+fn try_img(mut img: Box<dyn DiskImage>) -> Result<Option<Box<dyn DiskFS>>,DYNERR> {
     if fs::dos3x::Disk::test_img(&mut img) {
         info!("identified DOS 3.x file system");
-        return Some(Box::new(fs::dos3x::Disk::from_img(img)));
+        return Ok(Some(Box::new(fs::dos3x::Disk::from_img(img)?)));
     }
     if fs::prodos::Disk::test_img(&mut img) {
         info!("identified ProDOS file system");
-        return Some(Box::new(fs::prodos::Disk::from_img(img)));
+        return Ok(Some(Box::new(fs::prodos::Disk::from_img(img)?)));
     }
     if fs::pascal::Disk::test_img(&mut img) {
         info!("identified Pascal file system");
-        return Some(Box::new(fs::pascal::Disk::from_img(img)));
+        return Ok(Some(Box::new(fs::pascal::Disk::from_img(img)?)));
     }
     if fs::fat::Disk::test_img(&mut img) {
         info!("identified FAT file system");
-        return Some(Box::new(fs::fat::Disk::from_img(img,None)));
+        return Ok(Some(Box::new(fs::fat::Disk::from_img(img,None)?)));
     }
     if fs::fat::Disk::test_img_dos1x(&mut img) {
         info!("identified MS-DOS 1.x file system");
-        return Some(Box::new(fs::fat::Disk::from_img_dos1x(img)));
+        return Ok(Some(Box::new(fs::fat::Disk::from_img_dos1x(img)?)));
     }
     // For CP/M we have to try all these DPB heuristically
     let dpb_list = vec![
@@ -128,10 +130,10 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Option<Box<dyn DiskFS>> {
     for dpb in &dpb_list {
         if fs::cpm::Disk::test_img(&mut img,dpb,[3,1,0]) {
             info!("identified CP/M file system on {}",dpb);
-            return Some(Box::new(fs::cpm::Disk::from_img(img,dpb.clone(),[3,1,0])));
+            return Ok(Some(Box::new(fs::cpm::Disk::from_img(img,dpb.clone(),[3,1,0])?)));
         }
     }
-   return None;
+   return Ok(None);
 }
 
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
@@ -146,81 +148,81 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     }
     debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+        if let Ok(img) = img::imd::Imd::from_bytes(disk_img_data) {
             info!("identified IMD image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::woz1::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
+        if let Ok(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
             info!("identified woz1 image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::woz2::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
+        if let Ok(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
             info!("identified woz2 image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
             info!("identified 2mg image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::td0::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::td0::Td0::from_bytes(disk_img_data) {
+        if let Ok(img) = img::td0::Td0::from_bytes(disk_img_data) {
             info!("identified td0 image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::nib::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::nib::Nib::from_bytes(disk_img_data) {
+        if let Ok(img) = img::nib::Nib::from_bytes(disk_img_data) {
             info!("Possible nib/nb2 image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
             info!("Possible D13 image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
             info!("Possible DO image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
             info!("Possible PO image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
     }
     if img::dsk_img::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
             info!("Possible IMG image");
-            if let Some(disk) = try_img(Box::new(img)) {
+            if let Some(disk) = try_img(Box::new(img))? {
                 return Ok(disk);
             }
         }
@@ -242,43 +244,43 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     }
     debug!("matching image type {}",ext);
     if img::imd::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::imd::Imd::from_bytes(disk_img_data) {
+        if let Ok(img) = img::imd::Imd::from_bytes(disk_img_data) {
             info!("identified IMD image");
             return Ok(Box::new(img));
         }
     }
     if img::woz1::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
+        if let Ok(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
             info!("identified woz1 image");
             return Ok(Box::new(img));
         }
     }
     if img::woz2::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
+        if let Ok(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
             info!("identified woz2 image");
             return Ok(Box::new(img));
         }
     }
     if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
             info!("identified 2mg image");
             return Ok(Box::new(img));
         }
     }
     if img::td0::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::td0::Td0::from_bytes(disk_img_data) {
+        if let Ok(img) = img::td0::Td0::from_bytes(disk_img_data) {
             info!("identified td0 image");
             return Ok(Box::new(img));
         }
     }
     if img::nib::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::nib::Nib::from_bytes(disk_img_data) {
+        if let Ok(img) = img::nib::Nib::from_bytes(disk_img_data) {
             info!("Possible nib/nb2 image");
             return Ok(Box::new(img));
         }
     }
     if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
             info!("Possible D13 image");
             return Ok(Box::new(img));
         }
@@ -286,27 +288,27 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     // For DO we need to run the FS heuristics to distinguish from PO,
     // in case the extension hint is missing or vague.
     if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
             info!("Possible DO image");
             if ext=="do" {
                 return Ok(Box::new(img));
             }
-            // TODO: run the FS heuristics without taking ownership
-            if try_img(Box::new(img)).is_some() {
-                let copy = img::dsk_do::DO::from_bytes(disk_img_data).unwrap();
-                return Ok(Box::new(copy));
+            if let Ok(Some(_)) = try_img(Box::new(img)) {
+                if let Ok(copy) = img::dsk_do::DO::from_bytes(disk_img_data) {
+                    return Ok(Box::new(copy));
+                }
             }
             debug!("reject DO based on FS heuristics")
         }
     }
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
             info!("Possible PO image");
             return Ok(Box::new(img));
         }
     }
     if img::dsk_img::file_extensions().contains(&ext) || ext=="" {
-        if let Some(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
+        if let Ok(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
             info!("Possible IMG image");
             return Ok(Box::new(img));
         }

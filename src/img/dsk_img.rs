@@ -4,6 +4,7 @@
 //! Alternative extensions for IBM disks include IMG, IMA, and others.
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
+use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
 use crate::img;
 use crate::fs::Block;
@@ -125,7 +126,7 @@ impl img::DiskImage for Img {
         self.data[offset..offset+self.sec_size].copy_from_slice(&padded);
         Ok(())
     }
-    fn from_bytes(data: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         // try to match known sizes
         let kind = match data.len() {
             l if l==CPM_1.byte_capacity() => img::DiskKind::D8(CPM_1),
@@ -142,26 +143,26 @@ impl img::DiskImage for Img {
             l if l==IBM_1680.byte_capacity() => img::DiskKind::D35(IBM_1680),
             l if l==IBM_1720.byte_capacity() => img::DiskKind::D35(IBM_1720),
             l if l==IBM_2880.byte_capacity() => img::DiskKind::D35(IBM_2880),
-            _ => return None
+            _ => return Err(DiskStructError::IllegalValue)
         };
         let layout = match kind {
             img::DiskKind::D35(l) => l,
             img::DiskKind::D525(l) => l,
             img::DiskKind::D8(l) => l,
-            _ => panic!("unexpected disk kind")
+            _ => return Err(DiskStructError::UnexpectedValue)
         };
         debug!("IMG size matches {}",kind);
         let sec_size = layout.sector_size[0];
         let cylinders = layout.cylinders[0];
         let heads = layout.sides();
         let sectors = layout.sectors[0];
-        Some(Self {
+        Ok(Self {
             kind,
             sec_size,
             cylinders,
             heads,
             sectors,
-            data: data.clone()
+            data: data.to_vec()
         })
     }
     fn what_am_i(&self) -> img::DiskImageType {
@@ -189,9 +190,9 @@ impl img::DiskImage for Img {
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
         let [cylinder,head] = self.track_2_ch(trk);
-        let mut chs_map: Vec<[usize;3]> = Vec::new();
+        let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..self.sectors {
-            chs_map.push([cylinder,head,i]);
+            chss_map.push([cylinder,head,i,self.sec_size]);
         }
         let flux_code = match self.kind {
             img::DiskKind::D35(l) => l.flux_code[0],
@@ -204,7 +205,7 @@ impl img::DiskImage for Img {
             head,
             flux_code,
             nib_code: img::NibbleCode::None,
-            chs_map
+            chss_map
         }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

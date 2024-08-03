@@ -262,19 +262,17 @@ impl Context {
             log::debug!("do not descend, wrong node type {}",curs.node().kind());
 			return None;
 		}
-		if let Some(file_node) = curs.node().next_named_sibling() {
-            let mut matches = Vec::new();
-            for doc in &ws.docs {
-                if super::node_matches_doc(&file_node, &self.line(), &doc) {
-                    matches.push(doc);
-                }
-            }
-            if matches.len() == 0 {
-                log::debug!("do not descend, no match for {}",node_text(&file_node,&self.line()));
-                return None;
-            }
-            return Some((new_typ,Arc::new(matches[0].to_owned())));
+        let doc_uris = ws.get_include_doc(&curs.node(), self.line());
+        if doc_uris.len() != 1 {
+            log::debug!("do not descend, no distinct match ({})",doc_uris.len());
+            return None;
         }
+        for doc in &ws.docs {
+            if doc.uri == doc_uris[0] {
+                return Some((new_typ,Arc::new(doc.to_owned())));
+            }
+        }
+        log::debug!("do not descend, no checkpointed document found");
         return None;
 	}
 }

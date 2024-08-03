@@ -41,6 +41,23 @@ pub fn handle_notification(
                 tools.thread_handles.push_back(handle);
             }
         },
+        lsp::notification::DidSaveTextDocument::METHOD => {
+            if let Ok(params) = serde_json::from_value::<lsp::DidSaveTextDocumentParams>(note.params) {
+                let normalized_uri = normalize_client_uri(params.text_document.uri);
+                if let Some(text) = params.text {
+                    let handle = launch_analysis_thread(
+                        Arc::clone(&tools.analyzer),
+                        a2kit::lang::Document {
+                            uri: normalized_uri.clone(),
+                            version: None,
+                            text
+                        },
+                        crate::WorkspaceScanMethod::FullUpdate
+                    );
+                    tools.thread_handles.push_back(handle);
+                }
+            }
+        }
         lsp::notification::DidCloseTextDocument::METHOD => {
             if let Ok(params) = serde_json::from_value::<lsp::DidCloseTextDocumentParams>(note.params) {
                 let normalized_uri = normalize_client_uri(params.text_document.uri);
@@ -56,21 +73,28 @@ pub fn handle_notification(
                         chkpt.update_doc(normalized_uri.clone(),change.text.clone(),Some(params.text_document.version));
                     }
                 }
-                for change in params.content_changes {
-                    // we asked for full documents so expect just one iteration
-                    let handle = launch_analysis_thread(
-                        Arc::clone(&tools.analyzer),
-                        a2kit::lang::Document {
-                            uri: normalized_uri.clone(),
-                            version: Some(params.text_document.version),
-                            text: change.text
-                        },
-                        crate::WorkspaceScanMethod::UseCheckpoints
-                    );
-                    tools.thread_handles.push_back(handle);
+                if tools.config.diagnostics.live {
+                    for change in params.content_changes {
+                        // we asked for full documents so expect just one iteration
+                        let handle = launch_analysis_thread(
+                            Arc::clone(&tools.analyzer),
+                            a2kit::lang::Document {
+                                uri: normalized_uri.clone(),
+                                version: Some(params.text_document.version),
+                                text: change.text
+                            },
+                            crate::WorkspaceScanMethod::UseCheckpoints
+                        );
+                        tools.thread_handles.push_back(handle);
+                    }
                 }
             }
         },
+        lsp::notification::SetTrace::METHOD => {
+            if let Ok(_params) = serde_json::from_value::<lsp::SetTraceParams>(note.params) {
+                logger(&connection,"we are ignoring the SetTrace notification");
+            }
+        }
         lsp::notification::Cancel::METHOD => {
             // TODO: figure out when this needs to be handled specially
             if let Ok(params) = serde_json::from_value::<lsp::CancelParams>(note.params) {

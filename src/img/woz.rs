@@ -96,7 +96,7 @@ pub fn crc32(crc_seed: u32, buf: &Vec<u8>) -> u32
 /// If `ptr`=0 no more chunks. Option(chunk)=None means unknown id or incongruous size.
 /// The returned chunk buffer includes the id and size in the first 8 bytes.
 /// The `DiskStruct` trait can be used to unpack the chunk at higher levels.
-pub fn get_next_chunk(ptr: usize,buf: &Vec<u8>) -> (usize,u32,Option<Vec<u8>>) {
+pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
 	if ptr+8 > buf.len() {
 		return (0,0,None);
 	}

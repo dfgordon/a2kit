@@ -58,6 +58,8 @@ use log::{info,error};
 use crate::fs;
 use crate::{STDRESULT,DYNERR};
 
+use a2kit_macro::DiskStructError;
+
 /// Enumerates disk image errors.  The `Display` trait will print equivalent long message.
 #[derive(thiserror::Error,Debug)]
 pub enum Error {
@@ -129,7 +131,7 @@ pub struct TrackSolution {
     head: usize,
     flux_code: FluxCode,
     nib_code: NibbleCode,
-    chs_map: Vec<[usize;3]>
+    chss_map: Vec<[usize;4]>
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]
@@ -353,9 +355,12 @@ pub trait TrackBits {
     fn read_sector(&mut self,bits: &[u8],track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
     /// Get aligned track nibbles; n.b. head position will move.
     fn to_nibbles(&mut self,bits: &[u8]) -> Vec<u8>;
-    /// Get CHS addresses in time order, or return an error.  Head position will move.
+    /// Get [cyl,head,sec] in time order, or return an error.  Head position will move.
     /// This can also be used to determine if the assumed encoding is valid.
     fn chs_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;3]>,NibbleError>;
+    /// Get [cyl,head,sec,size] in time order, or return an error.  Head position will move.
+    /// This can also be used to determine if the assumed encoding is valid.
+    fn chss_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;4]>,NibbleError>;
 }
 
 /// The main trait for working with any kind of disk image.
@@ -377,7 +382,7 @@ pub trait DiskImage {
     fn file_extensions(&self) -> Vec<String>;
     fn kind(&self) -> DiskKind;
     fn change_kind(&mut self,kind: DiskKind);
-    fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized;
+    fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized;
     fn to_bytes(&mut self) -> Vec<u8>;
     /// Read a block from the image; can affect disk state
     fn read_block(&mut self,addr: fs::Block) -> Result<Vec<u8>,DYNERR>;
@@ -391,7 +396,7 @@ pub trait DiskImage {
     fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
     /// Set the track buffer using another track buffer, the sizes must match
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT;
-    /// Given a track index, get the physical CH, CHS map, flux and nibble codes for the track.
+    /// Given a track index, get the physical CH, CHSS map, flux and nibble codes for the track.
     /// Implement this at a low level, making as few assumptions as possible.
     /// The expense of this operation can vary widely depending on the image type.
     /// No solution is not an error, i.e., we can return Ok(None).
@@ -444,12 +449,13 @@ pub trait DiskImage {
                         n => json::JsonValue::String(n.to_string())
                     };
                     trk_obj["chs_map"] = json::JsonValue::new_array();
-                    for chs in sol.chs_map {
-                        let mut chs_json = json::JsonValue::new_array();
-                        chs_json.push(chs[0])?;
-                        chs_json.push(chs[1])?;
-                        chs_json.push(chs[2])?;
-                        trk_obj["chs_map"].push(chs_json)?;
+                    for chss in sol.chss_map {
+                        let mut chss_json = json::JsonValue::new_array();
+                        chss_json.push(chss[0])?;
+                        chss_json.push(chss[1])?;
+                        chss_json.push(chss[2])?;
+                        chss_json.push(chss[3])?;
+                        trk_obj["chs_map"].push(chss_json)?;
                     }
                     trk_ary.push(trk_obj)?;
                 },

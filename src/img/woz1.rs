@@ -10,8 +10,7 @@ use log::{debug,info,warn,error};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use crate::img::disk525;
 use crate::img;
@@ -205,7 +204,7 @@ impl DiskStruct for Trks {
     fn len(&self) -> usize {
         8 + u32::from_le_bytes(self.size) as usize
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         let sz = Trk::new().len();
         self.id = [bytes[0],bytes[1],bytes[2],bytes[3]];
         self.size = [bytes[4],bytes[5],bytes[6],bytes[7]];
@@ -213,15 +212,16 @@ impl DiskStruct for Trks {
         let mut off = 8;
         self.tracks = Vec::new();
         for _track in 0..num_tracks {
-            let trk = Trk::from_bytes(&bytes[off..off+sz].to_vec());
+            let trk = Trk::from_bytes(&bytes[off..off+sz])?;
             self.tracks.push(trk);
             off += sz;
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self where Self: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         let mut ans = Trks::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -387,23 +387,23 @@ impl img::DiskImage for Woz1 {
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         super::woz::write_sector(self, cyl, head, sec, dat)
     }
-    fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
+    fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         if buf.len()<12 {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
         let mut ans = Woz1::new();
-        ans.header.update_from_bytes(&buf[0..12].to_vec());
+        ans.header.update_from_bytes(&buf[0..12].to_vec())?;
         if ans.header.vers!=[0x57,0x4f,0x5a,0x31] {
-            return None;
+            return Err(DiskStructError::IllegalValue);
         }
         info!("identified WOZ v1 header");
         let mut ptr: usize= 12;
         while ptr>0 {
             let (next,id,maybe_chunk) = img::woz::get_next_chunk(ptr, buf);
             match (id,maybe_chunk) {
-                (INFO_ID,Some(chunk)) => ans.info.update_from_bytes(&chunk),
-                (TMAP_ID,Some(chunk)) => ans.tmap.update_from_bytes(&chunk),
-                (TRKS_ID,Some(chunk)) => ans.trks.update_from_bytes(&chunk),
+                (INFO_ID,Some(chunk)) => ans.info.update_from_bytes(&chunk)?,
+                (TMAP_ID,Some(chunk)) => ans.tmap.update_from_bytes(&chunk)?,
+                (TRKS_ID,Some(chunk)) => ans.trks.update_from_bytes(&chunk)?,
                 (META_ID,Some(chunk)) => ans.meta = Some(chunk),
                 _ => if id!=0 {
                     info!("unprocessed chunk with id {:08X}/{}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)))
@@ -417,10 +417,10 @@ impl img::DiskImage for Woz1 {
             } else {
                 warn!("could not solve track 0, continuing with {}",ans.kind);
             }
-            return Some(ans);
+            return Ok(ans);
         }
         warn!("WOZ v1 sanity checks failed, refusing");
-        return None;
+        return Err(DiskStructError::UnexpectedValue);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
@@ -456,24 +456,24 @@ impl img::DiskImage for Woz1 {
         let [cylinder,head] = self.track_2_ch(track);
         self.kind = img::names::A2_DOS32_KIND;
         let mut reader = self.new_rw_obj(track as u8);
-        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
             return Ok(Some(img::TrackSolution {
                 cylinder,
                 head,
                 flux_code: img::FluxCode::GCR,
                 nib_code: img::NibbleCode::N53,
-                chs_map
+                chss_map
             }));
         }
         self.kind = img::names::A2_DOS33_KIND;
         reader = self.new_rw_obj(track as u8);
-        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
             return Ok(Some(img::TrackSolution {
                 cylinder,
                 head,
                 flux_code: img::FluxCode::GCR,
                 nib_code: img::NibbleCode::N62,
-                chs_map
+                chss_map
             }));
         }
         return Err(Box::new(img::Error::UnknownDiskKind));

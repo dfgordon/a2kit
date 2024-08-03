@@ -39,7 +39,7 @@ fn get_tokens(filename: &str) -> Vec<u8> {
 #[test]
 fn format() {
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     let ignore = disk.standardize(2);
     disk.compare(&Path::new("tests").join("prodos-blank.po"),&ignore);
@@ -48,7 +48,7 @@ fn format() {
 #[test]
 fn create_dirs() {
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     let mut tokens = get_tokens("build_dirs.bas");
     tokens.push(0xc4); // Virtual II added an extra byte, why?
@@ -82,7 +82,7 @@ fn read_small() {
 
     // check the sequential text file
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
-    let txt = prodos::types::SequentialText::from_bytes(&raw);
+    let txt = prodos::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = prodos::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
 }
@@ -92,7 +92,7 @@ fn write_small() {
     // Formatting: Copy2Plus, writing: Virtual II:
     // This tests a small BASIC program, binary, and text file
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     // save the BASIC program
@@ -115,7 +115,7 @@ fn write_small() {
 #[test]
 fn out_of_space() {
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
     disk.bsave("f1",&big,0x800,None).expect("error");
@@ -168,7 +168,7 @@ fn write_big() {
     // This tests a seedling, a sapling, and two trees (both sparse)
     let mut buf: Vec<u8>;
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     // create and save the BASIC program, this is a seedling file
@@ -199,7 +199,7 @@ fn fill_dirs() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // Make a lot of directories and put sparse files in a few of them
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     let mut tokens = get_tokens("build_dirs.bas");
@@ -233,7 +233,7 @@ fn rename_delete() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // test delete and rename of sparse tree files and directories inside a large subdirectory
     let img = a2kit::img::dsk_po::PO::create(280);
-    let mut disk = prodos::Disk::from_img(Box::new(img));
+    let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
 
     let mut tokens = get_tokens("build_dirs.bas");

@@ -43,7 +43,7 @@ fn format() {
     // We are compatible with CiderPress.  The "last track" field in the VTOC
     // is left with value 18, *as if* a greeting program had been written there.
     let img = img::dsk_do::DO::create(35, 16);
-    let mut disk = dos3x::Disk::from_img(Box::new(img));
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init(254,true,18,35,16).expect("failed to INIT");
     let ignore = disk.standardize(0);
     disk.compare(&Path::new("tests").join("dos33-boot.do"),&ignore);
@@ -68,7 +68,7 @@ fn read_small() {
 
     // check the sequential text file
     let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
-    let txt = dos3x::types::SequentialText::from_bytes(&raw);
+    let txt = dos3x::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = dos3x::types::Encoder::new(vec![0x8d]);
     assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
 }
@@ -78,7 +78,7 @@ fn write_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file
     let img = img::dsk_do::DO::create(35, 16);
-    let mut disk = dos3x::Disk::from_img(Box::new(img));
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init33(254,true).expect("failed to INIT");
 
     // save the BASIC program
@@ -101,7 +101,7 @@ fn write_small() {
 #[test]
 fn out_of_space() {
     let img = img::dsk_do::DO::create(35, 16);
-    let mut disk = dos3x::Disk::from_img(Box::new(img));
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.init33(254,true).expect("failed to INIT");
     disk.bsave("f1",&big,0x800,None).expect("error");
@@ -153,7 +153,7 @@ fn write_big() {
     // This tests a small BASIC program, large binary, and two sparse text files
     let mut buf: Vec<u8>;
     let img = img::dsk_do::DO::create(35, 16);
-    let mut disk = dos3x::Disk::from_img(Box::new(img));
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init33(254,true).expect("failed to INIT");
 
     // create and save the BASIC program
@@ -186,7 +186,7 @@ fn rename_delete() {
     // Adds deletion and renaming to scenario in `write_big`.
     let mut buf: Vec<u8>;
     let img = img::dsk_do::DO::create(35, 16);
-    let mut disk = dos3x::Disk::from_img(Box::new(img));
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init(254,true,17,35,16).expect("failed to INIT");
 
     // create and save the BASIC program

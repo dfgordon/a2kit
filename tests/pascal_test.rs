@@ -45,7 +45,7 @@ fn ignore_boot_blocks(ignore: &mut HashMap<Block,Vec<usize>>) {
 #[test]
 fn format() {
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = pascal::Disk::from_img(Box::new(img));
+    let mut disk = pascal::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("BLANK"),0,None).expect("could not format");
     let mut ignore = disk.standardize(0);
     ignore_boot_blocks(&mut ignore);
@@ -61,21 +61,21 @@ fn read_small() {
 
     // check source 1
     let (_z,raw) = emulator_disk.read_text("hello.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw);
+    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = pascal::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode(PROG1).unwrap());
     assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG1)+"\n");
 
     // check source 2
     let (_z,raw) = emulator_disk.read_text("test2.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw);
+    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = pascal::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode(PROG2).unwrap());
     assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG2)+"\n");
 
     // check source 3
     let (_z,raw) = emulator_disk.read_text("test3.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw);
+    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = pascal::types::Encoder::new(vec![0x0d]);
     assert_eq!(txt.text,encoder.encode(PROG3).unwrap());
     assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG3)+"\n");
@@ -86,7 +86,7 @@ fn write_small() {
     // Formatting: CiderPress, writing: MicroM8:
     // This tests small Pascal source files
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = pascal::Disk::from_img(Box::new(img));
+    let mut disk = pascal::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.format(&String::from("BLANK"),0,None).expect("failed to format");
 
     // save the text
@@ -105,7 +105,7 @@ fn write_small() {
 #[test]
 fn out_of_space() {
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = pascal::Disk::from_img(Box::new(img));
+    let mut disk = pascal::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),0,None).expect("could not format");
     disk.bsave("f1",&big,0x800,None).expect("error");

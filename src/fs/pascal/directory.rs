@@ -5,8 +5,7 @@
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 use super::types::ENTRY_SIZE;
@@ -70,19 +69,24 @@ impl DiskStruct for Directory {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         // depending on equality of header and entry lengths
         let num_entries = bytes.len()/ENTRY_SIZE - 1;
-        self.header.update_from_bytes(&bytes[0..ENTRY_SIZE].to_vec());
+        self.header.update_from_bytes(&bytes[0..ENTRY_SIZE])?;
         self.entries = Vec::new();
         for i in 0..num_entries {
-            self.entries.push(DirectoryEntry::from_bytes(&bytes[i*ENTRY_SIZE..(i+1)*ENTRY_SIZE].to_vec()));
+            if (i+1)*ENTRY_SIZE > bytes.len() {
+                return Err(DiskStructError::OutOfData);
+            }
+            let entry_buf = DirectoryEntry::from_bytes(&bytes[i*ENTRY_SIZE..(i+1)*ENTRY_SIZE])?;
+            self.entries.push(entry_buf);
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         // depending on equality of header and entry lengths

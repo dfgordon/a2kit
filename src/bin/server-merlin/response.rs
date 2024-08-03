@@ -48,6 +48,9 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
                 Err(_) => logger(&connection,"could not parse config")
             }
         },
+        "\"merlin6502-reg-config\"" => {
+            logger(&connection,"registration response was received");
+        }
         s => {
             logger(&connection,&format!("unhandled response: {}",s))
         }

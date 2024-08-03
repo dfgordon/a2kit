@@ -100,6 +100,15 @@ pub enum ProcessorType {
     _65c816
 }
 
+#[derive(Clone,PartialEq)]
+pub enum LabelType {
+    Local,
+    Global,
+    Macro,
+    MacroLocal,
+    Variable
+}
+
 #[derive(Clone)]
 pub struct AddressMode {
     pub mnemonic: String,
@@ -164,8 +173,10 @@ pub struct Symbol {
     decs: Vec<lsp::Location>,
     defs: Vec<lsp::Location>,
     refs: Vec<lsp::Location>,
-    /// Forward references are stored only if they should trigger a diagnostic
-    fwd_refs: HashSet<lsp::Location>,
+    /// This should record only *bad* forward references.
+    /// It is a map from a reference's location to label types that were not defined up to that point.
+    /// Multiple label types can occur due to ambiguities during the first pass (e.g. global vs. macro local).
+    fwd_refs: HashMap<lsp::Location,Vec<LabelType>>,
     /// Current value of a symbol.
     value: Option<i64>,
     /// Merlin children are as follows:
@@ -197,9 +208,9 @@ pub struct Workspace {
     pub ws_folders: Vec<lsp::Url>,
 	/// array of documents in this workspace
     pub docs: Vec<super::Document>,
-	/// map from an include file basename to all master uri that `put` it
+	/// map from an include file uri to all master uri that `put` it
 	pub put_map: HashMap<String, HashSet<String>>,
-	/// map from an include file basename to all master uri that `use` it
+	/// map from an include file uri to all master uri that `use` it
 	pub use_map: HashMap<String, HashSet<String>>,
 	/// set of uri that are included by another file
 	pub includes: HashSet<String>,
@@ -269,7 +280,7 @@ impl Symbol {
             decs: Vec::new(),
             defs: Vec::new(),
             refs: Vec::new(),
-            fwd_refs: HashSet::new(),
+            fwd_refs: HashMap::new(),
             value: None,
             children: HashMap::new(),
             docstring: String::new(),
@@ -277,15 +288,15 @@ impl Symbol {
         }
     }
     /// create new symbol and add a node in one step
-    pub fn create(loc: lsp::Location, in_macro: bool, node: &tree_sitter::Node, source: &str) -> Self {
+    pub fn create(loc: lsp::Location, node: &tree_sitter::Node, source: &str) -> Self {
         let mut ans = Self::new(&node_text(node, source));
-        ans.add_node(loc, in_macro, node, source);
+        ans.add_node(loc, node, source);
         ans
     }
     /// Add a node to the symbol.
     /// The node can be `label_def`, `label_ref`, `macro_def`, `macro_ref`, or `var_mac`.
     /// The latter can occur without a wrapper in some pseudo-ops such as `ASC`.
-    pub fn add_node(&mut self, loc: lsp::Location, in_macro: bool, node: &tree_sitter::Node, source: &str) {
+    pub fn add_node(&mut self, loc: lsp::Location, node: &tree_sitter::Node, source: &str) {
         if node.kind() == "var_mac" {
             self.refs.push(loc);
             self.flags |= symbol_flags::ARG | symbol_flags::VAR;
@@ -345,8 +356,6 @@ impl Symbol {
                 self.flags |= symbol_flags::LOC;
             } else if child.kind() == "var_label" {
                 self.flags |= symbol_flags::VAR;
-            } else if child.kind() == "global_label" && in_macro {
-                self.flags |= symbol_flags::MLC;
             }
         }
     }
@@ -403,7 +412,10 @@ impl Symbols {
     }
     pub fn mac_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
         if let Some(sym) = self.macros.get(txt) {
-            sym.fwd_refs.contains(loc)
+            match sym.fwd_refs.get(loc) {
+                Some(fwd) => fwd.contains(&LabelType::Macro),
+                None => false
+            }
         } else {
             false
         }
@@ -411,6 +423,16 @@ impl Symbols {
     pub fn global_defined(&self,txt: &str) -> bool {
         if let Some(sym) = self.globals.get(txt) {
             sym.defs.len() > 0
+        } else {
+            false
+        }
+    }
+    pub fn global_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
+        if let Some(sym) = self.globals.get(txt) {
+            match sym.fwd_refs.get(loc) {
+                Some(fwd) => fwd.contains(&LabelType::Global),
+                None => false
+            }
         } else {
             false
         }
@@ -424,7 +446,10 @@ impl Symbols {
     }
     pub fn var_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
         if let Some(sym) = self.vars.get(txt) {
-            sym.fwd_refs.contains(loc)
+            match sym.fwd_refs.get(loc) {
+                Some(fwd) => fwd.contains(&LabelType::Variable),
+                None => false
+            }
         } else {
             false
         }
@@ -436,7 +461,17 @@ impl Symbols {
             false
         }
     }
-    /// should only be used when generating semantic highlights
+    pub fn child_forward(&self,txt: &str,scope: &Symbol, loc: &lsp::Location) -> bool {
+        if let Some(sym) = scope.children.get(txt) {
+            match sym.fwd_refs.get(loc) {
+                Some(fwd) => fwd.contains(&LabelType::Local) || fwd.contains(&LabelType::MacroLocal),
+                None => false
+            }
+        } else {
+            false
+        }
+    }
+    /// should only be used if symbols have been updated
     pub fn adjust_line(&self,row: isize,line: &str,term: &str) -> String {
         let prefix = match self.alt_parser_lines.contains(&row) {
             true => CALL_TOK.to_string(),

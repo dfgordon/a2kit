@@ -95,7 +95,7 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> 
         }
     }
     let buf_size = dpb.dir_entries() * DIR_ENTRY_SIZE;
-    Some(Directory::from_bytes(&buf[0..buf_size].to_vec()))
+    Some(Directory::from_bytes(&buf[0..buf_size]).expect(RCH))
 }
 
 /// The primary interface for disk operations.
@@ -117,6 +117,7 @@ impl Disk
             fs_type: vec![0;3],
             aux: vec![],
             eof: vec![0;4],
+            accessed: vec![],
             created: vec![],
             modified: vec![],
             access: vec![0;11],
@@ -128,15 +129,15 @@ impl Disk
     }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image and DPB.
-    pub fn from_img(img: Box<dyn img::DiskImage>,dpb: DiskParameterBlock,cpm_vers: [u8;3]) -> Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>,dpb: DiskParameterBlock,cpm_vers: [u8;3]) -> Result<Self,DYNERR> {
         if !dpb.verify() {
-            panic!("disk parameters were invalid");
+            return Err(Box::new(Error::BadFormat));
         }
-        return Self {
+        Ok(Self {
             cpm_vers,
             dpb,
             img
-        }
+        })
     }
     /// Test an image for the CP/M file system.
     /// Will not accept images with directory structures corresponding to CP/M versions higher than `cpm_vers`.
@@ -242,7 +243,7 @@ impl Disk
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        self.img.write_block(Block::CPM((iblock,self.dpb.bsh,self.dpb.off)), &data[offset..offset+actual_len].to_vec())
+        self.img.write_block(Block::CPM((iblock,self.dpb.bsh,self.dpb.off)), &data[offset..offset+actual_len])
     }
     fn get_available_block(&mut self,dir: &Directory) -> Option<u16> {
         for block in 0..self.dpb.user_blocks() {
@@ -756,6 +757,9 @@ impl super::DiskFS for Disk {
         error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
+    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
+        0
+    }
     fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
         let eof: usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
         Ok(fimg.sequence_limited(eof))
@@ -834,7 +838,7 @@ impl super::DiskFS for Disk {
         return self.write_file(xname,fimg);
     }
     fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        let file = types::SequentialText::from_bytes(&dat).expect(RCH);
         Ok(file.to_string())
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {

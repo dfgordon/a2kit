@@ -7,6 +7,7 @@
 use crate::img;
 use crate::fs::Block;
 
+use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
 use super::BlockLayout;
 use crate::{STDRESULT,DYNERR};
@@ -83,16 +84,16 @@ impl img::DiskImage for PO {
         debug!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
-    fn from_bytes(data: &Vec<u8>) -> Option<Self> {
+    fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         // reject anything that can be neither a DOS 3.3 nor a ProDOS volume
         if data.len()%BLOCK_SIZE > 0 || data.len()/BLOCK_SIZE > MAX_BLOCKS || data.len()/BLOCK_SIZE < MIN_BLOCKS {
-            return None;
+            return Err(DiskStructError::UnexpectedSize);
         }
         let blocks = (data.len()/BLOCK_SIZE) as u16;
-        Some(Self {
+        Ok(Self {
             kind: select_kind(blocks),
             blocks,
-            data: data.clone()
+            data: data.to_vec()
         })
     }
     fn what_am_i(&self) -> img::DiskImageType {

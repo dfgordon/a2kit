@@ -4,11 +4,11 @@
 //! the same nibble routines.  The only difference is that NIB sets `sync_bits` to 8
 //! regardless of the nibble encoding.
 
+use a2kit_macro::DiskStructError;
 use log::{debug,error};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
 use crate::img::disk525;
 use crate::img;
 use crate::{STDRESULT,DYNERR};
@@ -149,22 +149,22 @@ impl img::DiskImage for Nib {
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
         super::woz::write_sector(self, cyl, head, sec, dat)
     }
-    fn from_bytes(buf: &Vec<u8>) -> Option<Self> where Self: Sized {
+    fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         match buf.len() {
             l if l==35*TRACK_BYTE_CAPACITY_NIB => {
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NIB,
-                    data: buf.clone(),
+                    data: buf.to_vec(),
                     head_coords: HeadCoords { track: usize::MAX, bit_ptr: usize::MAX }
                 };
                 if let Ok(Some(_sol)) = disk.get_track_solution(0) {
                     debug!("setting disk kind to {}",disk.kind);
-                    return Some(disk);
+                    return Ok(disk);
                 } else {
                     debug!("Looks like NIB, but could not solve track 0");
-                    return None;
+                    return Err(DiskStructError::UnexpectedValue);
                 }
             },
             l if l==35*TRACK_BYTE_CAPACITY_NB2 => {
@@ -172,20 +172,20 @@ impl img::DiskImage for Nib {
                     kind: img::names::A2_DOS33_KIND,
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NB2,
-                    data: buf.clone(),
+                    data: buf.to_vec(),
                     head_coords: HeadCoords { track: usize::MAX, bit_ptr: usize::MAX }
                 };
                 if let Ok(Some(_sol)) = disk.get_track_solution(0) {
                     debug!("setting disk kind to {}",disk.kind);
-                    return Some(disk);
+                    return Ok(disk);
                 } else {
                     debug!("Looks like NB2, but could not solve track 0");
-                    return None;
+                    return Err(DiskStructError::UnexpectedValue);
                 }
             }
             _ => {
                 debug!("Buffer size {} fails to match nib or nb2",buf.len());
-                None
+                Err(DiskStructError::UnexpectedSize)
             }
         }
     }
@@ -210,24 +210,24 @@ impl img::DiskImage for Nib {
         let [cylinder,head] = self.track_2_ch(track);
         self.kind = img::names::A2_DOS32_KIND;
         let mut reader = self.new_rw_obj(track as u8);
-        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
             return Ok(Some(img::TrackSolution {
                 cylinder,
                 head,
                 flux_code: img::FluxCode::GCR,
                 nib_code: img::NibbleCode::N53,
-                chs_map
+                chss_map
             }));
         }
         self.kind = img::names::A2_DOS33_KIND;
         reader = self.new_rw_obj(track as u8);
-        if let Ok(chs_map) = reader.chs_map(self.get_trk_bits_ref(track as u8)) {
+        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
             return Ok(Some(img::TrackSolution {
                 cylinder,
                 head,
                 flux_code: img::FluxCode::GCR,
                 nib_code: img::NibbleCode::N62,
-                chs_map
+                chss_map
             }));
         }
         return Err(Box::new(img::Error::UnknownDiskKind));

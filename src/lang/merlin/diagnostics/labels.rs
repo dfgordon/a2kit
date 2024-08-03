@@ -2,27 +2,34 @@ use std::collections::HashMap;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use super::context::Context;
-use super::super::{Symbol,Symbols,Workspace,SourceType};
+use super::super::{Symbol,Symbols,Workspace,SourceType,LabelType};
 use super::super::symbol_flags as flg;
 use crate::lang::merlin::{self, MerlinVersion};
 use crate::lang::server::{path_in_workspace,basic_diag};
 use crate::lang::{Navigation,node_text,lsp_range};
 use crate::DYNERR;
 
-/// Register occurence of any top level symbol allowing for good or bad forward references.
+const FWD_REF_AVERSE: [&str;5] = ["arg_equ","arg_if","arg_do","arg_lup","arg_var"];
+const MACRO_AVERSE: [&str;6] = ["psop_ent","psop_ext","psop_exd","psop_put","psop_use","psop_sav"];
+
+/// Register occurence of any top level symbol.
 /// Looks around the node to create the symbol.  Returns the calculated symbol flags.
-fn register(txt: &str, source: &str, loc: lsp::Location, in_macro: bool, node: &tree_sitter::Node, map: &mut HashMap<String,Symbol>, docstring: Option<String>, bad_fwd_ref: bool) -> u64 {
+fn register(txt: &str, source: &str, loc: lsp::Location, node: &tree_sitter::Node, map: &mut HashMap<String,Symbol>, docstring: Option<String>, fwd: Vec<LabelType>) -> u64 {
     match map.get_mut(txt) {
         Some(sym) => {
-            log::trace!("add node {}",txt);
-            if bad_fwd_ref {
-                sym.fwd_refs.insert(loc.clone());
+            if node.kind() == "label_def" || node.kind() == "macro_def" {
+                sym.defining_code = Some(source.to_string());
+                if let Some(ds) = docstring {
+                    sym.docstring = ds;
+                }
             }
-            sym.add_node(loc, in_macro, node, source);
+            log::trace!("add node {}",txt);
+            sym.fwd_refs.insert(loc.clone(),fwd);
+            sym.add_node(loc, node, source);
             sym.flags
         },
         None => {
-            let mut sym = Symbol::create(loc.clone(),in_macro,node,source);
+            let mut sym = Symbol::create(loc.clone(),node,source);
             if node.kind() == "label_def" || node.kind() == "macro_def" {
                 sym.defining_code = Some(source.to_string());
                 if let Some(ds) = docstring {
@@ -31,29 +38,29 @@ fn register(txt: &str, source: &str, loc: lsp::Location, in_macro: bool, node: &
             }
             log::trace!("new node {}",txt);
             let returned_flags = sym.flags;
-            if bad_fwd_ref {
-                sym.fwd_refs.insert(loc);
-            }
+            sym.fwd_refs.insert(loc.clone(),fwd);
             map.insert(txt.to_string(),sym);
             returned_flags
         }
     }
 }
 
-/// Register occurence of any child symbol allowing for forward references.
+/// Register occurence of any child symbol.
 /// This information is put on the scope stack, not the main symbol store.
 /// When exiting the scope the child information is saved to the main store.
-fn register_child(txt: &str, loc: lsp::Location, in_macro: bool, node: &tree_sitter::Node, ctx: &mut Context) {
+fn register_child(txt: &str, loc: lsp::Location, node: &tree_sitter::Node, ctx: &mut Context, fwd: Vec<LabelType>) {
     let source = ctx.line().to_owned();
     if let Some(scope) = ctx.curr_scope() {
         match scope.children.get_mut(txt) {
             Some(sym) => {
                 log::trace!("add child node {}",txt);
-                sym.add_node(loc,in_macro,node,&source);
+                sym.fwd_refs.insert(loc.clone(),fwd);
+                sym.add_node(loc,node,&source);
             },
             None => {
-                let sym = Symbol::create(loc,in_macro,node,&source);
+                let mut sym = Symbol::create(loc.clone(),node,&source);
                 log::trace!("new child node {}",txt);
+                sym.fwd_refs.insert(loc.clone(),fwd);
                 scope.children.insert(txt.to_string(),sym);
             }
         }
@@ -109,14 +116,12 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             if symbols.global_defined(&txt) {
                 push(rng,"macro name is used previously as a label",lsp::DiagnosticSeverity::ERROR);
             }
-            if diagnostics.len() == diag_count {
-                register(&txt, ctx.line(), loc, in_macro, &node, &mut symbols.macros, Some(ctx.running_docstring.clone()),false);
-                ctx.running_docstring = String::new();
-                ctx.enter_scope(&txt,symbols);
-            }
         } else {
             push(rng,"macro label needs to be global",lsp::DiagnosticSeverity::ERROR);
         }
+        register(&txt, ctx.line(), loc, &node, &mut symbols.macros, Some(ctx.running_docstring.clone()),vec![]);
+        ctx.running_docstring = String::new();
+        ctx.enter_scope(&txt,symbols);
         return Ok(Navigation::GotoSibling);
     } else if node.kind()=="psop_eom" {
         match in_macro {
@@ -131,51 +136,46 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     } else if child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();
         if ck == "global_label" && !in_macro {
-            let mut err_count = 0;
             if symbols.global_defined(&txt) {
-                err_count += 1;
                 push(rng, "redefinition of a global label", lsp::DiagnosticSeverity::ERROR);
             }
             if symbols.mac_defined(&txt) {
-                err_count += 1;
                 push(rng, "label name is used previously as a macro", lsp::DiagnosticSeverity::ERROR);
             }
-            if err_count == 0 {
-                let f = register(&txt, ctx.line(), loc, in_macro, &node, &mut symbols.globals, Some(ctx.running_docstring.clone()),false);
-                if f & merlin::symbol_flags::EXT > 0 {
-                    match ws.entries.get(&txt) {
-                        Some(ent) => {
-                            if let Some(ext) = symbols.globals.get_mut(&txt) {
-                                if ent.defs.len() > 0 {
-                                    ext.docstring = format!("imported from {}",path_in_workspace(&ent.defs[0].uri, &ws.ws_folders));
-                                } else if ent.refs.len() > 0 {
-                                    ext.docstring = format!("referenced in {}, but definition not found",path_in_workspace(&ent.refs[0].uri, &ws.ws_folders));
-                                } else {
-                                    ext.docstring = format!("entry exists but there was an internal error");
-                                }
+            let f = register(&txt, ctx.line(), loc, &node, &mut symbols.globals, Some(ctx.running_docstring.clone()),vec![]);
+            if f & merlin::symbol_flags::EXT > 0 {
+                match ws.entries.get(&txt) {
+                    Some(ent) => {
+                        if let Some(ext) = symbols.globals.get_mut(&txt) {
+                            if ent.defs.len() > 0 {
+                                ext.docstring = format!("imported from {}",path_in_workspace(&ent.defs[0].uri, &ws.ws_folders));
+                            } else if ent.refs.len() > 0 {
+                                ext.docstring = format!("referenced in {}, but definition not found",path_in_workspace(&ent.refs[0].uri, &ws.ws_folders));
+                            } else {
+                                ext.docstring = format!("entry exists but there was an internal error");
                             }
-                        },
-                        None => push(rng,"entry was not found in workspace",lsp::DiagnosticSeverity::ERROR)
-                    };
-                }
-                ctx.running_docstring = String::new();
-                ctx.enter_scope(&txt,symbols);
+                        }
+                    },
+                    None => push(rng,"entry was not found in workspace",lsp::DiagnosticSeverity::ERROR)
+                };
             }
+            ctx.running_docstring = String::new();
+            ctx.enter_scope(&txt,symbols);
         } else if ck == "global_label" && in_macro {
-            let scope = ctx.curr_scope().unwrap();
-            if symbols.child_defined(&txt,&scope) {
-                push(rng, "redefinition of a macro scoped label", lsp::DiagnosticSeverity::WARNING);
-            } else if symbols.global_defined(&txt) {
-                push(rng, "redefinition of a global label", lsp::DiagnosticSeverity::WARNING);
+            if symbols.global_defined(&txt) {
+                push(rng, "macro local shadows global", lsp::DiagnosticSeverity::WARNING);
+            }
+            if symbols.child_defined(&txt,&ctx.curr_scope().unwrap()) {
+                push(rng, "redefinition of a macro scoped label", lsp::DiagnosticSeverity::ERROR);
             } else {
-                register_child(&txt,loc,in_macro,&node,ctx);
+                register_child(&txt,loc,&node,ctx,vec![]);
             }
         } else if ck == "local_label" && !in_macro {
             if let Some(scope) = ctx.curr_scope() {
                 if symbols.child_defined(&txt, &scope) {
                     push(rng, "redefinition of a local label", lsp::DiagnosticSeverity::ERROR);
                 } else {
-                    register_child(&txt,loc,in_macro,&node,ctx);
+                    register_child(&txt,loc,&node,ctx,vec![]);
                 }
             } else {
                 push(rng,"no global scope is defined yet",lsp::DiagnosticSeverity::ERROR);
@@ -191,20 +191,51 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
                 }
             }
             if diagnostics.len() == diag_count {
-                register(&txt,ctx.line(),loc,in_macro,&node,&mut symbols.vars,None,false);
+                register(&txt,ctx.line(),loc,&node,&mut symbols.vars,None,vec![]);
             }
         }
         return Ok(Navigation::GotoSibling);
     } else if child.is_some() && node.kind() == "macro_ref" {
         if child.unwrap().kind()=="global_label" {
-            let bad_fwd_ref = !symbols.mac_defined(&txt);
-            register(&txt,ctx.line(),loc,in_macro,&node,&mut symbols.macros,None,bad_fwd_ref);
+            let fwd = match symbols.mac_defined(&txt) {
+                true => Vec::new(),
+                false => vec![LabelType::Macro]
+            };
+            register(&txt,ctx.line(),loc,&node,&mut symbols.macros,None,fwd);
         }
         return Ok(Navigation::GotoSibling);
     } else if child.is_some() && node.kind() == "label_ref" {
+        let mut fwd = Vec::new();
+        let no_fwd = match super::find_arg_node(&node) {
+            Some(psop) => FWD_REF_AVERSE.contains(&psop.as_str()),
+            None => false
+        };
         if child.unwrap().kind()=="var_label" {
-            let bad_fwd_ref = child.unwrap().child_count()==0 && !symbols.var_defined(&txt);
-            register(&txt,ctx.line(),loc,in_macro,&node,&mut symbols.vars,None,bad_fwd_ref);
+            if !symbols.var_defined(&txt) {
+                fwd.push(LabelType::Variable);
+            };
+            register(&txt,ctx.line(),loc,&node,&mut symbols.vars,None,fwd);
+        } else if child.unwrap().kind()=="global_label" && !in_macro {
+            if no_fwd && !symbols.global_defined(&txt) {
+                fwd.push(LabelType::Global);
+            }
+            register(&txt,ctx.line(),loc,&node,&mut symbols.globals,None,fwd);
+        } else if child.unwrap().kind()=="global_label" && in_macro {
+            // Tentatively register as a child (macro local), will be resolved on second pass
+            if no_fwd && !symbols.global_defined(&txt) {
+                log::trace!("{}: push `{}` onto fwd list",ctx.row(),&txt);
+                fwd.push(LabelType::Global);
+            }
+            if no_fwd && !symbols.child_defined(&txt,ctx.curr_scope().unwrap()) {
+                log::trace!("{}: push `{}` onto fwd list",ctx.row(),&txt);
+                fwd.push(LabelType::MacroLocal);
+            }
+            register_child(&txt,loc,&node,ctx,fwd);
+        }  else if child.unwrap().kind()=="local_label" && !in_macro {
+            if no_fwd && !symbols.child_defined(&txt,ctx.curr_scope().unwrap()) {
+                fwd.push(LabelType::Local);
+            }
+            register_child(&txt,loc,&node,ctx,fwd);
         }
         return Ok(Navigation::GotoSibling);
     } else if (node.kind() == "psop_put" || node.kind() == "psop_use") && (src.typ==SourceType::Master || src.typ==SourceType::Module) {
@@ -237,12 +268,12 @@ fn verify_include_path(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace) -> 
     if let Some(path_node) = curs.node().next_named_sibling() {
         if let Some(src) = ctx.curr_source() {
             let rng = lsp_range(path_node.range(), src.row, src.col);
-            let num = ws.include_candidates(curs, ctx.line());
-            if num == 0 {
+            let doc_uris = ws.get_include_doc(&curs.node(), ctx.line());
+            if doc_uris.len() == 0 {
                 ans.push(basic_diag(rng, "file not found in workspace", lsp::DiagnosticSeverity::ERROR));
             }
-            if num > 1 {
-                ans.push(basic_diag(rng, &format!("multiple matches ({}) exist in the workspace",num), lsp::DiagnosticSeverity::ERROR));
+            if doc_uris.len() > 1 {
+                ans.push(basic_diag(rng, &format!("multiple matches ({}) could not be resolved",doc_uris.len()), lsp::DiagnosticSeverity::ERROR));
             }
         }
     }
@@ -264,34 +295,56 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     let (rng,txt) = ctx.node_spec(&node);
     let loc = lsp::Location::new(src.doc.uri.clone(),rng);
     let child = node.named_child(0);
-    let scope = ctx.curr_scope();
-    let (in_macro,in_global) = match &scope {
+    let (in_macro,in_global) = match &ctx.curr_scope() {
         Some(s) => (s.flags & flg::MAC > 0, s.flags & flg::MAC == 0),
         None => (false,false)
     };
-    let macro_averse = ["psop_ent","psop_ext","psop_exd","psop_put","psop_use","psop_sav"];
     if child.is_some() && node.kind()=="label_ref" {
         let ck = child.unwrap().kind();
         if ck=="global_label" && symbols.mac_defined(&txt) {
             push(rng,"macro cannot be used here",lsp::DiagnosticSeverity::ERROR);
         } else if ck == "global_label" {
             let is_glob = symbols.global_defined(&txt);
-            let is_mac_loc = in_macro && symbols.child_defined(&txt, scope.as_ref().unwrap());
+            let is_mac_loc = in_macro && symbols.child_defined(&txt, ctx.curr_scope().as_ref().unwrap());
+            if is_glob && is_mac_loc {
+                push(rng,"macro local shadows global",lsp::DiagnosticSeverity::WARNING);
+            }
+            // This fixes a wrongly identified macro local originating in the first pass.
+            // We have to catch the first one and switch all occurrences right then.
+            if in_macro && is_glob && !is_mac_loc {
+                let scope = ctx.curr_scope().unwrap();
+                if let Some(child) = scope.children.get(&txt) {
+                    if let Some(glob) = symbols.globals.get_mut(&txt) {
+                        for (l,v) in &child.fwd_refs {
+                            glob.fwd_refs.insert(l.clone(),v.clone());
+                        }
+                        for l in &child.refs {
+                            glob.refs.push(l.clone());
+                        }
+                    }
+                    if let Some(main) = symbols.macros.get_mut(&scope.name) {
+                        main.children.remove(&txt); // clean the main store
+                    }
+                    scope.children.remove(&txt); // clean the scope stack
+                }
+            }
             if in_macro && !is_glob && !is_mac_loc {
                 push(rng,"label is undefined",lsp::DiagnosticSeverity::ERROR);
             } else if !in_macro && !is_glob {
                 push(rng, "global label is undefined", lsp::DiagnosticSeverity::ERROR);
-            } else if is_glob {
-                register(&txt,ctx.line(),loc,in_macro,&node,&mut symbols.globals,None,false);
-            } else if is_mac_loc {
-                register_child(&txt,loc,in_macro,&node,ctx);
+            } else if is_glob && symbols.global_forward(&txt,&loc) {
+                push(rng,"illegal forward reference",lsp::DiagnosticSeverity::ERROR);
+            } else if is_mac_loc && symbols.child_forward(&txt,ctx.curr_scope().as_ref().unwrap(),&loc) {
+                push(rng,"illegal forward reference",lsp::DiagnosticSeverity::ERROR);
             }
-        } else if ck=="local_label" && in_global && !symbols.child_defined(&txt, scope.as_ref().unwrap()) {
-            push(rng,"local label is not defined in this scope",lsp::DiagnosticSeverity::ERROR);
-        } else if ck=="local_label" && in_macro {
-            push(rng, "cannot use local labels in a macro", lsp::DiagnosticSeverity::ERROR);
-        } else if ck=="local_label" && scope.is_some() {
-            register_child(&txt,loc,in_macro,&node,ctx);
+        } else if ck=="local_label" {
+            if in_macro {
+                push(rng, "cannot use local labels in a macro", lsp::DiagnosticSeverity::ERROR);
+            } else if in_global && !symbols.child_defined(&txt, ctx.curr_scope().as_ref().unwrap()) {
+                push(rng,"local label is not defined in this scope",lsp::DiagnosticSeverity::ERROR);
+            } else if in_global && symbols.child_forward(&txt, ctx.curr_scope().as_ref().unwrap(),&loc) {
+                push(rng,"illegal forward reference",lsp::DiagnosticSeverity::ERROR);
+            }
         } else if ck == "var_label" {
             if let Some(grandchild) = child.unwrap().named_child(0) {
                 if in_macro && grandchild.kind() == "var_mac" {
@@ -350,7 +403,7 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             diagnostics.append(&mut verify_include_path(&curs,ctx,ws));
             return Ok(Navigation::Descend);
         }
-    } else if in_macro && macro_averse.contains(&node.kind()) {
+    } else if in_macro && MACRO_AVERSE.contains(&node.kind()) {
         push(rng,"pseudo operation cannot be used in a macro",lsp::DiagnosticSeverity::ERROR);
     } else if node.kind()=="psop_eom" {
         if in_macro {

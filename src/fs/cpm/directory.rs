@@ -18,8 +18,7 @@ use crate::{STDRESULT,DYNERR};
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
 // This spares us having to manually write code to copy bytes in and out for every new structure.
 // The auto-derivation is not used for structures with variable length fields (yet).
-// For fixed length structures, update_from_bytes will panic if lengths do not match.
-use a2kit_macro::DiskStruct;
+use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 
 const RCH: &str = "unreachable was reached";
@@ -425,7 +424,7 @@ impl Timestamp {
     fn create() -> Self {
         let mut bytes = vec![0;32];
         bytes[0] = TIMESTAMP;
-        Self::from_bytes(&bytes)
+        Self::from_bytes(&bytes).expect(RCH)
     }
     /// Given the ptr to the entry containing logical extent 0 of a file, get the time stamps and save in the FileInfo struct.
     fn get(dir: &Directory,lab: &Label,lx0: &Ptr,info: &mut FileInfo) -> STDRESULT {
@@ -536,20 +535,24 @@ impl DiskStruct for Directory {
         }
         return ans;
     }
-    fn update_from_bytes(&mut self,bytes: &Vec<u8>) {
+    fn update_from_bytes(&mut self,bytes: &[u8]) -> Result<(),DiskStructError> {
         self.entries = Vec::new();
         let num_extents = bytes.len()/DIR_ENTRY_SIZE;
         if bytes.len()%DIR_ENTRY_SIZE!=0 {
             warn!("directory buffer wrong size");
         }
         for i in 0..num_extents {
-            self.entries.push(bytes[i*DIR_ENTRY_SIZE..(i+1)*DIR_ENTRY_SIZE].try_into().expect("bad slice length"));
+            match bytes[i*DIR_ENTRY_SIZE..(i+1)*DIR_ENTRY_SIZE].try_into() {
+                Ok(x) => self.entries.push(x),
+                Err(_) => return Err(DiskStructError::OutOfData)
+            }
         }
+        Ok(())
     }
-    fn from_bytes(bytes: &Vec<u8>) -> Self {
+    fn from_bytes(bytes: &[u8]) -> Result<Self,DiskStructError> {
         let mut ans = Self::new();
-        ans.update_from_bytes(bytes);
-        return ans;
+        ans.update_from_bytes(bytes)?;
+        Ok(ans)
     }
     fn len(&self) -> usize {
         return DIR_ENTRY_SIZE*(self.entries.len());
@@ -595,7 +598,9 @@ impl Directory {
         let rng = EntryType::stat_range();
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
-                x if x>=rng[0] && x<rng[1] => Some(EntryType::from_bytes(&self.entries[*idx].to_vec())),
+                x if x>=rng[0] && x<rng[1] => Some(
+                    EntryType::from_bytes(&self.entries[*idx]).expect(RCH)
+                ),
                 _ => None
             },
             _ => panic!("wrong pointer type")

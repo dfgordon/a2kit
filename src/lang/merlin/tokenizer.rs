@@ -29,9 +29,10 @@ impl lang::Navigate for Tokenizer
 {
     fn visit(&mut self,curs:&tree_sitter::TreeCursor) -> Result<Navigation,DYNERR>
     {
-		// Two tasks here:
+		// Three tasks here:
 		// 1. convert string to ASCII bytes (to be inverted later)
 		// 2. insert column separators
+		// 3. clean comments (e.g. replace tabs with spaces)
 		let parent = match curs.node().parent() {
 			Some(p) => p,
 			None => return Ok(Navigation::GotoChild)
@@ -42,7 +43,7 @@ impl lang::Navigate for Tokenizer
 		if ["comment","heading"].contains(&curs.node().kind()) && parent.kind()=="source_file" {
 			let txt = lang::node_text(&curs.node(), self.parser.line());
 			trace!("visit: {}",txt);
-			self.tokenized_line.append(&mut txt.as_bytes().to_vec());
+			self.tokenized_line.append(&mut txt.replace("\t"," ").as_bytes().to_vec());
 			return Ok(Navigation::GotoSibling);
 		}
 
@@ -73,6 +74,9 @@ impl lang::Navigate for Tokenizer
 				let mut txt = lang::node_text(&curs.node(), self.parser.line());
 				if txt.starts_with(super::CALL_TOK) {
 					txt = txt[super::CALL_TOK.len_utf8()..].to_string();
+				}
+				if curs.node().kind()=="comment" {
+					txt = txt.replace("\t"," ");
 				}
 				trace!("visit: {}",txt);
 				self.tokenized_line.append(&mut txt.as_bytes().to_vec());

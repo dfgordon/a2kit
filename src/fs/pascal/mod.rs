@@ -112,7 +112,7 @@ fn string_to_vol_name(s: &str) -> [u8;7] {
 fn get_directory(img: &mut Box<dyn img::DiskImage>) -> Result<Directory,DYNERR> {
     let mut ans = Directory::new();
     let mut buf = img.read_block(Block::PO(VOL_HEADER_BLOCK))?;
-    ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE].to_vec());
+    ans.header = VolDirHeader::from_bytes(&buf[0..ENTRY_SIZE])?;
     let beg0 = u16::from_le_bytes(ans.header.begin_block);
     let beg = VOL_HEADER_BLOCK as u16;
     let end = u16::from_le_bytes(ans.header.end_block);
@@ -131,7 +131,7 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>) -> Result<Directory,DYNERR> 
     let max_num_entries = buf.len()/ENTRY_SIZE - 1;
     let mut offset = ENTRY_SIZE;
     for _i in 0..max_num_entries {
-        ans.entries.push(DirectoryEntry::from_bytes(&buf[offset..offset+ENTRY_SIZE].to_vec()));
+        ans.entries.push(DirectoryEntry::from_bytes(&buf[offset..offset+ENTRY_SIZE])?);
         offset += ENTRY_SIZE;
     }
     return Ok(ans);
@@ -152,6 +152,7 @@ impl Disk
             fs_type: vec![0;2],
             aux: vec![],
             eof: vec![0;4],
+            accessed: vec![],
             created: vec![],
             modified: vec![0;2],
             access: vec![],
@@ -163,10 +164,10 @@ impl Disk
     }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
-    pub fn from_img(img: Box<dyn img::DiskImage>) -> Self {
-        return Self {
+    pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
+        Ok(Self {
             img
-        }
+        })
     }
     /// Test an image for the Pascal file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
@@ -309,7 +310,7 @@ impl Disk
             x if x<=bytes => x as usize,
             _ => bytes as usize
         };
-        self.img.write_block(Block::PO(iblock), &data[offset..offset+actual_len].to_vec())
+        self.img.write_block(Block::PO(iblock), &data[offset..offset+actual_len])
     }
     /// Try to find `num` contiguous free blocks.  If found return the first block index.
     fn get_available_blocks(&mut self,num: u16) -> Result<Option<u16>,DYNERR> {
@@ -343,11 +344,11 @@ impl Disk
         let num_blocks = self.img.byte_capacity()/512;
         // Zero boot and directory blocks
         for iblock in 0..6 {
-            self.write_block(&[0;BLOCK_SIZE].to_vec(),iblock,0)?;
+            self.write_block(&[0;BLOCK_SIZE],iblock,0)?;
         }
         // Put `fill` value in all remaining blocks
         for iblock in 6..num_blocks {
-            self.write_block(&[fill;BLOCK_SIZE].to_vec(),iblock,0)?;
+            self.write_block(&[fill;BLOCK_SIZE],iblock,0)?;
         }
         // Setup volume directory
         let mut dir = Directory::new();
@@ -367,8 +368,8 @@ impl Disk
         // boot loader blocks
         match self.img.kind() {
             img::names::A2_DOS33_KIND => {
-                self.write_block(&boot::PASCAL_525_BLOCK0.to_vec(), 0, 0)?;
-                self.write_block(&boot::PASCAL_525_BLOCK1.to_vec(), 1, 0)?;
+                self.write_block(&boot::PASCAL_525_BLOCK0, 0, 0)?;
+                self.write_block(&boot::PASCAL_525_BLOCK1, 1, 0)?;
             },
             _ => {
                 error!("unsupported disk type");
@@ -696,6 +697,9 @@ impl super::DiskFS for Disk {
         error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
+    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
+        0
+    }
     fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {        
         if &fimg.file_system != FS_NAME {
             return Err(Box::new(Error::BadFormat));
@@ -795,7 +799,7 @@ impl super::DiskFS for Disk {
             error!("file too small to be pascal text file");
             return Err(Box::new(Error::BadFormat));
         }
-        let file = types::SequentialText::from_bytes(&dat.to_vec());
+        let file = types::SequentialText::from_bytes(&dat)?;
         Ok(file.to_string())
     }
     fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {

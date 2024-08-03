@@ -42,7 +42,7 @@ fn read_small() {
 
     // check text file
     let (_z,raw) = emulator_disk.read_text("POLARIS.TXT").expect("error");
-    let txt = cpm::types::SequentialText::from_bytes(&raw);
+    let txt = cpm::types::SequentialText::from_bytes(&raw).expect("bad setup");
     let encoder = cpm::types::Encoder::new(vec![]);
     assert_eq!(txt.text,encoder.encode(ED_TEST).unwrap());
     assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(ED_TEST));
@@ -53,7 +53,7 @@ fn write_small() {
     // Formatting: FORMAT.COM, writing: ED.COM, emulator: Virtual II
     // This tests small CP/M text files
     let img = dsk_do::DO::create(35, 16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]).expect("bad setup");
     disk.format("test",None).expect("failed to format disk");
 
     // save the text
@@ -72,7 +72,7 @@ fn write_small_timestamps() {
     let time = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap()
         .and_hms_opt(0,43,0).unwrap();
     let img = dsk_do::DO::create(35, 16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[3,1,0]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[3,1,0]).expect("bad setup");
     disk.format("",Some(time)).expect("failed to format disk");
 
     // save the text
@@ -86,7 +86,7 @@ fn write_small_timestamps() {
 #[test]
 fn out_of_space() {
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),None).expect("could not format");
     disk.bsave("f1",&big,0x800,None).expect("error");
@@ -139,7 +139,7 @@ fn build_ren_del(disk: &mut cpm::Disk) -> HashMap<Block,Vec<usize>> {
 fn rename_delete_dsk() {
     // Reference disk was created using AppleWin.
     let img = a2kit::img::dsk_do::DO::create(35,16);
-    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]);
+    let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]).expect("bad setup");
     disk.format(&String::from("TEST"),None).expect("could not format");
 
     let _ignore = build_ren_del(&mut disk);

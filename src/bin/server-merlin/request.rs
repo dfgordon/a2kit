@@ -100,7 +100,7 @@ pub fn handle_request(
                                     let handle = launch_analysis_thread(
                                         Arc::clone(&tools.analyzer),
                                         chk.get_doc(),
-                                        crate::WorkspaceScanMethod::UseCheckpoints
+                                        crate::WorkspaceScanMethod::FullUpdate
                                     );
                                     tools.thread_handles.push_back(handle);
                                 }

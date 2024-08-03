@@ -122,7 +122,7 @@ fn mkdos3x(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Ve
                 error!("we can only add the boot tracks if volume number is 254");
                 return Err(Box::new(CommandError::UnsupportedItemType));
             }
-            let mut disk = Box::new(dos3x::Disk::from_img(img));
+            let mut disk = dos3x::Disk::from_img(img)?;
             match kind {
                 DiskKind::LogicalSectors(img::names::A2_DOS32) => disk.init32(v,boot)?,
                 DiskKind::D525(img::names::A2_DOS32) => disk.init32(v,boot)?,
@@ -154,7 +154,7 @@ fn mkprodos(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<V
         _ => false
     };
     if let Some(vol_name) = vol {
-        let mut disk = Box::new(prodos::Disk::from_img(img));
+        let mut disk = prodos::Disk::from_img(img)?;
         disk.format(vol_name,floppy,None)?;
         return Ok(disk.get_img().to_bytes());
     } else {
@@ -169,11 +169,9 @@ fn mkpascal(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<V
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
     if let Some(vol_name) = vol {
-        let mut disk = Box::new(pascal::Disk::from_img(img));
-        match disk.format(vol_name,0xee,None) {
-            Ok(()) => Ok(disk.get_img().to_bytes()),
-            Err(e) => return Err(e)
-        }
+        let mut disk = pascal::Disk::from_img(img)?;
+        disk.format(vol_name,0xee,None)?;
+        return Ok(disk.get_img().to_bytes());
     } else {
         error!("pascal fs requires volume name");
         return Err(Box::new(CommandError::InvalidCommand));
@@ -197,11 +195,9 @@ fn mkcpm(vol: Option<&String>,boot: bool,kind: &DiskKind,img: Box<dyn DiskImage>
         2 => ("",None,[2,2,3]),
         _ => panic!("unexpected CP/M version")
     };
-    let mut disk = Box::new(cpm::Disk::from_img(img,dpb::DiskParameterBlock::create(&kind),cpm_vers));
-    match disk.format(vol_name,time) {
-        Ok(()) => Ok(disk.get_img().to_bytes()),
-        Err(e) => return Err(e)
-    }
+    let mut disk = cpm::Disk::from_img(img,dpb::DiskParameterBlock::create(&kind),cpm_vers)?;
+    disk.format(vol_name,time)?;
+    Ok(disk.get_img().to_bytes())
 }
 
 fn mkfat(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
@@ -210,15 +206,13 @@ fn mkfat(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
         return Err(Box::new(CommandError::UnsupportedItemType));
     }
     let boot_sector = bpb::BootSector::create(&img.kind())?;
-    let mut disk = Box::new(fat::Disk::from_img(img,Some(boot_sector)));
+    let mut disk = fat::Disk::from_img(img,Some(boot_sector))?;
     let vol_name = match vol {
         Some(nm) => nm.as_str(),
         None => ""
     };
-    match disk.format(vol_name,None) {
-        Ok(()) => Ok(disk.get_img().to_bytes()),
-        Err(e) => return Err(e)
-    }
+    disk.format(vol_name,None)?;
+    Ok(disk.get_img().to_bytes())
 }
 
 pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {

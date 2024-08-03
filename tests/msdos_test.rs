@@ -53,7 +53,7 @@ fn rename_delete_img() {
     let kind = a2kit::img::DiskKind::D525(a2kit::img::names::IBM_SSDD_8);
     let boot_sector = a2kit::bios::bpb::BootSector::create(&kind).expect("could not create boot sector");
     let img = a2kit::img::dsk_img::Img::create(kind);
-    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector));
+    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector)).expect("bad setup");
     disk.format(&String::from("NEW DISK 1"),None).expect("failed to format");
 
     let ignore = build_ren_del(&mut disk);
@@ -68,7 +68,7 @@ fn rename_delete_imd() {
     let kind = a2kit::img::DiskKind::D525(a2kit::img::names::IBM_DSDD_9);
     let boot_sector = a2kit::bios::bpb::BootSector::create(&kind).expect("could not create boot sector");
     let img = a2kit::img::imd::Imd::create(kind);
-    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector));
+    let mut disk = fat::Disk::from_img(Box::new(img),Some(boot_sector)).expect("bad setup");
     disk.format(&String::from("NEW DISK 1"),None).expect("failed to format");
 
     let ignore = build_ren_del(&mut disk);
