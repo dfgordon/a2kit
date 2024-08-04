@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
-use super::context::Context;
+use crate::lang::merlin::context::Context;
 use super::super::{Symbol,Symbols,Workspace,SourceType,LabelType};
 use super::super::symbol_flags as flg;
 use crate::lang::merlin::{self, MerlinVersion};

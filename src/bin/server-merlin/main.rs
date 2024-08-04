@@ -50,6 +50,7 @@ struct AnalysisResult {
     uri: lsp::Url,
     version: Option<i32>,
     diagnostics: Vec<lsp::Diagnostic>,
+    folding: Vec<lsp::FoldingRange>,
     symbols: merlin::Symbols,
     workspace: merlin::Workspace
 }
@@ -144,6 +145,7 @@ fn launch_analysis_thread(analyzer: Arc<Mutex<Analyzer>>, doc: a2kit::lang::Docu
                         uri: doc.uri.clone(),
                         version: doc.version,
                         diagnostics: analyzer.get_diags(&doc),
+                        folding: analyzer.get_folds(&doc),
                         symbols: analyzer.get_symbols(),
                         workspace: analyzer.get_workspace().clone()
                     }),
@@ -280,6 +282,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 first_trigger_character: " ".to_string(),
                 more_trigger_character: Some(vec![";".to_string()])
             }),
+            folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
             ..lsp::ServerCapabilities::default()
         },
         server_info: Some(lsp::ServerInfo {
@@ -341,6 +344,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     if let Some(chkpt) = tools.doc_chkpts.get_mut(&result.uri.to_string()) {
                         update_client_toolbar(&connection, &result.symbols).expect("toolbar update failed");
                         chkpt.update_symbols(result.symbols);
+                        chkpt.update_folding_ranges(result.folding);
                         tools.hover_provider.use_shared_symbols(chkpt.shared_symbols());
                         tools.completion_provider.use_shared_symbols(chkpt.shared_symbols());
                         tools.tokenizer.use_shared_symbols(chkpt.shared_symbols());

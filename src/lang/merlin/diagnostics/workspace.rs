@@ -90,7 +90,7 @@ impl Workspace {
     pub fn source_type(&self, uri: &lsp::Url, linker_threshold: f64) -> SourceType {
         let key = uri.to_string();
         if uri.scheme() == "macro" {
-            return SourceType::Macro;
+            return SourceType::MacroRef;
         }
         if let Some(frac) = self.linker_frac.get(&uri.to_string()) {
             if *frac >= linker_threshold {

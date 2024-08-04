@@ -72,6 +72,9 @@ impl Checkpoint for CheckpointManager {
         }
         None
     }
+    fn get_folding_ranges(&self) -> Vec<lsp_types::FoldingRange> {
+        Vec::new()
+    }
     fn get_symbols(&self) -> Vec<lsp::DocumentSymbol> {
         let sym = &self.symbols;
         let mut ans = Vec::new();

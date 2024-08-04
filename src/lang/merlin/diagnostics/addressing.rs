@@ -1,7 +1,7 @@
 
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
-use super::context::Context;
+use crate::lang::merlin::context::Context;
 use super::super::ProcessorType;
 
 pub struct AddressModeSentry {

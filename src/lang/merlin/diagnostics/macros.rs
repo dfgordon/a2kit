@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use lsp_types as lsp;
 use crate::lang::{Navigate,Navigation};
 use crate::lang::server::basic_diag;
-use super::super::Symbols;
+use crate::lang::merlin::Symbols;
 use crate::lang::{node_text,lsp_range};
-use super::context::Context;
+use crate::lang::merlin::context::Context;
 use crate::DYNERR;
 
 struct Substitutor {

@@ -12,7 +12,8 @@ use crate::lang::server::Checkpoint;
 
 pub struct CheckpointManager {
     doc: Document,
-    symbols: Arc<Symbols>
+    symbols: Arc<Symbols>,
+    folding_ranges: Vec<lsp::FoldingRange>
 }
 
 fn goto_defs(ans: &mut Vec<lsp::Location>,sel_loc: &lsp::Location,refs: &Vec<lsp::Location>,defs: &Vec<lsp::Location>) -> bool {
@@ -73,6 +74,9 @@ impl Checkpoint for CheckpointManager {
             row_now += 1;
         }
         None
+    }
+    fn get_folding_ranges(&self) -> Vec<lsp_types::FoldingRange> {
+        self.folding_ranges.clone()
     }
     fn get_symbols(&self) -> Vec<lsp::DocumentSymbol> {
         let sym = &self.symbols;
@@ -199,7 +203,8 @@ impl CheckpointManager {
     pub fn new() -> Self {
         Self {
             doc: Document::from_string("".to_string(),0),
-            symbols: Arc::new(Symbols::new())
+            symbols: Arc::new(Symbols::new()),
+            folding_ranges: Vec::new()
         }
     }
     pub fn update_doc(&mut self,uri: lsp::Url, txt: String, version: Option<i32>) {
@@ -209,6 +214,9 @@ impl CheckpointManager {
     }
     pub fn update_symbols(&mut self,sym: Symbols) {
         self.symbols = Arc::new(sym);
+    }
+    pub fn update_folding_ranges(&mut self,folding_ranges: Vec<lsp::FoldingRange>) {
+        self.folding_ranges = folding_ranges;
     }
     pub fn shared_symbols(&self) -> Arc<Symbols> {
         Arc::clone(&self.symbols)

@@ -55,6 +55,7 @@ pub trait Checkpoint {
     fn get_defs(&self,loc: &lsp::Location) -> Vec<lsp::Location>;
     fn get_refs(&self,loc: &lsp::Location) -> Vec<lsp::Location>;
     fn get_renamables(&self,loc: &lsp::Location) -> Vec<lsp::Location>;
+    fn get_folding_ranges(&self) -> Vec<lsp::FoldingRange>;
     fn symbol_response(chkpts: HashMap<String,Arc<&Self>>, req: lsp_server::Request, resp: &mut lsp_server::Response) {
         if let Ok(params) = serde_json::from_value::<lsp::DocumentSymbolParams>(req.params) {
             let uri = super::normalize_client_uri(params.text_document.uri);
@@ -120,6 +121,18 @@ pub trait Checkpoint {
                 *resp = match serde_json::to_value::<lsp::WorkspaceEdit>(lsp::WorkspaceEdit::new(changes)) {
                     Ok(result) => lsp_server::Response::new_ok(req.id,result),
                     Err(_) => lsp_server::Response::new_err(req.id,rpc_error::PARSE_ERROR,"rename request failed while parsing".to_string())
+                };
+            }
+        }
+    }
+    fn folding_range_response(chkpts: HashMap<String,Arc<&Self>>, req: lsp_server::Request, resp: &mut lsp_server::Response) {
+        if let Ok(params) = serde_json::from_value::<lsp::FoldingRangeParams>(req.params) {
+            let uri = super::normalize_client_uri(params.text_document.uri);
+            if let Some(chkpt) = chkpts.get(&uri.to_string()) {
+                let folding_ranges = chkpt.get_folding_ranges();
+                *resp = match serde_json::to_value::<Vec<lsp::FoldingRange>>(folding_ranges) {
+                    Ok(result) => lsp_server::Response::new_ok(req.id,result),
+                    Err(_) => lsp_server::Response::new_err(req.id,rpc_error::PARSE_ERROR,"folding range request failed while parsing".to_string())
                 };
             }
         }
@@ -197,6 +210,7 @@ pub trait Analysis {
     /// The available documents are the master that was analyzed, or
     /// any of its includes.
     fn get_diags(&self,doc: &super::Document) -> Vec<lsp::Diagnostic>;
+    fn get_folds(&self,doc: &super::Document) -> Vec<lsp::FoldingRange>;
     fn err_warn_info_counts(&self) -> [usize;3];
     fn eprint_lines_sexpr(&self,doc: &str);
     /// If console start interactive entry, otherwise empty input pipe into string.

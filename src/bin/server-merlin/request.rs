@@ -40,6 +40,7 @@ pub fn handle_request(
         lsp::request::Rename::METHOD => Checkpoint::rename_response(chkpts, req.clone(), &mut resp),
         lsp::request::HoverRequest::METHOD => Checkpoint::hover_response(chkpts, &mut tools.hover_provider, req.clone(), &mut resp),
         lsp::request::Completion::METHOD => Checkpoint::completion_response(chkpts, &mut tools.completion_provider, req.clone(), &mut resp),
+        lsp::request::FoldingRangeRequest::METHOD => Checkpoint::folding_range_response(chkpts, req.clone(), &mut resp),
 
         lsp::request::Shutdown::METHOD => {
             logger(&connection,"shutdown request");

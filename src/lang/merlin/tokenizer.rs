@@ -1,8 +1,7 @@
 //! Module containing the Merlin "tokenizer"
 //! 
-//! This is really a text encoder/decoder for Merlin source code, the term "tokenizer" is analogical.
-//! Whether we are encoding/decoding or tokenizing/detokenizing we are making a transformation
-//! between modern and historical representations.
+//! The purpose of the (de)tokenizer is to move back and forth between the source file one finds
+//! on an Apple II disk, and the source file one uses in a modern editor.
 
 use std::sync::Arc;
 use crate::lang;

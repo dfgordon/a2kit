@@ -1,11 +1,37 @@
+//! Merlin Context module used for analysis and assembly
+//! 
+//! This module manages containment relationships, builds docstrings, and owns a copy of the
+//! assembler handbook.  There are three containment stacks:
+//! 
+//! 1. Scope stack - stack of `Symbol` structures, globals and macros define a scope
+//! 2. Source stack - stack of `Source` structures, such as (Master (Use) (Put) (Put))
+//! 3. Folding stack - stack of `Fold` structures, such as (DO (IF (ELSE (LUP))))
+//! 
+//! In Merlin these are allowed to overlap, e.g., a fold could start in a PUT file
+//! and end in the master file.  The LSP does not allow this, so in such cases we
+//! have to decline to report the fold to the client, but we can push a diagnostic warning.
+
 use std::sync::Arc;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
-use super::super::{Symbol,Symbols,Workspace,MerlinVersion,symbol_flags,ProcessorType,SourceType};
-use super::super::settings::Settings;
+use crate::lang::merlin::{Symbol,Symbols,Workspace,MerlinVersion,symbol_flags,ProcessorType,SourceType};
+use crate::lang::merlin::settings::Settings;
 use crate::lang::merlin::handbook::operations::OperationHandbook;
 use crate::lang::merlin::handbook::pseudo_ops::PseudoOperationHandbook;
 use crate::lang::{Document,node_text,lsp_range};
+use crate::lang::server::basic_diag;
+
+#[derive(Clone)]
+pub struct Fold {
+    /// syntax node kind that started this fold
+    pub kind: String,
+    /// value of pseudo-op argument that started the fold
+    pub arg: i64,
+    /// whether or not to assemble inside this fold
+    pub asm: bool,
+    /// start of the fold
+    pub start: lsp::Location,
+}
 
 #[derive(Clone)]
 pub struct Source {
@@ -25,6 +51,8 @@ pub struct Context {
     symbol_stack: Vec<Symbol>,
     /// stack of document info for include descents
     source_stack: Vec<Source>,
+    /// stack of folding ranges for conditionals and loops
+    fold_stack: Vec<Fold>,
     /// built and consumed/cleared as lines are processed
     pub running_docstring: String
 }
@@ -51,6 +79,7 @@ impl Context {
             xc_count: 0,
             symbol_stack: Vec::new(),
             source_stack: Vec::new(),
+            fold_stack: Vec::new(),
             running_docstring: String::new()
         }
     }
@@ -127,6 +156,113 @@ impl Context {
     /// return to the previous source string, restoring parameters
     pub fn exit_source(&mut self) -> Option<Source> {
         self.source_stack.pop()
+    }
+    /// Push a folding range onto the source stack, kind is the syntax tree node kind.
+    /// Panics if the kind is unknown.  Errors are detected by examining the returned
+    /// diagnostic, if any.
+    pub fn enter_folding_range(&mut self,kind: &str,rng: lsp::Range,loc: lsp::Location,arg: i64) -> Option<lsp::Diagnostic> {
+        let mut ans: Option<lsp::Diagnostic> = None;
+        let asm = match kind {
+            "psop_do" => arg != 0,
+            "psop_if" => arg != 0,
+            "psop_else" => {
+                let d1 = basic_diag(rng,"unmatched ELSE",lsp::DiagnosticSeverity::ERROR);
+                let d2 = basic_diag(rng, "multiple ELSE sections",lsp::DiagnosticSeverity::WARNING);
+                if let Some(parent) = self.fold_stack.last() {
+                    if parent.kind=="psop_do" || parent.kind=="psop_if" {
+                        !parent.asm
+                    } else if parent.kind=="psop_else" {
+                        ans = Some(d2);
+                        !parent.asm
+                    } else {
+                        ans = Some(d1);
+                        true
+                    }
+                } else {
+                    ans = Some(d1);
+                    true
+                }
+            },
+            "psop_lup" => {
+                if let Some(parent) = self.fold_stack.last() {
+                    parent.asm
+                } else {
+                    true
+                }
+            },
+            _ => panic!("unexpected folding range kind")
+        };
+        if let Some(diag) = &ans {
+            if let Some(sev) = diag.severity {
+                if sev == lsp::DiagnosticSeverity::ERROR {
+                    return ans;
+                }
+            }
+        }
+        self.fold_stack.push(Fold {
+            kind: kind.to_string(),
+            arg,
+            asm,
+            start: loc
+        });
+        ans
+    }
+    /// Exit the folding range, kind is the syntax tree node kind.
+    /// Panics if the kind is unknown.  If there is an error a String is returned with the
+    /// diagnostic message.  Handles FIN and --^.  This should not be called with ELSE.
+    pub fn exit_folding_range(&mut self, kind: &str, rng: lsp::Range, loc: lsp::Location) -> Result<Option<lsp::FoldingRange>,lsp::Diagnostic> {
+        let start_loc = match kind {
+            "psop_fin" => {
+                let d1 = basic_diag(rng, "unmatched FIN",lsp::DiagnosticSeverity::ERROR);
+                let mut strip_else = true;
+                while strip_else {
+                    if let Some(parent) = self.fold_stack.last() {
+                        if parent.kind=="psop_else" {
+                            self.fold_stack.pop();
+                        } else {
+                            strip_else = false;
+                        }
+                    } else {
+                        strip_else = false;
+                    }
+                }
+                if let Some(parent) = self.fold_stack.last() {
+                    if parent.kind == "psop_lup" {
+                        return Err(d1)
+                    } else {
+                        parent.start.clone()
+                    }
+                } else {
+                    return Err(d1)
+                }
+            },
+            "psop_end_lup" => {
+                let d1 = basic_diag(rng, "unmatched end of loop",lsp::DiagnosticSeverity::ERROR);
+                if let Some(parent) = self.fold_stack.last() {
+                    if parent.kind == "psop_lup" {
+                        parent.start.clone()
+                    } else {
+                        return Err(d1)
+                    }
+                } else {
+                    return Err(d1)
+                }
+            },
+            _ => panic!("unexpected folding range terminator")
+        };
+        self.fold_stack.pop();
+        if start_loc.uri != loc.uri {
+            let d1 = basic_diag(rng, "start of fold was in another document",lsp::DiagnosticSeverity::WARNING);
+            return Err(d1);
+        }
+        Ok(Some(lsp::FoldingRange {
+            start_line: start_loc.range.start.line,
+            end_line: loc.range.start.line,
+            start_character: None,
+            end_character: None,
+            kind: None,
+            collapsed_text: None
+        }))
     }
     /// advance the row in the current source strings
     pub fn next_row(&mut self) {

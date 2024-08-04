@@ -90,6 +90,9 @@ impl Analysis for Analyzer {
     fn get_diags(&self,_doc: &Document) -> Vec<Diagnostic> {
         self.diagnostics.clone()
     }
+    fn get_folds(&self,_doc: &crate::lang::Document) -> Vec<lsp_types::FoldingRange> {
+        Vec::new()
+    }
     fn err_warn_info_counts(&self) -> [usize;3] {
         let mut err = 0;
         let mut warn = 0;

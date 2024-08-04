@@ -1,7 +1,7 @@
 //! Parse settings string sent by any client.
 //! 
 //! The server will check for specific keys that may affect its operation.
-//! These are then used by the various modules to set their own flags.
+//! The settings structure can then be used by the various modules.
 
 use serde_json;
 use crate::DYNERR;

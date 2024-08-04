@@ -57,8 +57,13 @@ impl StatementHovers {
     }
     pub fn get_psop(&self,node_kind: &str) -> Option<String> {
         if node_kind.starts_with("psop_") && node_kind.len() > 5 {
-            if let Some(psop) = self.psop_book.get(&node_kind[5..]) {
-                let mut ans = format!("`{}`",node_kind[5..].to_uppercase());
+            // handle end_lup specially
+            let key = match node_kind {
+                "psop_end_lup" => "--^",
+                _ => &node_kind[5..]
+            };
+            if let Some(psop) = self.psop_book.get(key) {
+                let mut ans = format!("`{}`",key.to_uppercase());
                 for alt in psop.alt {
                     ans += &format!(" or `{}`",alt.to_uppercase());
                 }

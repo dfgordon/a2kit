@@ -2,8 +2,11 @@ use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use crate::lang::merlin::ProcessorType;
 
-use super::context::Context;
+use super::super::context::Context;
 use super::super::MerlinVersion;
+
+const FOLD_STARTERS: [&str;4] = ["psop_do","psop_if","psop_else","psop_lup"];
+const FOLD_ENDERS: [&str;2] = ["psop_fin","psop_end_lup"];
 
 pub struct PseudoOpSentry {
     def_found: bool,
@@ -21,14 +24,18 @@ impl PseudoOpSentry {
             op_found: false
         }
     }
-	pub fn visit(&mut self,curs: &TreeCursor, ctx: &Context, diagnostics: &mut Vec<lsp::Diagnostic>)
+	pub fn visit(&mut self,curs: &TreeCursor, ctx: &mut Context, diagnostics: &mut Vec<lsp::Diagnostic>, folding: &mut Vec<lsp::FoldingRange>)
 	{
         let mut push = |rng: lsp::Range,mess: &str,severity: lsp::DiagnosticSeverity| {
             diagnostics.push(crate::lang::server::basic_diag(rng,mess,severity));
         };
-        let psop_book = ctx.psop_handbook();
+        let src = match ctx.curr_source() {
+            Some(s) => s,
+            None => return
+        };
 		let node = curs.node();
         let (rng,txt) = ctx.node_spec(&node);
+        let loc = lsp::Location::new(src.doc.uri.clone(),rng);
         let prev = node.prev_named_sibling();
 
 		// ordering of conditionals is supposed to promote efficiency
@@ -65,11 +72,23 @@ impl PseudoOpSentry {
                 }
 			} else if node.kind().ends_with("mx") && ctx.curr_proc()!=ProcessorType::_65c816 && ctx.curr_proc()!=ProcessorType::_65802 {
                 push(rng,"MX should not be used with 8 bit processor", lsp::DiagnosticSeverity::ERROR);
+            } else if FOLD_STARTERS.contains(&node.kind()) {
+                // arg is not evaluated because at this stage we don't need assembly info
+                match ctx.enter_folding_range(node.kind(), rng, loc, 0) {
+                    Some(d) => push(d.range,&d.message,d.severity.unwrap()),
+                    None => {}
+                }
+            } else if FOLD_ENDERS.contains(&node.kind()) {
+                match ctx.exit_folding_range(&node.kind(), rng, loc) {
+                    Err(d) => push(d.range,&d.message,d.severity.unwrap()),
+                    Ok(Some(fold)) => folding.push(fold),
+                    Ok(None) => {}
+                }
             }
-            if !psop_book.weak_match(&txt,&ctx.merlin_version()) {
+            if !ctx.psop_handbook().weak_match(&txt,&ctx.merlin_version()) {
                 push(rng,"pseudo-op is disabled for the selected Merlin version",lsp::DiagnosticSeverity::ERROR);
             }
-            if let Some(psop_info) = psop_book.get(&txt) {
+            if let Some(psop_info) = ctx.psop_handbook().get(&txt) {
                 log::trace!("check {}",&node.kind());
                 let maybe_re = match ctx.merlin_version() {
                     MerlinVersion::Merlin8 => psop_info.v8x,
@@ -90,7 +109,7 @@ impl PseudoOpSentry {
                 }
             }
         } else if node.kind()=="macro_ref" {
-			if psop_book.strong_match(&txt,&MerlinVersion::Merlin16Plus) {
+			if ctx.psop_handbook().strong_match(&txt,&MerlinVersion::Merlin16Plus) {
 				push(rng,"macro name matches a disabled pseudo-op",lsp::DiagnosticSeverity::INFORMATION);
 			}
 		}

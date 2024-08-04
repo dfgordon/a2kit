@@ -163,6 +163,7 @@ impl PseudoOperationHandbook {
     }
     /// Find the operation corresponding to a mnemonic or any of its alternates.
     /// Case insensitive, accepts weak matches, search all versions.
+    /// N.b. syntax node kind can be used to derive the mnemonic in all bases but `psop_end_lup`.
     pub fn get(&self,mnemonic_or_alt: &str) -> Option<PseudoOperation> {
         let norm = Self::normalize(&mnemonic_or_alt);
         match self.alternates.get(&norm) {

@@ -11,13 +11,13 @@ use std::io;
 use std::io::Read;
 use std::collections::HashMap;
 use std::sync::Arc;
-use lsp_types::{Diagnostic,DiagnosticSeverity};
+use lsp_types::{Diagnostic,DiagnosticSeverity,FoldingRange};
 use crate::lang::{Navigate,Navigation,Document};
+use crate::lang::merlin::context::Context;
 use crate::lang::server::Analysis;
 use crate::{DYNERR, STDRESULT};
 use log::{info,trace};
 
-mod context;
 pub mod macros;
 mod labels;
 mod syntax;
@@ -70,7 +70,7 @@ fn find_arg_node(node: &tree_sitter::Node) -> Option<String> {
 
 pub struct Analyzer {
     parser: super::MerlinParser,
-    ctx: context::Context,
+    ctx: Context,
     scanner: WorkspaceScanner,
     workspace_folders: Vec<lsp_types::Url>,
     addr_mode_visitor: addressing::AddressModeSentry,
@@ -82,6 +82,12 @@ pub struct Analyzer {
     /// Diagnostics for the document currently being analyzed.
     /// This is a temporary that will be moved into diagnostic_set.
     diagnostics: Vec<Diagnostic>,
+    /// Map from document uri to its folding ranges.
+    /// Scope of this set is a master and its includes.
+    folding_set: HashMap<String,Vec<FoldingRange>>,
+    /// Folding ranges for the document currently being analyzed.
+    /// This is a temporary that will be moved into diagnostic_set.
+    folding: Vec<FoldingRange>,
     /// Map from URI's to their preferred master URI's
     preferred_masters: HashMap<String,String>,
     symbols: super::Symbols
@@ -89,7 +95,7 @@ pub struct Analyzer {
 
 impl Analyzer {
     pub fn new() -> Self {
-        let ctx = context::Context::new();
+        let ctx = Context::new();
         let addr_mode_visitor = addressing::AddressModeSentry::new(&ctx);
         Self {
             parser: super::MerlinParser::new(),
@@ -101,6 +107,8 @@ impl Analyzer {
             pass: 0,
             diagnostic_set: HashMap::new(),
             diagnostics: Vec::new(),
+            folding_set: HashMap::new(),
+            folding: Vec::new(),
             preferred_masters: HashMap::new(),
             symbols: super::Symbols::new()
         }
@@ -157,10 +165,27 @@ impl Analyzer {
             }
         }
     }
+    /// Move folding ranges for current document from temporary vector to permanent map of vectors.
+    /// If no current document do nothing.
+    fn move_folds(&mut self) {
+        if let Some(curr) = self.ctx.curr_source() {
+            let uri = curr.doc.uri.to_string();
+            match self.folding_set.get_mut(&uri) {
+                Some(v) => v.append(&mut self.folding),
+                None => {
+                    let mut moved_fold = Vec::new();
+                    moved_fold.append(&mut self.folding);
+                    self.folding_set.insert(uri,moved_fold);
+                }
+            }
+        }
+    }
     fn analyze_recursively(&mut self,typ: super::SourceType,doc: Arc<Document>) -> Result<(),DYNERR> {
         // save diagnostics for the previous source scope
         self.move_diagnostics();
+        self.move_folds();
         self.diagnostics = Vec::new();
+        self.folding = Vec::new();
         self.ctx.enter_source(typ,Arc::clone(&doc));
         for line in doc.text.lines() {
             trace!("analyze row {}",self.ctx.row());
@@ -178,6 +203,7 @@ impl Analyzer {
         }
         // save diagnostics for this scope
         self.move_diagnostics();
+        self.move_folds();
         self.ctx.exit_source();
         Ok(())
     }
@@ -202,7 +228,7 @@ impl Navigate for Analyzer {
             3 => {
                 syntax::visit(curs, &self.ctx, &mut self.diagnostics);
                 self.addr_mode_visitor.visit(curs, &mut self.ctx, &mut self.diagnostics);
-                self.pseudo_op_visitor.visit(curs, &self.ctx, &mut self.diagnostics);
+                self.pseudo_op_visitor.visit(curs, &mut self.ctx, &mut self.diagnostics, &mut self.folding);
                 Ok(Navigation::GotoChild)
             }
             _ => panic!("unexpected number of visit passes")
@@ -269,6 +295,12 @@ impl Analysis for Analyzer {
     fn get_diags(&self,doc: &Document) -> Vec<Diagnostic> {
         if let Some(diags) = self.diagnostic_set.get(&doc.uri.to_string()) {
             return diags.clone();
+        }
+        Vec::new()
+    }
+    fn get_folds(&self,doc: &Document) -> Vec<FoldingRange> {
+        if let Some(folds) = self.folding_set.get(&doc.uri.to_string()) {
+            return folds.clone();
         }
         Vec::new()
     }

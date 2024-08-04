@@ -35,6 +35,7 @@ use std::fmt;
 
 use super::node_text;
 
+mod context;
 pub mod settings;
 pub mod checkpoint;
 pub mod hovers;
@@ -73,6 +74,7 @@ pub mod symbol_flags {
     pub const VAR: u64 = 0x80;
 }
 
+/// Stackable source types, e.g., we may have a nesting such as (Master (Put (MacroRef)) (MacroRef))
 #[derive(PartialEq,Clone)]
 pub enum SourceType {
     Master,
@@ -80,7 +82,7 @@ pub enum SourceType {
     UseAndPut,
     Use,
     Put,
-    Macro,
+    MacroRef,
     Linker
 }
 
