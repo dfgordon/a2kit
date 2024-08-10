@@ -953,7 +953,7 @@ impl img::DiskImage for Td0 {
     fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("TD0 images have no track bits to display")
     }
-    fn get_metadata(&self,indent: u16) -> String {
+    fn get_metadata(&self,indent: Option<u16>) -> String {
         let td0 = self.what_am_i().to_string();
         let mut root = json::JsonValue::new_object();
         root[&td0] = json::JsonValue::new_object();
@@ -1005,10 +1005,10 @@ impl img::DiskImage for Td0 {
             },
             _ => {}
         }
-        if indent==0 {
-            json::stringify(root)
+        if let Some(spaces) = indent {
+            json::stringify_pretty(root,spaces)
         } else {
-            json::stringify_pretty(root, indent)
+            json::stringify(root)
         }
     }
     fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {

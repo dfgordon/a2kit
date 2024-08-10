@@ -6,10 +6,12 @@
 //! and should not be considered secure.
 
 use chrono::{Timelike,Duration};
-use log::{debug,info,warn,error};
 use std::str::FromStr;
+use a2kit_macro::DiskStruct;
 use super::types;
-use crate::DYNERR;
+use super::{Packer,Error};
+use super::super::{Packing,FileImage,UnpackedData};
+use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
 pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
@@ -21,11 +23,11 @@ pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
         .and_hms_opt(0,0,0).unwrap();
     let days = match now.signed_duration_since(ref_date).num_days() {
         d if d>u16::MAX as i64 => {
-            warn!("timestamp is pegged at {} days after reference date",u16::MAX);
+            log::warn!("timestamp is pegged at {} days after reference date",u16::MAX);
             u16::to_le_bytes(u16::MAX)
         },
         d if d<0 => {
-            warn!("date prior to reference date, pegging to reference date");
+            log::warn!("date prior to reference date, pegging to reference date");
             [0,0]
         }
         d => u16::to_le_bytes(d as u16 + 1)
@@ -54,18 +56,19 @@ pub fn split_user_filename(xname: &str) -> Result<(u8,String),DYNERR> {
             if user<types::USER_END {
                 return Ok((user,parts[1].to_string()));
             } else {
-                error!("invalid user number");
+                log::error!("invalid user number");
                 return Err(Box::new(types::Error::BadFormat));
             }
         }
-        error!("prefix in this context should be a user number");
+        log::error!("prefix in this context should be a user number");
         return Err(Box::new(types::Error::BadFormat));
     }
 }
 
-/// Accepts lower case, case is raised by string_to_file_name
-pub fn is_name_valid(s: &str) -> bool {
-    let it: Vec<&str> = s.split('.').collect();
+/// Accepts lower case, case is raised by string_to_file_name.
+/// Does not accept user number prefix (use is_xname_valid).
+pub fn is_name_valid(name: &str) -> bool {
+    let it: Vec<&str> = name.split('.').collect();
     if it.len()>2 {
         return false;
     }
@@ -77,19 +80,27 @@ pub fn is_name_valid(s: &str) -> bool {
 
     for char in [base,ext].concat().chars() {
         if !char.is_ascii() || types::INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
+            log::debug!("bad file name character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
     if base.len()>8 {
-        info!("base name too long, max 8");
+        log::info!("base name too long, max 8");
         return false;
     }
     if ext.len()>3 {
-        info!("extension name too long, max 3");
+        log::info!("extension name too long, max 3");
         return false;
     }
     true
+}
+
+pub fn is_xname_valid(xname: &str) -> bool {
+    if let Ok((user,name)) = split_user_filename(xname) {
+        is_name_valid(&name) && user < 16
+    } else {
+        false
+    }
 }
 
 /// put the filename bytes as an ASCII string, result can be tested for validity
@@ -160,12 +171,12 @@ pub fn string_to_file_name(s: &str) -> ([u8;8],[u8;3]) {
 pub fn is_password_valid(s: &str) -> bool {
     for char in s.chars() {
         if !char.is_ascii() || types::INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            debug!("bad password character `{}` (codepoint {})",char,char as u32);
+            log::debug!("bad password character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
     if s.len()>8 {
-        info!("password too long, max 8");
+        log::info!("password too long, max 8");
         return false;
     }
     true
@@ -189,4 +200,117 @@ pub fn string_to_password(s: &str) -> (u8,[u8;8]) {
         }
     }
     return ans;
+}
+
+impl Packer {
+    pub fn new() -> Self {
+        Self {}
+    }
+    fn verify(fimg: &FileImage) -> STDRESULT {
+        if &fimg.file_system != super::FS_NAME {
+            return Err(Box::new(Error::BadFormat));
+        }
+        Ok(())
+    }
+}
+
+impl Packing for Packer {
+
+    fn set_path(&self, fimg: &mut FileImage, xname: &str) -> STDRESULT {
+        if is_xname_valid(xname) {
+            fimg.full_path = xname.to_string();
+            Ok(())
+        } else {
+            Err(Box::new(Error::BadFormat))
+        }
+    }
+    
+    fn get_load_address(&self,_fimg: &FileImage) -> u16 {
+        0
+    }
+
+    fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
+        Self::verify(fimg)?;
+        let typ = String::from_utf8(fimg.fs_type.clone())?;
+        match typ.as_str() {
+            "TXT" | "ASM" | "SUB" => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
+            _ => Ok(UnpackedData::Binary(self.unpack_bin(fimg)?))
+        }
+    }
+
+    fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
+        Self::verify(fimg)?;
+        fimg.desequence(&dat);
+        Ok(())
+    }
+
+    fn unpack_raw(&self,fimg: &FileImage,trunc: bool) -> Result<Vec<u8>,DYNERR> {
+        Self::verify(fimg)?;
+        if trunc {
+            let eof = fimg.get_eof();
+            Ok(fimg.sequence_limited(eof))
+        } else {
+            Ok(fimg.sequence())
+        }
+    }
+
+    fn pack_bin(&self,fimg: &mut FileImage,dat: &[u8],load_addr: Option<usize>,trailing: Option<&[u8]>) -> STDRESULT {
+        Self::verify(fimg)?;
+        if load_addr.is_some() {
+            log::warn!("load-address is not used with CP/M");
+        }
+        let padded = match trailing {
+            Some(v) => [dat,v].concat(),
+            None => dat.to_vec()
+        };
+        fimg.desequence(&padded);
+        Ok(())
+    }
+
+    fn unpack_bin(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        self.unpack_raw(fimg,true)
+    }
+
+    fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
+        Self::verify(fimg)?;
+        let file = types::SequentialText::from_str(&txt)?;
+        fimg.desequence(&file.to_bytes());
+        Ok(())
+    }
+
+    fn unpack_txt(&self,fimg: &FileImage) -> Result<String,DYNERR> {
+        Self::verify(fimg)?;
+        let file = types::SequentialText::from_bytes(&fimg.sequence())?;
+        Ok(file.to_string())
+    }
+
+    fn pack_tok(&self,_fimg: &mut FileImage,_tok: &[u8],_lang: crate::commands::ItemType,_trailing: Option<&[u8]>) -> STDRESULT {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
+
+    fn unpack_tok(&self,_fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
+
+    fn pack_rec_str(&self,_fimg: &mut FileImage,_json: &str) -> STDRESULT {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
+
+    fn unpack_rec_str(&self,_fimg: &FileImage,_rec_len: Option<usize>,_indent: Option<u16>) -> Result<String,crate::DYNERR> {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
+
+    fn pack_rec(&self,_fimg: &mut FileImage,_recs: &crate::fs::Records) -> STDRESULT {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
+
+    fn unpack_rec(&self,_fimg: &FileImage,_rec_len: Option<usize>) -> Result<crate::fs::Records,crate::DYNERR> {
+        log::error!("CP/M implementation does not support operation");
+        return Err(Box::new(Error::Select));
+    }
 }

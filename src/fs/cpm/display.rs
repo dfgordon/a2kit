@@ -585,7 +585,7 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
 }
 
 /// Output CP/M directory "tree" as a JSON string, users are treated as directories.
-pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bool) -> Result<String,DYNERR> {
+pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
     const TIME_FMT: &str = "%Y/%m/%d %H:%M";
     let mut tree = json::JsonValue::new_object();
     tree["file_system"] = json::JsonValue::String(super::FS_NAME.to_string());
@@ -644,10 +644,8 @@ pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bo
             }
         }
     }
-    if dpb.user_blocks() <= 2048 && !include_meta {
-        Ok(json::stringify_pretty(tree,2))
-    } else if dpb.user_blocks() <= 2048 && include_meta {
-        Ok(json::stringify_pretty(tree,1))
+    if let Some(spaces) = indent {
+        Ok(json::stringify_pretty(tree,spaces))
     } else {
         Ok(json::stringify(tree))
     }

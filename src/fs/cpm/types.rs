@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::{DiskStructError,DiskStruct};
-use super::super::TextEncoder;
+use crate::fs::TextConversion;
 
 /// Status byte for a deleted file, also fill value for unused blocks.
 pub const DELETED: u8 = 0xe5;
@@ -110,18 +110,20 @@ impl Ord for Ptr {
 }
 
 /// Transforms between UTF8 and CP/M text.
-/// CP/M text is +ASCII with CRLF line separators.
-pub struct Encoder {
+/// CP/M text is +ASCII with CRLF line separators, and 0x1A overall terminator.
+/// non-ASCII found in the CP/M text is put as ASCII null.
+/// non-ASCII found in a UTF8 string to convert is refused.
+pub struct TextConverter {
     line_terminator: Vec<u8>
 }
 
-impl TextEncoder for Encoder {
+impl TextConversion for TextConverter {
     fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
     }
-    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
+    fn from_utf8(&self,txt: &str) -> Option<Vec<u8>> {
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
@@ -142,7 +144,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &[u8]) -> Option<String> {
+    fn to_utf8(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x0d {
@@ -176,8 +178,8 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![]);
-        if let Some(dat) = encoder.encode(s) {
+        let encoder = TextConverter::new(vec![]);
+        if let Some(dat) = encoder.from_utf8(s) {
             return Ok(Self {
                 text: dat.clone(),
                 terminator: 0x1a
@@ -192,8 +194,8 @@ impl FromStr for SequentialText {
 /// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![]);
-        if let Some(ans) = encoder.decode(&self.text) {
+        let encoder = TextConverter::new(vec![]);
+        if let Some(ans) = encoder.to_utf8(&self.text) {
             return write!(f,"{}",ans);
         }
         write!(f,"err")

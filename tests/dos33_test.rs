@@ -2,10 +2,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 use a2kit::img;
-use a2kit::fs::{Block,dos3x,TextEncoder,DiskFS};
+use a2kit::fs::{Block,dos3x,DiskFS};
 use a2kit::commands::ItemType;
 use a2kit::lang::applesoft;
-use a2kit_macro::DiskStruct;
+
+const RCH: &str = "unreachable was reached";
 
 pub const JSON_REC: &str = "
 {
@@ -54,23 +55,25 @@ fn read_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos33-smallfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("fs not found");
 
     // check the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
     lib_tokens.push(0x0a);
-    let disk_tokens = emulator_disk.load("hello").expect("error");
-    assert_eq!(disk_tokens,(2049,lib_tokens));
+    let fimg = emulator_disk.get("hello").expect(RCH);
+    let disk_tokens = fimg.unpack_tok().expect(RCH);
+    assert_eq!(disk_tokens,lib_tokens);
+    assert_eq!(fimg.get_load_address(),2049);
 
     // check the binary
-    let binary_data = emulator_disk.bload("thechip").expect("error");
-    assert_eq!(binary_data,(768,vec![6,5,0,2]));
+    let fimg = emulator_disk.get("thechip").expect(RCH);
+    let binary_data = fimg.unpack_bin().expect(RCH);
+    assert_eq!(binary_data,vec![6,5,0,2]);
+    assert_eq!(fimg.get_load_address(),768);
 
     // check the sequential text file
-    let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
-    let txt = dos3x::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
-    assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
+    let txt = emulator_disk.get("thetext").expect(RCH).unpack_txt().expect(RCH);
+    assert_eq!(&txt,"HELLO FROM EMULATOR\n");    
 }
 
 #[test]
@@ -87,11 +90,10 @@ fn write_small() {
     disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,Some(&vec![0x44])).expect("error");
 
     // save the binary
-    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
+    disk.bsave("thechip",&[6,5,0,2].to_vec(),Some(768),None).expect("error");
 
     // save the text
-    let txt = disk.encode_text("HELLO FROM EMULATOR").expect("could not encode text");
-    disk.write_text("thetext",&txt).expect("error");
+    disk.write_text("thetext","HELLO FROM EMULATOR").expect("error");
 
     let mut ignore = disk.standardize(0);
     ignore_boot_tracks(&mut ignore);
@@ -104,10 +106,10 @@ fn out_of_space() {
     let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.init33(254,true).expect("failed to INIT");
-    disk.bsave("f1",&big,0x800,None).expect("error");
-    disk.bsave("f2",&big,0x800,None).expect("error");
-    disk.bsave("f3",&big,0x800,None).expect("error");
-    match disk.bsave("f4",&big,0x800,None) {
+    disk.bsave("f1",&big,Some(0x800),None).expect("error");
+    disk.bsave("f2",&big,Some(0x800),None).expect("error");
+    disk.bsave("f3",&big,Some(0x800),None).expect("error");
+    match disk.bsave("f4",&big,Some(0x800),None) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
         Err(e) => match e.to_string().as_str() {
             "DISK FULL" => assert!(true),
@@ -131,9 +133,9 @@ fn read_big() {
     assert_eq!(disk_tokens,(2049,lib_tokens));
 
     // check the text records
-    let recs = emulator_disk.read_records("tree1", 128).expect("failed to read tree1");
+    let recs = emulator_disk.read_records("tree1", Some(128)).expect("failed to read tree1");
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 1\n");
-    let recs = emulator_disk.read_records("tree2", 127).expect("failed to read tree2");
+    let recs = emulator_disk.read_records("tree2", Some(127)).expect("failed to read tree2");
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 2\n");
     assert_eq!(recs.map.get(&4000).unwrap(),"HELLO FROM TREE 2\n");
 
@@ -173,7 +175,7 @@ fn write_big() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,Some(&vec![0xc9])).expect("dimg error");
+    disk.bsave("sapling",&buf,Some(16384),Some(&vec![0xc9])).expect("dimg error");
 
     let mut ignore = disk.standardize(0);
     ignore_boot_tracks(&mut ignore);
@@ -208,7 +210,7 @@ fn rename_delete() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,Some(&vec![0xc9])).expect("dimg error");
+    disk.bsave("sapling",&buf,Some(16384),Some(&vec![0xc9])).expect("dimg error");
 
     // delete and rename
     disk.delete("tree2").expect("dimg error");

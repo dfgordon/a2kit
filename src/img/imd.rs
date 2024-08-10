@@ -710,16 +710,16 @@ impl img::DiskImage for Imd {
     fn display_track(&self,_bytes: &[u8]) -> String {
         String::from("IMD images have no track bits to display")
     }
-    fn get_metadata(&self,indent: u16) -> String {
+    fn get_metadata(&self,indent: Option<u16>) -> String {
         let imd = self.what_am_i().to_string();
         let mut root = json::JsonValue::new_object();
         root[&imd] = json::JsonValue::new_object();
         root[&imd]["header"] = json::JsonValue::String(String::from_utf8_lossy(&self.header).into());
         root[&imd]["comment"] = json::JsonValue::String(self.comment.clone());
-        if indent==0 {
-            json::stringify(root)
+        if let Some(spaces) = indent {
+            json::stringify_pretty(root,spaces)
         } else {
-            json::stringify_pretty(root, indent)
+            json::stringify(root)
         }
     }
     fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {

@@ -78,12 +78,19 @@ impl DiskServer {
                 }
                 return Ok(SelectionResult::Directory(filtered_cat));
             }
-            return match disk.read_any(path) {
+            return match disk.get(path) {
                 Ok(fimg) => Ok(SelectionResult::FileData(SimpleFileImage {
                     file_system: fimg.file_system.clone(),
                     fs_type: fimg.fs_type.clone(),
-                    load_addr: disk.fimg_load_address(&fimg),
-                    data: disk.fimg_file_data(&fimg)?
+                    load_addr: fimg.get_load_address(),
+                    data: match fimg.unpack() {
+                        Ok(result) => match result {
+                            crate::fs::UnpackedData::Binary(dat) => dat,
+                            crate::fs::UnpackedData::Text(txt) => txt.as_bytes().to_vec(),
+                            _ => return Err(Box::new(CommandError::UnsupportedFormat))
+                        },
+                        Err(e) => return Err(e)
+                    }
                 })),
                 Err(e) => Err(e)
             }
@@ -111,10 +118,10 @@ impl DiskServer {
     /// N.b. the path that was used at mount time is assumed valid.
     pub fn write(&mut self,path: &str,dat: &[u8],typ: ItemType) -> STDRESULT {
         if let Some(disk) = self.disk.as_mut() {
+            let mut fimg = disk.new_fimg(None, true, path)?;
             match typ {
-                ItemType::IntegerTokens => disk.save(path,dat,typ,None)?,
-                ItemType::ApplesoftTokens => disk.save(path,dat,typ,None)?,
-                ItemType::Text => disk.write_text(path,dat)?,
+                ItemType::IntegerTokens | ItemType::ApplesoftTokens => fimg.pack_tok(dat,typ,None)?,
+                ItemType::Text => fimg.pack_raw(dat)?,
                 _ => return Err(Box::new(CommandError::UnsupportedFormat))
             };
             crate::save_img(disk, &self.path_to_img)?;

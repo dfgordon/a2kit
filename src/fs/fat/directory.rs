@@ -263,7 +263,7 @@ impl Entry {
     }
     /// access date is lost with this version of file image
     pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
-        fimg.eof = FileImage::fix_le_vec(self.eof(),4);
+        fimg.set_eof(self.eof());
         fimg.access = vec![self.attr];
         fimg.fs_type = self.ext.to_vec();
         fimg.aux = vec![];

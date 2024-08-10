@@ -6,106 +6,21 @@
 pub mod types;
 mod boot;
 mod directory;
+mod pack;
 
-use chrono::Datelike;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
-use log::{info,debug,error};
 use num_traits::FromPrimitive;
 use types::*;
+use pack::*;
 use directory::*;
 use super::Block;
 use crate::img;
-use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
 
 pub const FS_NAME: &str = "a2 pascal";
-
-fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
-    let now = match time {
-        Some(t) => t,
-        _ => chrono::Local::now().naive_local()
-    };
-    let (_is_common_era,year) = now.year_ce();
-    let packed_date = (now.month() + (now.day() << 4) + ((year%100) << 9)) as u16;
-    return u16::to_le_bytes(packed_date);
-}
-
-fn unpack_date(pascal_date: [u8;2]) -> chrono::NaiveDateTime {
-    let date = u16::from_le_bytes(pascal_date);
-    let year = 1900 + (date >> 9); // choose to stay in the 20th century (Y2K bug)
-    let month = date & 15;
-    let day = (date >> 4) & 31;
-    return chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32).unwrap()
-        .and_hms_opt(0, 0, 0).unwrap();
-}
-
-/// This will accept lower case; case will be automatically converted as appropriate
-fn is_name_valid(s: &str,is_vol: bool) -> bool {
-    for char in s.chars() {
-        if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
-            return false;
-        }
-    }
-    if s.len()>7 && is_vol {
-        info!("volume name too long, max 7");
-        return false;
-    }
-    if s.len()>15 && !is_vol {
-        info!("file name too long, max 15");
-        return false;
-    }
-    true
-}
-
-fn file_name_to_string(fname: [u8;15],len: u8) -> String {
-    // UTF8 failure will cause panic
-    let copy = fname[0..len as usize].to_vec();
-    if let Ok(result) = String::from_utf8(copy) {
-        return result.trim_end().to_string();
-    }
-    panic!("encountered a bad file name");
-}
-
-fn vol_name_to_string(fname: [u8;7],len: u8) -> String {
-    // UTF8 failure will cause panic
-    let copy = fname[0..len as usize].to_vec();
-    if let Ok(result) = String::from_utf8(copy) {
-        return result.trim_end().to_string();
-    }
-    panic!("encountered a bad file name");
-}
-
-fn string_to_file_name(s: &str) -> [u8;15] {
-    // this panics if the argument is invalid; 
-    let mut ans: [u8;15] = [0;15]; // load with null
-    let mut i = 0;
-    if !is_name_valid(s, false) {
-        panic!("attempt to create a bad file name")
-    }
-    for char in s.to_uppercase().chars() {
-        char.encode_utf8(&mut ans[i..]);
-        i += 1;
-    }
-    return ans;
-}
-
-fn string_to_vol_name(s: &str) -> [u8;7] {
-    // this panics if the argument is invalid; 
-    let mut ans: [u8;7] = [0;7]; // load with null
-    let mut i = 0;
-    if !is_name_valid(s, true) {
-        panic!("attempt to create a bad volume name")
-    }
-    for char in s.to_uppercase().chars() {
-        char.encode_utf8(&mut ans[i..]);
-        i += 1;
-    }
-    return ans;
-}
 
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
@@ -117,7 +32,7 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>) -> Result<Directory,DYNERR> 
     let beg = VOL_HEADER_BLOCK as u16;
     let end = u16::from_le_bytes(ans.header.end_block);
     if beg0!=0 || end<=beg || (end as usize)>ans.total_blocks() {
-        debug!("bad header: begin block {}, end block {}",beg,end);
+        log::debug!("bad header: begin block {}, end block {}",beg,end);
         return Err(Box::new(Error::BadFormat));
     }
     // gather up all the directory blocks in a contiguous buffer; this is convenient
@@ -137,6 +52,35 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>) -> Result<Directory,DYNERR> 
     return Ok(ans);
 }
 
+pub fn new_fimg(chunk_len: usize,set_time: bool,name: &str) -> Result<super::FileImage,DYNERR> {
+    if !is_name_valid(name, false) {
+        return Err(Box::new(Error::BadFormat))
+    }
+    let modified = match set_time {
+        true => pack::pack_date(None).to_vec(),
+        false => vec![0;2]
+    };
+    Ok(super::FileImage {
+        fimg_version: super::FileImage::fimg_version(),
+        file_system: String::from(FS_NAME),
+        fs_type: vec![0;2],
+        aux: vec![],
+        eof: vec![0;4],
+        accessed: vec![],
+        created: vec![],
+        modified,
+        access: vec![],
+        version: vec![],
+        min_version: vec![],
+        chunk_len,
+        full_path: name.to_string(),
+        chunks: HashMap::new()
+    })
+}
+
+pub struct Packer {
+}
+
 /// The primary interface for disk operations.
 pub struct Disk
 {
@@ -145,23 +89,6 @@ pub struct Disk
 
 impl Disk
 {
-    fn new_fimg(chunk_len: usize) -> super::FileImage {
-        super::FileImage {
-            fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from(FS_NAME),
-            fs_type: vec![0;2],
-            aux: vec![],
-            eof: vec![0;4],
-            accessed: vec![],
-            created: vec![],
-            modified: vec![0;2],
-            access: vec![],
-            version: vec![],
-            min_version: vec![],
-            chunk_len,
-            chunks: HashMap::new()
-        }
-    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
@@ -179,25 +106,25 @@ impl Disk
                 let end = u16::from_le_bytes(directory.header.end_block);
                 let tot = u16::from_le_bytes(directory.header.total_blocks);
                 if beg0!=0 || end<=beg || end>20 {
-                    debug!("header begin {} end {}",beg0,end);
+                    log::debug!("header begin {} end {}",beg0,end);
                     return false;
                 }
                 // if (tot as usize) != block_count {
-                //     debug!("header total blocks {}",tot);
+                //     log::debug!("header total blocks {}",tot);
                 //     return false;
                 // }
                 if directory.header.name_len>7 || directory.header.name_len==0 {
-                    debug!("header name length {}",directory.header.name_len);
+                    log::debug!("header name length {}",directory.header.name_len);
                     return false;
                 }
                 if directory.header.file_type != [0,0] {
-                    debug!("header type {}",u16::from_le_bytes(directory.header.file_type));
+                    log::debug!("header type {}",u16::from_le_bytes(directory.header.file_type));
                     return false;
                 }
                 for i in 0..directory.header.name_len {
                     let c = directory.header.name[i as usize];
                     if c<32 || c>126 {
-                        debug!("header name character {}",c);
+                        log::debug!("header name character {}",c);
                         return false;
                     }
                 }
@@ -208,17 +135,17 @@ impl Disk
                     let eend = u16::from_le_bytes(entry.end_block);
                     if ebeg>0 {
                         if ebeg<end || eend<=ebeg || (eend as u16) > tot {
-                            debug!("entry {} begin {} end {}",i,ebeg,eend);
+                            log::debug!("entry {} begin {} end {}",i,ebeg,eend);
                             return false;
                         }
                         if entry.name_len>15 || entry.name_len==0 {
-                            debug!("entry {} name length {}",i,entry.name_len);
+                            log::debug!("entry {} name length {}",i,entry.name_len);
                             return false;
                         }
                         for j in 0..entry.name_len {
                             let c = entry.name[j as usize];
                             if c<32 || c>126 {
-                                debug!("entry {} name char {}",i,c);
+                                log::debug!("entry {} name char {}",i,c);
                                 return false;
                             }
                         }
@@ -227,8 +154,8 @@ impl Disk
                 return true;
             },
             Err(e) => {
-                debug!("{}",e);
-                debug!("pascal directory was not readable");
+                log::debug!("{}",e);
+                log::debug!("pascal directory was not readable");
                 return false;
             }
         }
@@ -338,7 +265,7 @@ impl Disk
     /// Format disk for the Pascal file system
     pub fn format(&mut self, vol_name: &str, fill: u8, time: Option<chrono::NaiveDateTime>) -> STDRESULT {
         if !is_name_valid(vol_name, true) {
-            error!("invalid pascal volume name");
+            log::error!("invalid pascal volume name");
             return Err(Box::new(Error::BadTitle));
         }
         let num_blocks = self.img.byte_capacity()/512;
@@ -372,7 +299,7 @@ impl Disk
                 self.write_block(&boot::PASCAL_525_BLOCK1, 1, 0)?;
             },
             _ => {
-                error!("unsupported disk type");
+                log::error!("unsupported disk type");
                 return Err(Box::new(Error::NoDev))
             }
         }
@@ -400,12 +327,12 @@ impl Disk
     /// As usual we can use `FileImage::sequence` to make the result sequential.
     fn read_file(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
         if !is_name_valid(name,false) {
-            error!("invalid pascal filename");
+            log::error!("invalid pascal filename");
             return Err(Box::new(Error::BadFormat));
         }
         if let (Some(idx),dir) = self.get_file_entry(name)? {
             let entry = &dir.entries[idx];
-            let mut ans = Disk::new_fimg(BLOCK_SIZE);
+            let mut ans = new_fimg(BLOCK_SIZE,false,name)?;
             let mut buf = vec![0;BLOCK_SIZE];
             let mut count: usize = 0;
             let beg = u16::from_le_bytes(entry.begin_block);
@@ -429,11 +356,11 @@ impl Disk
     /// use `FileImage::desequence` to put sequential data into the sparse file format.
     fn write_file(&mut self,name: &str, fimg: &super::FileImage) -> Result<usize,DYNERR> {
         if fimg.chunks.len()==0 {
-            error!("empty data is not allowed for Pascal file images");
+            log::error!("empty data is not allowed for Pascal file images");
             return Err(Box::new(Error::NoFile));
         }
         if !is_name_valid(name,false) {
-            error!("invalid pascal filename");
+            log::error!("invalid pascal filename");
             return Err(Box::new(Error::BadFormat));
         }
         let (maybe_idx,mut dir) = self.get_file_entry(name)?;
@@ -441,13 +368,13 @@ impl Disk
             // this is a new file
             // we do not write anything unless there is room
             let data_blocks = fimg.chunks.len();
-            let fs_type_usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.fs_type);
-            let eof_usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+            let fs_type_usize = fimg.get_ftype();
+            let eof_usize = fimg.get_eof();
             if let Some(fs_type) = FileType::from_usize(fs_type_usize) {
                 if let Some(beg) = self.get_available_blocks(data_blocks as u16)? {
                     let i = u16::from_le_bytes(dir.header.num_files) as usize;
                     if i < dir.entries.len() {
-                        debug!("using entry {}",i);
+                        log::debug!("using entry {}",i);
                         dir.entries[i].begin_block = u16::to_le_bytes(beg);
                         dir.entries[i].end_block = u16::to_le_bytes(beg+data_blocks as u16);
                         dir.entries[i].file_type = u16::to_le_bytes(fs_type as u16);
@@ -462,24 +389,24 @@ impl Disk
                             if fimg.chunks.contains_key(&b) {
                                 self.write_block(&fimg.chunks[&b],beg as usize+b,0)?;
                             } else {
-                                error!("pascal file image had a hole which is not allowed");
+                                log::error!("pascal file image had a hole which is not allowed");
                                 return Err(Box::new(Error::BadFormat));
                             }
                         }
                         return Ok(data_blocks);
                     }
-                    error!("directory is full");
+                    log::error!("directory is full");
                     return Err(Box::new(Error::NoRoom));
                 } else {
-                    error!("not enough contiguous space");
+                    log::error!("not enough contiguous space");
                     return Err(Box::new(Error::NoRoom));
                 }
             } else {
-                error!("unknown file type");
+                log::error!("unknown file type");
                 return Err(Box::new(Error::BadMode));
             }
         } else {
-            error!("overwriting is not allowed");
+            log::error!("overwriting is not allowed");
             return Err(Box::new(Error::DuplicateFilename));
         }
     }
@@ -523,8 +450,11 @@ impl Disk
 }
 
 impl super::DiskFS for Disk {
-    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len)
+    fn new_fimg(&self, chunk_len: Option<usize>,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+        match chunk_len {
+            Some(l) => new_fimg(l,set_time,path),
+            None => new_fimg(BLOCK_SIZE,set_time,path)
+        }
     }
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let dir = self.get_directory()?;
@@ -597,7 +527,30 @@ impl super::DiskFS for Disk {
         }
         Ok(ans)
     }
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let mut ans = Vec::new();
+        let glob = match case_sensitive {
+            true => globset::Glob::new(pattern)?.compile_matcher(),
+            false => globset::Glob::new(&pattern.to_uppercase())?.compile_matcher()
+        };
+        let dir = self.get_directory()?;
+        let total = dir.total_blocks();
+        for entry in dir.entries {
+            let beg = u16::from_le_bytes(entry.begin_block);
+            let end = u16::from_le_bytes(entry.end_block);
+            if beg!=0 && end>beg && (end as usize)<total {
+                let name = match case_sensitive {
+                    true => file_name_to_string(entry.name, entry.name_len),
+                    false => file_name_to_string(entry.name, entry.name_len).to_uppercase()
+                };
+                if glob.is_match(&name) {
+                    ans.push(name);
+                }
+            }
+        }
+        Ok(ans)
+    }
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let dir = self.get_directory()?;
         let total = dir.total_blocks();
         const TIME_FMT: &str = "%Y/%m/%d %H:%M";
@@ -629,10 +582,14 @@ impl super::DiskFS for Disk {
                 }
             }
         }
-        Ok(json::stringify_pretty(tree, 2))
+        if let Some(spaces) = indent {
+            Ok(json::stringify_pretty(tree, spaces))
+        } else {
+            Ok(json::stringify(tree))
+        }
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
-        error!("pascal implementation does not support operation");
+        log::error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn delete(&mut self,name: &str) -> STDRESULT {
@@ -654,19 +611,19 @@ impl super::DiskFS for Disk {
         }
     }
     fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
-        error!("pascal does not support operation");
+        log::error!("pascal does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        error!("pascal does not support operation");
+        log::error!("pascal does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn lock(&mut self,_name: &str) -> STDRESULT {
-        error!("pascal implementation does not support operation");
+        log::error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn unlock(&mut self,_name: &str) -> STDRESULT {
-        error!("pascal implementation does not support operation");
+        log::error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {
@@ -676,93 +633,23 @@ impl super::DiskFS for Disk {
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> STDRESULT {
         self.modify(name, None, Some(new_type))
     }
-    fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(name,true)
+    fn get(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
+        self.read_file(name)
     }
-    fn bsave(&mut self,name: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let padded = match trailing {
-            Some(v) => [dat.to_vec(),v.to_vec()].concat(),
-            None => dat.to_vec()
-        };
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(&padded);
-        fimg.fs_type = vec![FileType::Data as u8,0];
-        self.write_file(name,&fimg)
-    }
-    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        error!("pascal implementation does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn save(&mut self,_name: &str, _dat: &[u8], _typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        error!("pascal implementation does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
-        0
-    }
-    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {        
-        if &fimg.file_system != FS_NAME {
-            return Err(Box::new(Error::BadFormat));
+    fn put(&mut self,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+        if fimg.file_system!=FS_NAME {
+            log::error!("cannot write {} file image to a2 pascal",fimg.file_system);
+            return Err(Box::new(Error::DevErr));
         }
-        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-        Ok(fimg.sequence_limited(eof))
-    }
-    fn read_raw(&mut self,name: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(&name) {
-            Ok(fimg) => {
-                if trunc {
-                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-                    Ok((0,fimg.sequence_limited(eof)))
-                } else {
-                    Ok((0,fimg.sequence()))
-                }
-            },
-            Err(e) => Err(e)  
+        if fimg.chunk_len!=BLOCK_SIZE {
+            log::error!("chunk length {} is incompatible with Pascal",fimg.chunk_len);
+            return Err(Box::new(Error::DevErr));
         }
+        self.write_file(&fimg.full_path,fimg)
     }
-    fn write_raw(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(dat);
-        fimg.fs_type = vec![FileType::Text as u8,0];
-        fimg.eof = u32::to_le_bytes(dat.len() as u32).to_vec();
-        self.write_file(name,&fimg)
-    }
-    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        // keep everything, let decoder sort it out
-        self.read_raw(name,false)
-    }
-    fn write_text(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(dat);
-        fimg.fs_type = vec![FileType::Text as u8,0];
-        // The encoder is keeping the trailing zeros to end of page
-        let mut bytes_remaining: u32 = 0;
-        for i in (0..dat.len()).rev() {
-            if dat[i]!=0 {
-                break;
-            }
-            bytes_remaining += 1;
-        }
-        // it seems the bytes remaining is truncated to block boundaries
-        fimg.eof = u32::to_le_bytes(dat.len() as u32 - 512*(bytes_remaining/512)).to_vec();
-        self.write_file(name,&fimg)
-    }
-    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
-        error!("pascal implementation does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,DYNERR> {
-        error!("pascal implementation does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR> {
         match usize::from_str(num) {
-            Ok(block) => {
-                match self.img.read_block(Block::PO(block)) {
-                    Ok(buf) => Ok((0,buf)),
-                    Err(e) => Err(e)
-                }
-            },
+            Ok(block) => self.img.read_block(Block::PO(block)),
             Err(e) => Err(Box::new(e))
         }
     }
@@ -778,38 +665,6 @@ impl super::DiskFS for Disk {
                 }
             },
             Err(e) => Err(Box::new(e))
-        }
-    }
-    fn read_any(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
-        self.read_file(name)
-    }
-    fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!=FS_NAME {
-            error!("cannot write {} file image to a2 pascal",fimg.file_system);
-            return Err(Box::new(Error::DevErr));
-        }
-        if fimg.chunk_len!=BLOCK_SIZE {
-            error!("chunk length {} is incompatible with Pascal",fimg.chunk_len);
-            return Err(Box::new(Error::DevErr));
-        }
-        self.write_file(name,fimg)
-    }
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        if dat.len()<TEXT_PAGE+1 {
-            error!("file too small to be pascal text file");
-            return Err(Box::new(Error::BadFormat));
-        }
-        let file = types::SequentialText::from_bytes(&dat)?;
-        Ok(file.to_string())
-    }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
-        let file = types::SequentialText::from_str(&s);
-        match file {
-            Ok(txt) => Ok(txt.to_bytes()),
-            Err(_) => {
-                error!("Cannot encode, perhaps use raw type");
-                Err(Box::new(Error::BadFormat))
-            }
         }
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {

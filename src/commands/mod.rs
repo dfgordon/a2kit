@@ -9,6 +9,7 @@ pub mod get_img;
 pub mod put_img;
 
 use std::str::FromStr;
+use std::io::Read;
 use log::{debug,error};
 
 use crate::DYNERR;
@@ -191,6 +192,24 @@ fn parse_block_request(farg: &str) -> Result<Vec<usize>,DYNERR> {
         }
     }
     Ok(ans)
+}
+
+/// get a JSON object presumed to be a list and log any errors
+fn get_json_list_from_stdin() -> Result<json::JsonValue,DYNERR> {
+    let mut raw_list = Vec::new();
+    std::io::stdin().read_to_end(&mut raw_list)?;
+    let json_list = match json::parse(&String::from_utf8(raw_list)?) {
+        Ok(s) => s,
+        Err(_) => {
+            log::error!("input to mget was not valid JSON");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+    };
+    if !json_list.is_array() {
+        log::error!("input to mget was not a JSON list");
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
+    Ok(json_list)
 }
 
 #[test]

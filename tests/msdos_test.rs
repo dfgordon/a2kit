@@ -4,23 +4,21 @@ use std::fmt::Write;
 use a2kit::fs::{fat,DiskFS,Block};
 use std::collections::HashMap;
 
-fn get_builder(filename: &str,disk: &fat::Disk) -> Vec<u8> {
-    let s = std::fs::read_to_string(&Path::new("tests").
+fn get_builder(filename: &str) -> String {
+    std::fs::read_to_string(&Path::new("tests").
         join("disk_builders").
-        join(filename)).expect("failed to read source code");
-    disk.encode_text(&s).expect("could not encode")
+        join(filename)).expect("failed to read source code")
 }
 
 fn build_ren_del(disk: &mut fat::Disk) -> HashMap<Block,Vec<usize>> {
     // make the same text that the BASIC program makes
-    let mut txt_string = String::new();
+    let mut txt = String::new();
     for i in 1..1025 {
-        writeln!(txt_string," {} ",i).expect("unreachable");
+        writeln!(txt," {} ",i).expect("unreachable");
     }
-    let txt = disk.encode_text(&txt_string).expect("could not encode");
     
-    let batch = get_builder("msdos_builder.bat",&disk);
-    let basic = get_builder("msdos_builder.bas",&disk);
+    let batch = get_builder("msdos_builder.bat");
+    let basic = get_builder("msdos_builder.bas");
     disk.write_text("DSKBLD.BAT",&batch).expect("dimg error");
     disk.write_text("DSKBLD.BAS",&basic).expect("dimg error");
 

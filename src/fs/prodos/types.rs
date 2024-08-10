@@ -5,7 +5,7 @@ use thiserror::Error;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::{DiskStructError,DiskStruct};
-use super::super::TextEncoder;
+use super::super::TextConversion;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const VOL_KEY_BLOCK: u16 = 2;
@@ -177,17 +177,17 @@ pub struct EntryLocation {
 
 /// Transforms between UTF8 and ProDOS text encodings.
 /// ProDOS uses positive ASCII with CR line separators.
-pub struct Encoder {
+pub struct TextConverter {
     line_terminator: Vec<u8>
 }
 
-impl TextEncoder for Encoder {
+impl TextConversion for TextConverter {
     fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
     }
-    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
+    fn from_utf8(&self,txt: &str) -> Option<Vec<u8>> {
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
@@ -207,7 +207,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &[u8]) -> Option<String> {
+    fn to_utf8(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x0d {
@@ -238,8 +238,8 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![0x0d]);
-        if let Some(dat) = encoder.encode(s) {
+        let converter = TextConverter::new(vec![0x0d]);
+        if let Some(dat) = converter.from_utf8(s) {
             return Ok(Self {
                 text: dat.clone()
             });
@@ -253,8 +253,8 @@ impl FromStr for SequentialText {
 /// This changes CR to LF, and nulls out negative ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![0x0d]);
-        if let Some(ans) = encoder.decode(&self.text) {
+        let converter = TextConverter::new(vec![0x0d]);
+        if let Some(ans) = converter.to_utf8(&self.text) {
             return write!(f,"{}",ans);
         }
         write!(f,"err")

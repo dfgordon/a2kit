@@ -8,20 +8,24 @@
 //! Disk image operations are built around three trait objects:
 //! * `img::DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
 //! * `fs::DiskFS` imposes a file system on the already decoded track data
+//!     - don't confuse `std::fs` and `a2kit::fs`
 //! * `fs::FileImage` provides a representation of a file that can be restored to a disk image
 //! 
 //! When a `DiskFS` object is created it takes ownership of some `DiskImage`.
 //! It then uses this owned image as storage.  Any changes are not permanent until the
 //! image is saved to whatever file system is hosting a2kit.
 //! 
-//! ## Language Files
+//! ## Language Services
 //! 
-//! Language services are built on tree-sitter parsers.  Generalized syntax checking is in `lang`.
+//! Language modules are designed to be complementary to the needs of language servers that
+//! use the language server protocol (LSP).
 //! Specific language services are in modules named after the language, at present:
-//! * `lang::applesoft` handles (de)tokenization of Applesoft BASIC
-//! * `lang::integer` handles (de)tokenization of Integer BASIC
-//! * `lang::merlin` handles encodings for Merlin assembly source files
-//! * Pascal source files are handled through the file system module
+//! * `lang::applesoft` handles Applesoft BASIC
+//! * `lang::integer` handles Integer BASIC
+//! * `lang::merlin` handles Merlin assembly language
+//! 
+//! The language servers are in `bin` and compile to separate executables.  The language servers
+//! and CLI both depend on `lang`, but do not depend on each other.
 //! 
 //! ## File Systems
 //! 
@@ -32,6 +36,15 @@
 //! * FAT (e.g. MS-DOS)
 //! * ProDOS
 //! * Pascal File System
+//! 
+//! A simple example follows:
+//! ```rs
+//! let img = std::fs::read(&Path::new("disk.woz"))?;
+//! // DiskFS is always mutable because the underlying image can be stateful.
+//! // N.b. the underlying image in this case is cloned within the DiskFS.
+//! let mut disk = a2kit::create_fs_from_bytestream(&img,Some("woz"))?;
+//! let text = disk.read_text("README")?;
+//! ```
 //! 
 //! ## Disk Images
 //! 
@@ -50,6 +63,17 @@
 //! TD0 | CP/M, FAT |
 //! WOZ | Apple II |
 //! 
+//! A simple example follows:
+//! ```rs
+//! let img = std::fs::read(&Path::new("disk.woz"))?;
+//! // We can grab a physical sector without solving the file system
+//! let sector_data = img.read_sector(0,0,0)?;
+//! // Disk images are *always* buffered, so writing only affects memory
+//! img.write_sector(0,0,1,&sector_data)?;
+//! // Save the changes to local storage:
+//! a2kit::save_img(&mut img,"disk.woz")?;
+//! ```
+//!
 //! ## Disk Kinds
 //! 
 //! A disk image can typically represent some number of disk kinds (defined by mechanical and
@@ -413,10 +437,10 @@ pub fn create_fs_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<B
 }
 
 /// Display binary to stdout in columns of hex, +ascii, and -ascii
-pub fn display_block(start_addr: u16,block: &Vec<u8>) {
+pub fn display_block(start_addr: usize,block: &Vec<u8>) {
     let mut slice_start = 0;
     loop {
-        let row_label = start_addr as usize + slice_start;
+        let row_label = start_addr + slice_start;
         let mut slice_end = slice_start + 16;
         if slice_end > block.len() {
             slice_end = block.len();

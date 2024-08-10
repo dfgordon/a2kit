@@ -3,15 +3,16 @@ use std::path::Path;
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use a2kit::fs::{cpm,TextEncoder,DiskFS,Block};
+use a2kit::fs::{cpm,DiskFS,Block};
 use a2kit::img::{dsk_do,names};
-use a2kit_macro::DiskStruct;
 use a2kit::bios::dpb::DiskParameterBlock;
 
 // Some lines we entered in the emulator using ED.COM.
 // One thing to note: if we would use an odd number of
 // CP/M "sectors" (128 byte records) ED would leave copious
 // trailing data; so we are careful to fill an even number.
+
+const RCH: &str = "unreachable was reached";
 
 const ED_TEST: &str =
 "From the story \"Polaris\"
@@ -41,11 +42,9 @@ fn read_small() {
     let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check text file
-    let (_z,raw) = emulator_disk.read_text("POLARIS.TXT").expect("error");
-    let txt = cpm::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = cpm::types::Encoder::new(vec![]);
-    assert_eq!(txt.text,encoder.encode(ED_TEST).unwrap());
-    assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(ED_TEST));
+    let fimg = emulator_disk.get("POLARIS.TXT").expect("error");
+    let txt = fimg.unpack_txt().expect("bad setup");
+    assert_eq!(&txt,ED_TEST);
 }
 
 #[test]
@@ -57,9 +56,11 @@ fn write_small() {
     disk.format("test",None).expect("failed to format disk");
 
     // save the text
-    disk.write_text("POLARIS.BAK",&Vec::new()).expect("error");
-    let txt_data = disk.encode_text(ED_TEST).expect("could not encode text");
-    disk.write_text("POLARIS.TXT",&txt_data).expect("write error");
+    let fimg = disk.new_fimg(None, false, "POLARIS.BAK").expect(RCH);
+    disk.put(&fimg).expect(RCH);
+    let mut fimg = disk.new_fimg(None, false, "POLARIS.TXT").expect(RCH);
+    fimg.pack_txt(ED_TEST).expect(RCH);
+    disk.put(&fimg).expect(RCH);
 
     let ignore = disk.standardize(0);
     disk.compare(&Path::new("tests").join("cpm-smallfiles.dsk"),&ignore);
@@ -76,8 +77,9 @@ fn write_small_timestamps() {
     disk.format("",Some(time)).expect("failed to format disk");
 
     // save the text
-    let txt_data = disk.encode_text(ED_TEST).expect("could not encode text");
-    disk.write_text("POLARIS.TXT",&txt_data).expect("write error");
+    let mut fimg = disk.new_fimg(None, true, "POLARIS.TXT").expect(RCH);
+    fimg.pack_txt(ED_TEST).expect(RCH);
+    disk.put(&fimg).expect(RCH);
 
     let ignore = disk.standardize(0);
     disk.compare(&Path::new("tests").join("cpm-timestamps.dsk"),&ignore);
@@ -89,10 +91,12 @@ fn out_of_space() {
     let mut disk = cpm::Disk::from_img(Box::new(img),DiskParameterBlock::create(&names::A2_DOS33_KIND),[2,2,3]).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),None).expect("could not format");
-    disk.bsave("f1",&big,0x800,None).expect("error");
-    disk.bsave("f2",&big,0x800,None).expect("error");
-    disk.bsave("f3",&big,0x800,None).expect("error");
-    match disk.bsave("f4",&big,0x800,None) {
+    let mut fimg = disk.new_fimg(None, false, "f1").expect(RCH);
+    fimg.pack_bin(&big,None,None).expect(RCH);
+    disk.put_at("f1",&mut fimg).expect(RCH);
+    disk.put_at("f2",&mut fimg).expect(RCH);
+    disk.put_at("f3",&mut fimg).expect(RCH);
+    match disk.put_at("f4",&mut fimg) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
         Err(e) => match e.to_string().as_str() {
             "disk full" => assert!(true),
@@ -101,11 +105,10 @@ fn out_of_space() {
     }
 }
 
-fn get_builder(filename: &str,disk: &cpm::Disk) -> Vec<u8> {
-    let s = std::fs::read_to_string(&Path::new("tests").
+fn get_builder(filename: &str) -> String {
+    std::fs::read_to_string(&Path::new("tests").
         join("disk_builders").
-        join(filename)).expect("failed to read source code");
-    disk.encode_text(&s).expect("could not encode")
+        join(filename)).expect("failed to read source code")
 }
 
 fn build_ren_del(disk: &mut cpm::Disk) -> HashMap<Block,Vec<usize>> {
@@ -114,18 +117,21 @@ fn build_ren_del(disk: &mut cpm::Disk) -> HashMap<Block,Vec<usize>> {
     for i in 1..1025 {
         writeln!(txt_string," {} ",i).expect("unreachable");
     }
-    let txt = disk.encode_text(&txt_string).expect("could not encode");
 
-    let basic = get_builder("msdos_builder.bas",&disk);
-    disk.write_text("DSKBLD.BAS",&basic).expect("dimg error");
+    let basic = get_builder("msdos_builder.bas");
+    let mut basic_fimg = disk.new_fimg(None, false, "DSKBLD.BAS").expect(RCH);
+    basic_fimg.pack_txt(&basic).expect(RCH);
+    let mut txt_fimg = disk.new_fimg(None, false, "ASCEND.TXT").expect(RCH);
+    txt_fimg.pack_txt(&txt_string).expect(RCH);
 
-    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.put(&basic_fimg).expect(RCH);
+    disk.put(&txt_fimg).expect(RCH);
     disk.rename("ASCEND.TXT","ASCEND1.TXT").expect("dimg error");
-    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.put(&txt_fimg).expect(RCH);
     disk.rename("ASCEND.TXT","ASCEND2.TXT").expect("dimg error");
-    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.put(&txt_fimg).expect(RCH);
     disk.rename("ASCEND.TXT","ASCEND3.TXT").expect("dimg error");
-    disk.write_text("ASCEND.TXT",&txt).expect("dimg error");
+    disk.put(&txt_fimg).expect(RCH);
     disk.rename("ASCEND.TXT","ASCEND4.TXT").expect("dimg error");
     
     let ignore = disk.standardize(0);

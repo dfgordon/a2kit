@@ -7,12 +7,10 @@
 //! arrangement of traits and generics.
 
 
-use chrono::{Datelike,Timelike};
 use std::fmt;
-use log::{warn,error};
 use num_traits::FromPrimitive;
 use std::collections::HashMap;
-use regex::Regex;
+use super::pack::*;
 use colored::*;
 use super::types::*;
 use super::super::FileImage;
@@ -23,78 +21,6 @@ use crate::DYNERR;
 // The auto-derivation is not used for structures with variable length fields (yet).
 use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
-
-fn pack_time(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
-    let now = match time {
-        Some(t) => t,
-        _ => chrono::Local::now().naive_local()
-    };
-    let (_is_common_era,year) = now.year_ce();
-    let packed_date = (now.day() + (now.month() << 5) + (year%100 << 9)) as u16;
-    let packed_time = (now.minute() + (now.hour() << 8)) as u16;
-    let bytes_date = u16::to_le_bytes(packed_date);
-    let bytes_time = u16::to_le_bytes(packed_time);
-    return [bytes_date[0],bytes_date[1],bytes_time[0],bytes_time[1]];
-}
-
-fn unpack_time(prodos_date_time: [u8;4]) -> Option<chrono::NaiveDateTime> {
-    let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
-    let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
-    let yearmod100 = date >> 9;
-    // Suppose the earliest date stamp we can find originates from the year before
-    // SOS was released, i.e., 1979.  Use this to help decide the century.
-    // This scheme will work until 2079.
-    let year = match yearmod100 < 79 {
-        true => 2000 + yearmod100,
-        false => 1900 + yearmod100
-    };
-    let month = (date >> 5) & 15;
-    let day = date & 31;
-    let hour = (time >> 8) & 255;
-    let minute = time & 255;
-    match chrono::NaiveDate::from_ymd_opt(year as i32,month as u32,day as u32) {
-        Some(date) => date.and_hms_opt(hour as u32,minute as u32,0),
-        None => None
-    }
-}
-
-/// Test the string for validity as a ProDOS name.
-/// This can be used to check names before passing to functions that may panic.
-pub fn is_name_valid(s: &str) -> bool {
-    let fname_patt = Regex::new(r"^[A-Z][A-Z0-9.]{0,14}$").unwrap();
-    if !fname_patt.is_match(&s.to_uppercase()) {
-        return false;
-    } else {
-        return true;
-    }
-}
-
-/// Convert filename bytes to a string.  Will not panic, will escape the string if necessary.
-/// Must pass the stor_len_nibs field into nibs.
-fn file_name_to_string(nibs: u8, fname: [u8;15]) -> String {
-    let name_len = nibs & 0x0f;
-    if let Ok(result) = String::from_utf8(fname[0..name_len as usize].to_vec()) {
-        return result;
-    }
-    warn!("continuing with invalid filename");
-    crate::escaped_ascii_from_bytes(&fname[0..name_len as usize].to_vec(), true, false)
-}
-
-/// Convert storage type and String to (stor_len_nibs,fname).
-/// Panics if the string is not a valid ProDOS name.
-fn string_to_file_name(stype: &StorageType, s: &str) -> (u8,[u8;15]) {
-    if !is_name_valid(s) {
-        panic!("attempt to create a bad file name {}",s);
-    }
-    let new_nibs = ((*stype as u8) << 4) + s.len() as u8;
-    let mut ans: [u8;15] = [0;15];
-    let mut i = 0;
-    for char in s.to_uppercase().chars() {
-        char.encode_utf8(&mut ans[i..]);
-        i += 1;
-    }
-    (new_nibs,ans)
-}
 
 /// Test a generic trait object with a name against the given string.
 /// If the string is not a valid ProDOS name this will panic.
@@ -302,7 +228,7 @@ impl Entry {
         self.blocks_used = u16::to_le_bytes(new_val as u16);
     }
     pub fn metadata_to_fimg(&self,fimg: &mut FileImage) {
-        fimg.eof = super::super::FileImage::fix_le_vec(self.eof(),3);
+        fimg.set_eof(self.eof());
         fimg.access = vec![self.access];
         fimg.fs_type = vec![self.file_type];
         fimg.aux = self.aux_type.to_vec();
@@ -333,7 +259,7 @@ impl Entry {
     /// Panics if `name` is invalid
     pub fn create_file(name: &str,fimg: &FileImage,key_ptr: u16,header_ptr: u16,create_time: Option<chrono::NaiveDateTime>) -> Result<Entry,DYNERR> {
         if fimg.fs_type.len()<1 || fimg.version.len()<1 || fimg.min_version.len()<1 || fimg.aux.len()<2 {
-            error!("one or more ProDOS file image fields were too short");
+            log::error!("one or more ProDOS file image fields were too short");
             return Err(Box::new(Error::Range));
         }
         let mut ans = Self::new();

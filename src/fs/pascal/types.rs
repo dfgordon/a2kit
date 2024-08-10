@@ -3,8 +3,7 @@ use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::{DiskStruct, DiskStructError};
-use super::super::TextEncoder;
-use log::{debug,error};
+use crate::fs::TextConversion;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const TEXT_PAGE: usize = 1024;
@@ -105,7 +104,7 @@ impl FromStr for FileType {
 /// Transforms between UTF8 and Pascal text.
 /// Pascal text is +ASCII, split into 1024 byte pages padded with nulls, with CR line separators.
 /// ASCII 0x10 indicates the next byte is an indentation count + 0x20.
-pub struct Encoder {
+pub struct TextConverter {
     line_terminator: Vec<u8>
 }
 
@@ -127,14 +126,14 @@ fn paginate(ans: &mut Vec<u8>,page: usize,count_on_page: usize) -> Result<usize,
     return Ok(page);
 }
 
-impl TextEncoder for Encoder {
+impl TextConversion for TextConverter {
     fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
     }
-    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
-        debug!("encoding text");
+    fn from_utf8(&self,txt: &str) -> Option<Vec<u8>> {        
+        log::debug!("encoding text");
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         let mut starting_line = true;
@@ -196,7 +195,7 @@ impl TextEncoder for Encoder {
             match paginate(&mut ans,page,count_on_page) {
                 Ok(new_page) => page = new_page,
                 Err(e) => {
-                    error!("{}",e);
+                    log::error!("{}",e);
                     return None
                 }
             }
@@ -214,7 +213,7 @@ impl TextEncoder for Encoder {
         match paginate(&mut ans,page,count_on_page) {
             Ok(_new_page) => {},//page = new_page},
             Err(e) => {
-                error!("{}",e);
+                log::error!("{}",e);
                 return None
             }
         }
@@ -224,7 +223,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &[u8]) -> Option<String> {
+    fn to_utf8(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         let mut await_indent = false;
         for i in 0..src.len() {
@@ -273,8 +272,8 @@ impl SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![0x0d]);
-        if let Some(dat) = encoder.encode(s) {
+        let encoder = TextConverter::new(vec![0x0d]);
+        if let Some(dat) = encoder.from_utf8(s) {
             return Ok(Self {
                 header: Self::create_header().to_vec(),
                 text: dat.clone()
@@ -288,8 +287,8 @@ impl FromStr for SequentialText {
 /// derives `to_string`, so the structure can be converted to `String`.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![0x0d]);
-        if let Some(ans) = encoder.decode(&self.text) {
+        let encoder = TextConverter::new(vec![0x0d]);
+        if let Some(ans) = encoder.to_utf8(&self.text) {
             return write!(f,"{}",ans);
         }
         write!(f,"err")
@@ -318,7 +317,7 @@ impl DiskStruct for SequentialText {
     /// Return flattened bytes (typically written to disk)
     fn to_bytes(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
-        debug!("to_bytes: header {} text {}",self.header.len(),self.text.len());
+        log::debug!("to_bytes: header {} text {}",self.header.len(),self.text.len());
         ans.append(&mut self.header.clone());
         ans.append(&mut self.text.clone());
         return ans;

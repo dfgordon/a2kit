@@ -44,61 +44,58 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             Some(path) => path,
             _ => "/"
         };
-        return match a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
-            Ok(mut disk) => {
-                if cmd.get_flag("generic") {
-                    match disk.catalog_to_vec(&path_in_img) {
-                        Ok(rows) => {
-                            for row in rows {
-                                println!("{}",row);
-                            }
-                            Ok(())
-                        },
-                        Err(e) => Err(e)
-                    }
-                } else {
-                    disk.catalog_to_stdout(&path_in_img)
-                }
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg"))?;
+        return if cmd.get_flag("generic") {
+            let rows = disk.catalog_to_vec(&path_in_img)?;
+            for row in rows {
+                println!("{}",row);
+            }
+            Ok(())
+        } else {
+            disk.catalog_to_stdout(&path_in_img)
+        }
     }
     
     // Output the directory tree as a JSON string
 
     if let Some(cmd) = matches.subcommand_matches("tree") {
-        return match a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
-            Ok(mut disk) => {
-                println!("{}",disk.tree(cmd.get_flag("meta"))?);
-                Ok(())
-            },
-            Err(e) => Err(e)
+        let mut disk = a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg"))?;
+        println!("{}",disk.tree(cmd.get_flag("meta"), cmd.get_one::<u16>("indent").copied())?);
+        return Ok(());
+    }
+
+    // Output the matches to the glob pattern
+
+    if let Some(cmd) = matches.subcommand_matches("glob") {
+        let mut disk = a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg"))?;
+        let v = disk.glob(cmd.get_one::<String>("file").unwrap(),false)?;
+        let mut obj = json::array![];
+        for m in v {
+            obj.push(m)?;
+        }
+        let s = match cmd.get_one::<u16>("indent") {
+            Some(spaces) => json::stringify_pretty(obj, *spaces),
+            None => json::stringify(obj)
         };
+        println!("{}",s);
+        return Ok(());
     }
 
     // Output the FS stats as a JSON string
 
     if let Some(cmd) = matches.subcommand_matches("stat") {
-        return match a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
-            Ok(mut dimg) => {
-                let stats = dimg.stat()?;
-                println!("{}",stats.to_json(2));
-                Ok(())
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file_or_stdin(cmd.get_one::<String>("dimg"))?;
+        let stats = disk.stat()?;
+        println!("{}",stats.to_json(cmd.get_one::<u16>("indent").copied()));
+        return Ok(());
     }
     
     // Output the disk geometry as a JSON string
 
     if let Some(cmd) = matches.subcommand_matches("geometry") {
-        return match a2kit::create_img_from_file_or_stdin(cmd.get_one::<String>("dimg")) {
-            Ok(mut dimg) => {
-                println!("{}",dimg.export_geometry(2)?);
-                Ok(())
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_img_from_file_or_stdin(cmd.get_one::<String>("dimg"))?;
+        println!("{}",disk.export_geometry(cmd.get_one::<u16>("indent").copied())?);
+        return Ok(());
     }
 
     // Verify
@@ -264,7 +261,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
                     let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                     let object = tokenizer.tokenize(&program,addr)?;
                     if atty::is(atty::Stream::Stdout) {
-                        a2kit::display_block(addr,&object);
+                        a2kit::display_block(addr as usize,&object);
                     } else {
                         std::io::stdout().write_all(&object).expect("could not write output stream");
                     }
@@ -450,13 +447,9 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     if let Some(cmd) = matches.subcommand_matches("mkdir") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.create(&path_in_img) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        }
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.create(&path_in_img)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Update password for a file
@@ -467,65 +460,45 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         let read = cmd.get_flag("read");
         let write = cmd.get_flag("write");
         let delete = cmd.get_flag("delete");
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.protect(path_in_img,password,read,write,delete) {
-                Ok(()) => a2kit::save_img(&mut disk,path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.protect(path_in_img,password,read,write,delete)?;
+        return a2kit::save_img(&mut disk,path_to_img);
     }
 
     // Remove password from a file
     if let Some(cmd) = matches.subcommand_matches("unprotect") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.unprotect(path_in_img) {
-                Ok(()) => a2kit::save_img(&mut disk,path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.unprotect(path_in_img)?;
+        return a2kit::save_img(&mut disk,path_to_img);
     }
     
     // Delete a file or directory
     if let Some(cmd) = matches.subcommand_matches("delete") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.delete(&path_in_img) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.delete(&path_in_img)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Lock a file or directory
     if let Some(cmd) = matches.subcommand_matches("lock") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.lock(&path_in_img) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.lock(&path_in_img)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Unlock a file or directory
     if let Some(cmd) = matches.subcommand_matches("unlock") {
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.unlock(&path_in_img) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.unlock(&path_in_img)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Rename a file or directory
@@ -533,13 +506,9 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         let path_to_img = cmd.get_one::<String>("dimg").expect(RCH);
         let name = cmd.get_one::<String>("name").expect(RCH);
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.rename(&path_in_img,&name) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.rename(&path_in_img,&name)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Retype a file
@@ -548,13 +517,9 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         let path_in_img = cmd.get_one::<String>("file").expect(RCH);
         let typ = cmd.get_one::<String>("type").expect(RCH);
         let aux = cmd.get_one::<String>("aux").expect(RCH);
-        return match a2kit::create_fs_from_file(&path_to_img) {
-            Ok(mut disk) => match disk.retype(&path_in_img,&typ,&aux) {
-                Ok(()) => a2kit::save_img(&mut disk,&path_to_img),
-                Err(e) => Err(e)
-            },
-            Err(e) => Err(e)
-        };
+        let mut disk = a2kit::create_fs_from_file(&path_to_img)?;
+        disk.retype(&path_in_img,&typ,&aux)?;
+        return a2kit::save_img(&mut disk,&path_to_img);
     }
 
     // Put file inside disk image, or save to local
@@ -565,6 +530,26 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     // Get file from local or from inside a disk image
     if let Some(cmd) = matches.subcommand_matches("get") {
         return commands::get::get(cmd);
+    }
+    
+    // Put JSON list of file images inside a disk image
+    if let Some(cmd) = matches.subcommand_matches("mput") {
+        return commands::put::mput(cmd);
+    }
+
+    // Get JSON list of file images from inside a disk image
+    if let Some(cmd) = matches.subcommand_matches("mget") {
+        return commands::get::mget(cmd);
+    }
+
+    // Pack data into a file image
+    if let Some(cmd) = matches.subcommand_matches("pack") {
+        return commands::put::pack(cmd);
+    }
+
+    // Unpack data from a file image
+    if let Some(cmd) = matches.subcommand_matches("unpack") {
+        return commands::get::unpack(cmd);
     }
     
     log::error!("No subcommand was found, try `a2kit --help`");

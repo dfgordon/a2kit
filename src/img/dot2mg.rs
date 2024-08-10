@@ -298,7 +298,7 @@ impl img::DiskImage for Dot2mg {
     fn display_track(&self,bytes: &[u8]) -> String {
         self.raw_img.display_track(bytes)
     }
-    fn get_metadata(&self,indent: u16) -> String {
+    fn get_metadata(&self,indent: Option<u16>) -> String {
         let mg = self.what_am_i().to_string();
         let mut root = json::JsonValue::new_object();
         root[&mg] = json::JsonValue::new_object();
@@ -323,10 +323,10 @@ impl img::DiskImage for Dot2mg {
         getHex!(root,mg,self.header.creator_len);
         root[&mg]["comment"] = json::JsonValue::String(self.comment.clone());
         root[&mg]["creator_info"] = json::JsonValue::String(self.creator_info.clone());
-        if indent==0 {
-            json::stringify(root)
+        if let Some(spaces) = indent {
+            json::stringify_pretty(root,spaces)
         } else {
-            json::stringify_pretty(root, indent)
+            json::stringify(root)
         }
     }
     fn put_metadata(&mut self,key_path: &Vec<String>,maybe_str_val: &json::JsonValue) -> STDRESULT {

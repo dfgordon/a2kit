@@ -22,46 +22,54 @@ use directory::*;
 use super::Block;
 use crate::img;
 use crate::bios::{bpb,fat};
-use crate::commands::ItemType;
 use crate::{DYNERR,STDRESULT};
 
 pub const FS_NAME: &str = "fat";
+
+pub fn new_fimg(chunk_len: usize,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+    if !pack::is_path_valid(path) {
+        return Err(Box::new(Error::Syntax))
+    }
+    let created = match set_time {
+        true => [
+            vec![pack::pack_tenths(None)],
+            pack::pack_time(None).to_vec(),
+            pack::pack_date(None).to_vec()
+        ].concat(),
+        false => vec![0;5]
+    };
+    Ok(super::FileImage {
+        fimg_version: super::FileImage::fimg_version(),
+        file_system: String::from(FS_NAME),
+        fs_type: vec![0;3],
+        aux: vec![],
+        eof: vec![0;4],
+        accessed: created.clone(),
+        created: created.clone(),
+        modified: vec![created[1],created[2],created[3],created[4]],
+        access: vec![0], // attributes, do not confuse with access time
+        version: vec![12],
+        min_version: vec![12],
+        chunk_len,
+        full_path: path.to_string(),
+        chunks: HashMap::new()
+    })
+}
+
+pub struct Packer {
+}
 
 /// The primary interface for disk operations.
 pub struct Disk {
     img: Box<dyn img::DiskImage>,
     boot_sector: bpb::BootSector,
     maybe_fat: Option<Vec<u8>>,
+    /// only valid during glob search
+    curr_path: Vec<String>,
     typ: usize
 }
 
 impl Disk {
-    fn new_fimg(chunk_len: usize,set_time: bool) -> super::FileImage {
-        let now = chrono::Local::now().naive_local();
-        let created = match set_time {
-            true => [
-                vec![pack::pack_tenths(Some(now))],
-                pack::pack_time(Some(now)).to_vec(),
-                pack::pack_date(Some(now)).to_vec()
-            ].concat(),
-            false => vec![0;5]
-        };
-        super::FileImage {
-            fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from(FS_NAME),
-            fs_type: vec![0;3],
-            aux: vec![],
-            eof: vec![0;4],
-            accessed: created.clone(),
-            created: created.clone(),
-            modified: vec![created[1],created[2],created[3],created[4]],
-            access: vec![0], // attributes, do not confuse with access time
-            version: vec![12],
-            min_version: vec![12],
-            chunk_len,
-            chunks: HashMap::new()
-        }
-    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     /// If maybe_boot is None, the FAT boot sector is buffered from the image.
@@ -93,6 +101,7 @@ impl Disk {
             img,
             boot_sector,
             maybe_fat: None,
+            curr_path: Vec::new(),
             typ
         })
     }
@@ -105,6 +114,7 @@ impl Disk {
             img,
             boot_sector,
             maybe_fat: None,
+            curr_path: Vec::new(),
             typ
         })
     }
@@ -739,8 +749,8 @@ impl Disk {
     }
     /// Read any file into a file image
     fn read_file(&mut self,parent: &FileInfo,finfo: &FileInfo) -> Result<super::FileImage,DYNERR> {
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,false);
-        // TODO: eliminate redundancy, by this time the directory as already been read at least once
+        let mut fimg = new_fimg(self.boot_sector.block_size() as usize,false,"temp")?;
+        // TODO: eliminate redundancy, by this time the directory has already been read at least once
         let dir = self.get_directory(&parent.cluster1)?;
         let entry = dir.get_entry(&Ptr::Entry(finfo.idx));
         let all_data = self.get_cluster_chain_data(&finfo.cluster1.unwrap())?;
@@ -843,6 +853,48 @@ impl Disk {
         entry.set_attr(directory::ARCHIVE);
         self.writeback_directory_entry(loc,&entry)
     }
+    /// Output FAT directory as a vector of paths that match a glob, calls itself recursively
+    fn glob_node(&mut self,pattern: &str,dir: &directory::Directory,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        // this blindly searches everywhere, we could be more efficient by truncating based on the pattern
+        let mut files = Vec::new();
+        let glob = match case_sensitive {
+            true => globset::GlobBuilder::new(&pattern).literal_separator(true).build()?.compile_matcher(),
+            false => globset::GlobBuilder::new(&pattern.to_uppercase()).literal_separator(true).build()?.compile_matcher()
+        };
+        if let Ok(sorted) = dir.build_files() {
+            for finfo in sorted.values() {
+                if finfo.volume_id {
+                    continue;
+                }
+                if finfo.directory && (finfo.name=="." || finfo.name=="..") {
+                    continue;
+                }
+                let key = match finfo.typ.len() {
+                    0 => finfo.name.clone(),
+                    _ => [finfo.name.clone(),".".to_string(),finfo.typ.clone()].concat()
+                };
+                let test = match case_sensitive {
+                    true => [self.curr_path.concat(),key.clone()].concat(),
+                    false => [self.curr_path.concat(),key.clone()].concat().to_uppercase(),
+                };
+                if !finfo.directory && glob.is_match(&test) {
+                    let mut full_path = self.curr_path.concat();
+                    full_path += &key;
+                    files.push(full_path);
+                }
+                if finfo.directory && finfo.name!="." && finfo.name!=".." {
+                    if let Some(ptr) = finfo.cluster1 {
+                        trace!("descend into directory {}",key);
+                        let subdir = self.get_directory(&Some(ptr))?;
+                        self.curr_path.push(key + "/");
+                        files.append(&mut self.glob_node(pattern,&subdir,case_sensitive)?);
+                    }
+                }
+            }
+        }
+        self.curr_path.pop();
+        Ok(files)
+    }
     /// Output FAT directory as a JSON object, calls itself recursively
     fn tree_node(&mut self,dir: &directory::Directory,include_meta: bool) -> Result<json::JsonValue,DYNERR> {
         const DATE_FMT: &str = "%Y/%m/%d";
@@ -922,8 +974,11 @@ impl Disk {
 }
 
 impl super::DiskFS for Disk {
-    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len,true)
+    fn new_fimg(&self, chunk_len: Option<usize>,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+        match chunk_len {
+            Some(l) => new_fimg(l,set_time,path),
+            None => new_fimg(self.boot_sector.block_size() as usize,set_time,path)
+        }
     }
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let (vol_lab,_) = self.get_root_dir()?;
@@ -935,7 +990,7 @@ impl super::DiskFS for Disk {
             block_beg: 2,
             block_end: 2 + self.boot_sector.cluster_count_usable() as usize,
             free_blocks: self.num_free_blocks()?,
-            raw: self.boot_sector.to_json(0)
+            raw: self.boot_sector.to_json(None)
         })
     }
     fn catalog_to_stdout(&mut self, path_and_options: &str) -> STDRESULT {
@@ -1005,17 +1060,20 @@ impl super::DiskFS for Disk {
             Err(e) => Err(e)
         }
     }
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let (_,dir) = self.get_root_dir()?;
+        self.curr_path = vec!["/".to_string()];
+        self.glob_node(pattern, &dir,case_sensitive)
+    }
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let (vol,dir) = self.get_root_dir()?;
         let mut tree = json::JsonValue::new_object();
         tree["file_system"] = json::JsonValue::String(FS_NAME.to_string());
         tree["files"] = self.tree_node(&dir,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vol);
-        if self.boot_sector.cluster_count_usable() <= 2048 && !include_meta {
-            Ok(json::stringify_pretty(tree,2))
-        } else if self.boot_sector.cluster_count_usable() <= 2048 && include_meta {
-            Ok(json::stringify_pretty(tree,1))
+        if let Some(spaces) = indent {
+            Ok(json::stringify_pretty(tree,spaces))
         } else {
             Ok(json::stringify(tree))
         }
@@ -1168,70 +1226,7 @@ impl super::DiskFS for Disk {
             }
         }
     }
-    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(path,true)
-    }
-    fn bsave(&mut self,path: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let padded = match trailing {
-            Some(v) => [dat.to_vec(),v.to_vec()].concat(),
-            None => dat.to_vec()
-        };
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,true);
-        fimg.desequence(&padded);
-        return self.write_any(path,&fimg);
-    }
-    fn load(&mut self,_path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        error!("MS-DOS implementation does not support operation");
-        return Err(Box::new(Error::Syntax));
-    }
-    fn save(&mut self,_path: &str, _dat: &[u8], _typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        error!("MS-DOS implementation does not support operation");
-        return Err(Box::new(Error::Syntax));
-    }
-    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
-        0
-    }
-    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
-        if &fimg.file_system != FS_NAME {
-            return Err(Box::new(Error::IncorrectDOS));
-        }
-        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-        Ok(fimg.sequence_limited(eof))
-    }
-    fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
-        let (maybe_parent,finfo) = self.goto_path(path)?;
-        if let Some(parent) = maybe_parent {
-            let fimg = self.read_file(&parent,&finfo)?;
-            if trunc {
-                let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-                return Ok((0,fimg.sequence_limited(eof)));
-            } else {
-                return Ok((0,fimg.sequence()));
-            }
-        }
-        error!("cannot read root as a file");
-        Err(Box::new(Error::ReadFault))
-    }
-    fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(self.boot_sector.block_size() as usize,true);
-        fimg.desequence(dat);
-        return self.write_any(path,&fimg);
-    }
-    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(path,true)
-    }
-    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        self.write_raw(path,dat)
-    }
-    fn read_records(&mut self,_path: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
-        error!("FAT does not support operation");
-        return Err(Box::new(Error::Syntax));
-    }
-    fn write_records(&mut self,_path: &str, _records: &super::Records) -> Result<usize,DYNERR> {
-        error!("FAT does not support operation");
-        return Err(Box::new(Error::Syntax));
-    }
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR> {
         match usize::from_str(num) {
             Ok(block) => {
                 let mut buf: Vec<u8> = vec![0;self.boot_sector.block_size() as usize];
@@ -1239,7 +1234,7 @@ impl super::DiskFS for Disk {
                     return Err(Box::new(Error::SectorNotFound));
                 }
                 self.read_block(&mut buf,block,0)?;
-                Ok((0,buf))
+                Ok(buf)
             },
             Err(e) => Err(Box::new(e))
         }
@@ -1259,15 +1254,17 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&mut self,path: &str) -> Result<super::FileImage,DYNERR> {
+    fn get(&mut self,path: &str) -> Result<super::FileImage,DYNERR> {
         let (maybe_parent,finfo) = self.goto_path(path)?;
         if let Some(parent) = maybe_parent {
-            return Ok(self.read_file(&parent,&finfo)?);
+            let mut fimg = self.read_file(&parent,&finfo)?;
+            fimg.full_path = path.to_string();
+            return Ok(fimg);
         }
         error!("cannot read root as a file");
         Err(Box::new(Error::ReadFault))
     }
-    fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+    fn put(&mut self,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to FAT",fimg.file_system);
             return Err(Box::new(Error::WriteFault));
@@ -1276,7 +1273,7 @@ impl super::DiskFS for Disk {
             error!("chunk length {} is incompatible with this file image",fimg.chunk_len);
             return Err(Box::new(Error::IncorrectDOS));
         }
-        match self.prepare_to_write(path) {
+        match self.prepare_to_write(&fimg.full_path) {
             Ok((name,mut loc)) => {
                 // create the entry
                 let mut entry = Entry::create(&name,None);
@@ -1290,20 +1287,6 @@ impl super::DiskFS for Disk {
                 }
             },
             Err(e) => Err(e)
-        }
-    }
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat)?;
-        Ok(file.to_string())
-    }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
-        let file = types::SequentialText::from_str(&s);
-        match file {
-            Ok(txt) => Ok(txt.to_bytes()),
-            Err(_) => {
-                error!("Cannot encode, perhaps use raw type");
-                Err(Box::new(Error::Syntax))
-            }
         }
     }
     fn standardize(&mut self,ref_con: u16) -> HashMap<Block,Vec<usize>> {

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::{DiskStructError,DiskStruct};
-use super::super::TextEncoder;
+use super::super::TextConversion;
 
 /// Enumerates MS-DOS 3.3 errors.  The `Display` trait will print the long message.
 /// Some have been paraphrased, many omitted.
@@ -88,7 +88,7 @@ impl Ord for Ptr {
 
 
 // We can directly re-use the CP/M encoder
-type Encoder = crate::fs::cpm::types::Encoder;
+type TextConverter = crate::fs::cpm::types::TextConverter;
 
 /// Structured representation of sequential text files on disk.
 /// MS-DOS text is like CP/M, except no padding to 128 byte boundaries.
@@ -102,8 +102,8 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![]);
-        if let Some(dat) = encoder.encode(s) {
+        let encoder = TextConverter::new(vec![]);
+        if let Some(dat) = encoder.from_utf8(s) {
             return Ok(Self {
                 text: dat.clone(),
                 terminator: 0x1a
@@ -118,8 +118,8 @@ impl FromStr for SequentialText {
 /// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![]);
-        if let Some(ans) = encoder.decode(&self.text) {
+        let encoder = TextConverter::new(vec![]);
+        if let Some(ans) = encoder.to_utf8(&self.text) {
             return write!(f,"{}",ans);
         }
         write!(f,"err")

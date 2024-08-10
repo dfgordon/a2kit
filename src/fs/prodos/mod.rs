@@ -7,6 +7,7 @@
 mod boot;
 pub mod types;
 mod directory;
+mod pack;
 
 use std::collections::HashMap;
 use a2kit_macro::DiskStruct;
@@ -15,11 +16,10 @@ use std::fmt::Write;
 use colored::*;
 use log::{trace,debug,error};
 use types::*;
+use pack::*;
 use directory::*;
-use super::{Block,TextEncoder};
-use crate::lang::applesoft;
+use super::Block;
 use crate::img;
-use crate::commands::ItemType;
 use crate::{DYNERR,STDRESULT};
 
 pub const FS_NAME: &str = "prodos";
@@ -29,7 +29,9 @@ pub struct Disk {
     img: Box<dyn img::DiskImage>,
     total_blocks: usize,
     maybe_bitmap: Option<Vec<u8>>,
-    bitmap_blocks: Vec<usize>
+    bitmap_blocks: Vec<usize>,
+    /// only valid during glob
+    curr_path: Vec<String>
 }
 
 /// put a u16 into an index block in the prescribed fashion
@@ -39,24 +41,36 @@ fn pack_index_ptr(buf: &mut [u8],ptr: u16,idx: usize) {
     buf[idx+256] = bytes[1];
 }
 
-impl Disk {
-    fn new_fimg(chunk_len: usize) -> super::FileImage {
-        super::FileImage {
-            fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from(FS_NAME),
-            fs_type: vec![0],
-            aux: vec![0;2],
-            eof: vec![0;3],
-            accessed: vec![],
-            created: vec![0;4],
-            modified: vec![0;4],
-            access: vec![0],
-            version: vec![0],
-            min_version: vec![0],
-            chunk_len,
-            chunks: HashMap::new()
-        }
+pub fn new_fimg(chunk_len: usize,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+    if !is_path_valid(path) {
+        return Err(Box::new(Error::Syntax));
     }
+    let created = match set_time {
+        true => pack::pack_time(None).to_vec(),
+        false => vec![0;4]
+    };
+    Ok(super::FileImage {
+        fimg_version: super::FileImage::fimg_version(),
+        file_system: String::from(FS_NAME),
+        fs_type: vec![0],
+        aux: vec![0;2],
+        eof: vec![0;3],
+        accessed: vec![],
+        created,
+        modified: vec![0;4],
+        access: vec![0],
+        version: vec![0],
+        min_version: vec![0],
+        chunk_len,
+        full_path: path.to_string(),
+        chunks: HashMap::new()
+    })
+}
+
+pub struct Packer {
+}
+
+impl Disk {
     /// Use the given image as storage for a new DiskFS.
     /// The DiskFS takes ownership of the image.
     /// The image may or may not be formatted.
@@ -67,7 +81,8 @@ impl Disk {
             total_blocks,
             // bitmap buffer is designed to work transparently
             maybe_bitmap: None,
-            bitmap_blocks: Vec::new()
+            bitmap_blocks: Vec::new(),
+            curr_path: Vec::new()
         })
     }
     /// Test an image for the ProDOS file system.
@@ -589,7 +604,7 @@ impl Disk {
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
     /// when it is expected to be sequential.
     fn read_file(&mut self,entry: &Entry) -> Result<super::FileImage,DYNERR> {
-        let mut fimg = Disk::new_fimg(512);
+        let mut fimg = new_fimg(512,false,"temp")?;
         entry.metadata_to_fimg(&mut fimg);
         let mut buf: Vec<u8> = vec![0;512];
         let master_ptr = entry.get_ptr();
@@ -826,7 +841,7 @@ impl Disk {
             }
         }
         // update the entry, do last to capture all the changes
-        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        let eof = fimg.get_eof();
         if eof>0 {
             entry.set_eof(eof);
         }
@@ -869,6 +884,41 @@ impl Disk {
         self.write_entry(loc, &entry)?;
         return Ok(());
     }
+    fn glob_node(&mut self,pattern: &str,dir_block: u16,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        // this blindly searches everywhere, we could be more efficient by truncating based on the pattern
+        let mut files = Vec::new();
+        let glob = match case_sensitive {
+            true => globset::GlobBuilder::new(&pattern).literal_separator(true).build()?.compile_matcher(),
+            false => globset::GlobBuilder::new(&pattern.to_uppercase()).literal_separator(true).build()?.compile_matcher()
+        };
+        let mut curr = dir_block;
+        while curr>0 {
+            let dir = self.get_directory(curr as usize)?;
+            for loc in dir.entry_locations(curr) {
+                let entry = dir.get_entry(&loc);
+                if entry.is_active() {
+                    let key = entry.name();
+                    let test = match case_sensitive {
+                        true => [self.curr_path.concat(),key.clone()].concat(),
+                        false => [self.curr_path.concat(),key.clone()].concat().to_uppercase(),
+                    };
+                    if entry.storage_type()!=StorageType::SubDirEntry && glob.is_match(&test) {
+                        let mut full_path = self.curr_path.concat();
+                        full_path += &key;
+                        files.push(full_path);
+                    }
+                    if entry.storage_type()==StorageType::SubDirEntry {
+                        trace!("descend into directory {}",key);
+                        self.curr_path.push(key + "/");
+                        files.append(&mut self.glob_node(pattern,entry.get_ptr(),case_sensitive)?);
+                    }
+                }
+            }
+            curr = dir.next();
+        }
+        self.curr_path.pop();
+        Ok(files)
+    }
     /// Output ProDOS directory as a JSON object, calls itself recursively
     fn tree_node(&mut self,dir_block: u16,include_meta: bool) -> Result<json::JsonValue,DYNERR> {
         let mut files = json::JsonValue::new_object();
@@ -888,16 +938,19 @@ impl Disk {
                         files[&key]["meta"] = entry.meta_to_json();
                     }
                 }
-                curr = dir.next();
             }
+            curr = dir.next();
         }
         Ok(files)
     }
 }
 
 impl super::DiskFS for Disk {
-    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len)
+    fn new_fimg(&self, chunk_len: Option<usize>,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+        match chunk_len {
+            Some(l) => new_fimg(l,set_time,path),
+            None => new_fimg(BLOCK_SIZE,set_time,path)
+        }
     }
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let vheader = self.get_vol_header()?;
@@ -959,7 +1012,13 @@ impl super::DiskFS for Disk {
         }
         Ok(ans)
     }
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let vhdr = self.get_vol_header()?;
+        let dir_block = self.find_dir_key_block("/")?;
+        self.curr_path = vec![["/",&vhdr.name(),"/"].concat()];
+        self.glob_node(pattern, dir_block, case_sensitive)
+    }
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let vhdr = self.get_vol_header()?;
         let dir_block = self.find_dir_key_block("/")?;
         let mut tree = json::JsonValue::new_object();
@@ -967,10 +1026,8 @@ impl super::DiskFS for Disk {
         tree["files"] = self.tree_node(dir_block,include_meta)?;
         tree["label"] = json::JsonValue::new_object();
         tree["label"]["name"] = json::JsonValue::String(vhdr.name());
-        if vhdr.total_blocks() <= 1600 && !include_meta {
-            Ok(json::stringify_pretty(tree,2))
-        } else if vhdr.total_blocks() <= 1600 && include_meta {
-            Ok(json::stringify_pretty(tree,1))
+        if let Some(spaces) = indent {
+            Ok(json::stringify_pretty(tree,spaces))
         } else {
             Ok(json::stringify(tree))
         }
@@ -1089,140 +1146,18 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(path,true)
-    }
-    fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let padded = match trailing {
-            Some(v) => [dat.to_vec(),v.to_vec()].concat(),
-            None => dat.to_vec()
-        };
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(&padded);
-        fimg.fs_type = vec![FileType::Binary as u8];
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
-        fimg.aux = u16::to_le_bytes(start_addr).to_vec();
-        return self.write_any(path,&fimg);
-    }
-    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(path,true)
-    }
-    fn save(&mut self,path: &str, dat: &[u8], typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(dat);
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
-        match typ {
-            ItemType::ApplesoftTokens => {
-                let addr = applesoft::deduce_address(dat);
-                fimg.fs_type = vec![FileType::ApplesoftCode as u8];
-                fimg.aux = u16::to_le_bytes(addr).to_vec();
-                debug!("Applesoft metadata {:?}, {:?}",fimg.fs_type,fimg.aux);
-            },
-            ItemType::IntegerTokens => {
-                fimg.fs_type = vec![FileType::IntegerCode as u8];
-            }
-            _ => return Err(Box::new(Error::FileTypeMismatch))
-        }
-        return self.write_any(path,&fimg);
-    }
-    fn fimg_load_address(&self,fimg: &super::FileImage) -> u16 {
-        super::FileImage::usize_from_truncated_le_bytes(&fimg.aux) as u16
-    }
-    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
-        if &fimg.file_system != FS_NAME {
-            return Err(Box::new(Error::FileTypeMismatch));
-        }
-        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-        Ok(fimg.sequence_limited(eof))
-    }
-    fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn get(&mut self,path: &str) -> Result<super::FileImage,DYNERR> {
         match self.find_file(path) {
             Ok(loc) => {
                 let entry = self.read_entry(&loc)?;
-                let fimg = self.read_file(&entry)?;
-                if trunc {
-                    let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-                    Ok((entry.aux(),fimg.sequence_limited(eof)))
-                } else {
-                    Ok((entry.aux(),fimg.sequence()))
-                }
-            },
-            Err(e) => Err(e)
-        }
-    }
-    fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(BLOCK_SIZE);
-        fimg.desequence(dat);
-        fimg.fs_type = vec![FileType::Text as u8];
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
-        return self.write_any(path,&fimg);
-    }
-    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(path,true)
-    }
-    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        self.write_raw(path,dat)
-    }
-    fn read_records(&mut self,path: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
-        let encoder = Encoder::new(vec![0x0d]);
-        match self.find_file(path) {
-            Ok(loc) => {
-                let entry = self.read_entry(&loc)?;
-                let fimg = self.read_file(&entry)?;
-                match super::Records::from_fimg(&fimg,entry.aux() as usize,encoder) {
-                    Ok(ans) => Ok(ans),
-                    Err(e) => Err(e)
-                }
+                let mut fimg = self.read_file(&entry)?;
+                fimg.full_path = path.to_string();
+                return Ok(fimg);
             },
             Err(e) => return Err(e)
         }
     }
-    fn write_records(&mut self,path: &str, records: &super::Records) -> Result<usize,DYNERR> {
-        let encoder = Encoder::new(vec![0x0d]);
-        let mut fimg = self.new_fimg(BLOCK_SIZE);
-        fimg.fs_type = vec![FileType::Text as u8];
-        fimg.aux = super::FileImage::fix_le_vec(records.record_len,2);
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
-        match records.update_fimg(&mut fimg, true, encoder) {
-            Ok(_) => self.write_any(path,&fimg),
-            Err(e) => Err(e)
-        }
-    }
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match usize::from_str(num) {
-            Ok(block) => {
-                let mut buf: Vec<u8> = vec![0;512];
-                if block>=self.total_blocks {
-                    return Err(Box::new(Error::Range));
-                }
-                self.read_block(&mut buf,block,0)?;
-                Ok((0,buf))
-            },
-            Err(e) => Err(Box::new(e))
-        }
-    }
-    fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        match usize::from_str(num) {
-            Ok(block) => {
-                if dat.len() > 512 || block>=self.total_blocks {
-                    return Err(Box::new(Error::Range));
-                }
-                self.zap_block(dat,block,0)?;
-                Ok(dat.len())
-            },
-            Err(e) => Err(Box::new(e))
-        }
-    }
-    fn read_any(&mut self,path: &str) -> Result<super::FileImage,DYNERR> {
-        match self.find_file(path) {
-            Ok(loc) => {
-                let entry = self.read_entry(&loc)?;
-                return Ok(self.read_file(&entry)?);
-            },
-            Err(e) => return Err(e)
-        }
-    }
-    fn write_any(&mut self,path: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+    fn put(&mut self,fimg: &super::FileImage) -> Result<usize,DYNERR> {
         if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to prodos",fimg.file_system);
             return Err(Box::new(Error::IOError));
@@ -1231,7 +1166,7 @@ impl super::DiskFS for Disk {
             error!("chunk length {} is incompatible with ProDOS",fimg.chunk_len);
             return Err(Box::new(Error::Range));
         }
-        match self.prepare_to_write(path) {
+        match self.prepare_to_write(&fimg.full_path) {
             Ok((name,dir_key_block,loc,new_key_block)) => {
                 // update the file count in the parent key block
                 let mut dir = self.get_directory(dir_key_block as usize)?;
@@ -1251,18 +1186,29 @@ impl super::DiskFS for Disk {
             Err(e) => Err(e)
         }
     }
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat)?;
-        Ok(file.to_string())
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR> {
+        match usize::from_str(num) {
+            Ok(block) => {
+                let mut buf: Vec<u8> = vec![0;512];
+                if block>=self.total_blocks {
+                    return Err(Box::new(Error::Range));
+                }
+                self.read_block(&mut buf,block,0)?;
+                Ok(buf)
+            },
+            Err(e) => Err(Box::new(e))
+        }
     }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
-        let file = types::SequentialText::from_str(&s);
-        match file {
-            Ok(txt) => Ok(txt.to_bytes()),
-            Err(_) => {
-                error!("Cannot encode, perhaps use raw type");
-                Err(Box::new(Error::FileTypeMismatch))
-            }
+    fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR> {
+        match usize::from_str(num) {
+            Ok(block) => {
+                if dat.len() > 512 || block>=self.total_blocks {
+                    return Err(Box::new(Error::Range));
+                }
+                self.zap_block(dat,block,0)?;
+                Ok(dat.len())
+            },
+            Err(e) => Err(Box::new(e))
         }
     }
     fn standardize(&mut self,ref_con: u16) -> HashMap<Block,Vec<usize>> {

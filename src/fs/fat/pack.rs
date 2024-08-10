@@ -3,7 +3,13 @@
 //! Functions to help pack or unpack dates, filenames, and passwords.
 
 use chrono::{Timelike,Datelike};
-use log::{debug,info,warn};
+use std::str::FromStr;
+use a2kit_macro::DiskStruct;
+use super::Packer;
+use super::super::{FileImage,Packing,UnpackedData};
+use super::types::{SequentialText,Error};
+use crate::{STDRESULT,DYNERR};
+
 /// Characters forbidden from file names
 pub const INVALID_CHARS: &str = "\"*+,./:;<=>?[\\]|";
 pub const DOT: ([u8;8],[u8;3]) = ([b'.',32,32,32,32,32,32,32],[32,32,32]);
@@ -21,11 +27,11 @@ pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
     };
     let year = match now.year() {
         y if y < 1980 => {
-            warn!("date prior to reference date, pegging to reference date");
+            log::warn!("date prior to reference date, pegging to reference date");
             1980
         },
         y if y > 2107 => {
-            warn!("date is pegged to maximum of 2107");
+            log::warn!("date is pegged to maximum of 2107");
             2107
         },
         y => y
@@ -87,17 +93,37 @@ pub fn is_name_valid(s: &str) -> bool {
     // TODO: handle extended chars like KANJI
     for char in [base,ext].concat().chars() {
         if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
+            log::debug!("bad file name character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
     if base.len()<1 || base.len()>8 {
-        info!("base name length {} out of range",base.len());
+        log::info!("base name length {} out of range",base.len());
         return false;
     }
     if ext.len()>3 {
-        info!("extension name too long, max 3");
+        log::info!("extension name too long, max 3");
         return false;
+    }
+    true
+}
+
+/// Test the string for validity as a FAT file path.
+/// Directory paths ending with `/` are rejected.
+/// Checks each path segment, and length of overall path.
+pub fn is_path_valid(path: &str) -> bool {
+    // if path.len() > 128 {
+    //     log::error!("FAT path is too long");
+    //     return false;
+    // }
+    let mut iter = path.split("/");
+    if path.starts_with("/") {
+        iter.next();
+    }
+    while let Some(segment) = iter.next() {
+        if !is_name_valid(segment) {
+            return false;
+        }
     }
     true
 }
@@ -105,13 +131,13 @@ pub fn is_name_valid(s: &str) -> bool {
 /// Same as is_name_valid except dot is not needed or allowed
 pub fn is_label_valid(s: &str) -> bool {
     if s.len()<1 || s.len()>11 {
-        info!("label length {} out of range",s.len());
+        log::info!("label length {} out of range",s.len());
         return false;
     }
     // TODO: handle extended chars like KANJI
     for char in s.chars() {
         if !char.is_ascii() || INVALID_CHARS.contains(char) || char.is_ascii_control() {
-            debug!("bad file name character `{}` (codepoint {})",char,char as u32);
+            log::debug!("bad file name character `{}` (codepoint {})",char,char as u32);
             return false;
         }
     }
@@ -124,7 +150,7 @@ pub fn label_to_string(label: [u8;11]) -> String {
     match String::from_utf8(label.to_vec()) {
         Ok(l) => l.trim_end().to_string(),
         _ => {
-            warn!("escaping invalid filename");
+            log::warn!("escaping invalid filename");
             crate::escaped_ascii_from_bytes(&label.to_vec(), true, false).trim_end().to_string()
         }
     }
@@ -140,7 +166,7 @@ pub fn file_name_to_string(name: [u8;8], typ: [u8;3]) -> String {
         _ => match (String::from_utf8(name.to_vec()),String::from_utf8(typ.to_vec())) {
             (Ok(b),Ok(x)) => [b.trim_end(),".",x.trim_end()].concat(),
             _ => {
-                warn!("escaping invalid filename");
+                log::warn!("escaping invalid filename");
                 [
                     crate::escaped_ascii_from_bytes(&name.to_vec(), true, false).trim_end(),
                     ".",
@@ -161,7 +187,7 @@ pub fn file_name_to_split_string(name: [u8;8],typ: [u8;3]) -> (String,String) {
         _ => match (String::from_utf8(name.to_vec()),String::from_utf8(typ.to_vec())) {
             (Ok(b),Ok(x)) => (b.trim_end().to_string(),x.trim_end().to_string()),
             _ => {
-                warn!("escaping invalid filename");
+                log::warn!("escaping invalid filename");
                 (
                     crate::escaped_ascii_from_bytes(&name.to_vec(), true, false).trim_end().to_string(),
                     crate::escaped_ascii_from_bytes(&typ.to_vec(), true, false).trim_end().to_string()
@@ -226,4 +252,118 @@ pub fn string_to_label_name(s: &str) -> ([u8;8],[u8;3]) {
         }
     }
     return ans;
+}
+
+impl Packer {
+    pub fn new() -> Self {
+        Self {}
+    }
+    fn verify(fimg: &FileImage) -> STDRESULT {
+        if &fimg.file_system != super::FS_NAME {
+            return Err(Box::new(Error::IncorrectDOS));
+        }
+        Ok(())
+    }
+}
+
+impl Packing for Packer {
+
+    fn set_path(&self, fimg: &mut FileImage, path: &str) -> STDRESULT {
+        if is_path_valid(path) {
+            fimg.full_path = path.to_string();
+            Ok(())
+        } else {
+            Err(Box::new(Error::Syntax))
+        }
+    }
+
+    fn get_load_address(&self,_fimg: &FileImage) -> u16 {
+        0
+    }
+
+    fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
+        Self::verify(fimg)?;
+        let typ = String::from_utf8(fimg.fs_type.clone())?;
+        match typ.as_str() {
+            "TXT" | "ASM" | "BAT" => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
+            _ => Ok(UnpackedData::Binary(self.unpack_bin(fimg)?))
+        }
+    }
+
+    fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
+        Self::verify(fimg)?;
+        fimg.desequence(&dat);
+        Ok(())
+    }
+
+    fn unpack_raw(&self,fimg: &FileImage,trunc: bool) -> Result<Vec<u8>,DYNERR> {
+        Self::verify(fimg)?;
+        if trunc {
+            let eof = fimg.get_eof();
+            Ok(fimg.sequence_limited(eof))
+        } else {
+            Ok(fimg.sequence())
+        }
+    }
+
+    fn pack_bin(&self,fimg: &mut FileImage,dat: &[u8],load_addr: Option<usize>,trailing: Option<&[u8]>) -> STDRESULT {
+        Self::verify(fimg)?;
+        if load_addr.is_some() {
+            log::warn!("load-address is not used with FAT");
+        }
+        let padded = match trailing {
+            Some(v) => [dat,v].concat(),
+            None => dat.to_vec()
+        };
+        fimg.desequence(&padded);
+        Ok(())
+    }
+
+    fn unpack_bin(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        self.unpack_raw(fimg,true)
+    }
+
+    fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
+        Self::verify(fimg)?;
+        let file = SequentialText::from_str(&txt)?;
+        fimg.desequence(&file.to_bytes());
+        Ok(())
+    }
+
+    fn unpack_txt(&self,fimg: &FileImage) -> Result<String,DYNERR> {
+        Self::verify(fimg)?;
+        let file = SequentialText::from_bytes(&fimg.sequence())?;
+        Ok(file.to_string())
+    }
+
+    fn pack_tok(&self,_fimg: &mut FileImage,_tok: &[u8],_lang: crate::commands::ItemType,_trailing: Option<&[u8]>) -> STDRESULT {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
+    fn unpack_tok(&self,_fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
+    fn pack_rec_str(&self,_fimg: &mut FileImage,_json: &str) -> STDRESULT {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
+    fn unpack_rec_str(&self,_fimg: &FileImage,_rec_len: Option<usize>,_indent: Option<u16>) -> Result<String,crate::DYNERR> {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
+    fn pack_rec(&self,_fimg: &mut FileImage,_recs: &crate::fs::Records) -> STDRESULT {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
+    fn unpack_rec(&self,_fimg: &FileImage,_rec_len: Option<usize>) -> Result<crate::fs::Records,crate::DYNERR> {
+        log::error!("FAT implementation does not support operation");
+        return Err(Box::new(Error::General));
+    }
+
 }

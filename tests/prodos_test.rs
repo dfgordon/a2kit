@@ -2,11 +2,10 @@
 use std::path::Path;
 use std::fmt::Write;
 use std::collections::HashMap;
-use a2kit::fs::{Block,prodos,TextEncoder,DiskFS};
+use a2kit::fs::{Block,prodos,DiskFS};
 use a2kit::fs::prodos::types::BLOCK_SIZE;
 use a2kit::lang::applesoft;
 use a2kit::commands::ItemType;
-use a2kit_macro::DiskStruct;
 
 pub const JSON_REC: &str = "
 {
@@ -81,10 +80,8 @@ fn read_small() {
     assert_eq!(binary_data,(768,vec![6,5,0,2]));
 
     // check the sequential text file
-    let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
-    let txt = prodos::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = prodos::types::Encoder::new(vec![0x0d]);
-    assert_eq!(txt.text,encoder.encode("HELLO FROM EMULATOR").unwrap());
+    let txt = emulator_disk.read_text("thetext").expect("error");
+    assert_eq!(&txt,"HELLO FROM EMULATOR\n");
 }
 
 #[test]
@@ -101,11 +98,10 @@ fn write_small() {
     disk.save("hello",&lib_tokens,ItemType::ApplesoftTokens,None).expect("error");
 
     // save the binary
-    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,None).expect("error");
+    disk.bsave("thechip",&[6,5,0,2].to_vec(),Some(768),None).expect("error");
 
     // save the text
-    let txt = disk.encode_text("HELLO FROM EMULATOR").expect("could not encode text");
-    disk.write_text("thetext",&txt).expect("error");
+    disk.write_text("thetext","HELLO FROM EMULATOR").expect("error");
 
     let mut ignore = disk.standardize(2);
     ignore_boot_blocks(&mut ignore);
@@ -118,11 +114,11 @@ fn out_of_space() {
     let mut disk = prodos::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("NEW.DISK"),true,None).expect("failed to format");
-    disk.bsave("f1",&big,0x800,None).expect("error");
-    disk.bsave("f2",&big,0x800,None).expect("error");
-    disk.bsave("f3",&big,0x800,None).expect("error");
-    disk.bsave("f4",&big,0x800,None).expect("error");
-    match disk.bsave("f5",&big,0x800,None) {
+    disk.bsave("f1",&big,Some(0x800),None).expect("error");
+    disk.bsave("f2",&big,Some(0x800),None).expect("error");
+    disk.bsave("f3",&big,Some(0x800),None).expect("error");
+    disk.bsave("f4",&big,Some(0x800),None).expect("error");
+    match disk.bsave("f5",&big,Some(0x800),None) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
         Err(e) => match e.to_string().as_str() {
             "DISK FULL" => assert!(true),
@@ -146,9 +142,9 @@ fn read_big() {
     assert_eq!(disk_tokens,(2049,lib_tokens));
 
     // check the text records
-    let recs = emulator_disk.read_records("tree1", 0).expect("failed to read tree1");
+    let recs = emulator_disk.read_records("tree1", None).expect("failed to read tree1");
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 1\n");
-    let recs = emulator_disk.read_records("tree2", 0).expect("failed to read tree2");
+    let recs = emulator_disk.read_records("tree2", None).expect("failed to read tree2");
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 2\n");
     assert_eq!(recs.map.get(&4000).unwrap(),"HELLO FROM TREE 2\n");
 
@@ -188,7 +184,7 @@ fn write_big() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,None).expect("dimg error");
+    disk.bsave("sapling",&buf,Some(16384),None).expect("dimg error");
 
     let ignore = disk.standardize(2);
     disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);

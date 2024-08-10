@@ -4,9 +4,10 @@
 //! each supported file system.
 //! 
 //! File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
-//! some disk image, which it uses as storage.  Files are represented by a `FileImage` trait
+//! some disk image, which it uses as storage.  Files are represented by a `FileImage`
 //! object.  This is a low level representation of the file that works for any of the supported
-//! file systems.
+//! file systems.  File image data is processed through the `Packing` trait.  The trait object
+//! is returned by the `FileImage::packer` method.
 //! 
 //! This module also contains the `Block` enumeration, which specifies and locates allocation units.
 //! The enumeration names the file system's allocation system, and its value is a specific block.
@@ -22,10 +23,11 @@ pub mod prodos;
 pub mod pascal;
 pub mod cpm;
 pub mod fat;
+mod fimg;
+mod recs;
 
 use std::fmt;
-use std::str::FromStr;
-use std::collections::{BTreeMap,HashMap};
+use std::collections::HashMap;
 use crate::img;
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
@@ -39,6 +41,12 @@ pub enum Error {
     FileImageFormat,
     #[error("high level file format is wrong")]
     FileFormat
+}
+
+pub enum UnpackedData {
+    Binary(Vec<u8>),
+    Records(Records),
+    Text(String)
 }
 
 /// Encapsulates the disk address and addressing mode used by a file system.
@@ -122,11 +130,11 @@ fn universal_row(typ: &str, blocks: usize, name: &str) -> String {
     format!("{:4} {:5}  {}",typ,blocks,name)
 }
 
-/// This converts between UTF8+LF/CRLF and the encoding used by the file system
-pub trait TextEncoder {
-    fn new(line_terminator: Vec<u8>) -> Self where Self: Sized;
-    fn encode(&self,txt: &str) -> Option<Vec<u8>>;
-    fn decode(&self,raw: &[u8]) -> Option<String>;
+pub trait TextConversion {
+    fn new(line_terminator: Vec<u8>) -> Self;
+    fn from_utf8(&self,txt: &str) -> Option<Vec<u8>>;
+    fn to_utf8(&self,src: &[u8]) -> Option<String>;
+    /// Does a given slice end with another slice
     fn is_terminated(bytes: &[u8],term: &[u8]) -> bool {
         if term.len()==0 {
             return true;
@@ -151,7 +159,7 @@ pub trait TextEncoder {
 /// as the chunk data.  The JSON representation uses decimal strings for the key and hex
 /// strings for the data.  *Beware of sorting routines that put "10" before "9"*.
 /// 
-/// Each `DiskFS` provides its own routine for creating an empty file image.
+/// Each `DiskFS` trait object provides its own routine for creating an empty file image.
 /// Buffer sizes should be set as appropriate for that FS.
 /// Unused metadata can be represented by an empty vector.
 pub struct FileImage {
@@ -179,221 +187,57 @@ pub struct FileImage {
     pub version: Vec<u8>,
     /// Some minimum version
     pub min_version: Vec<u8>,
+    /// full path, whether of the origin or intended destination, can be empty string
+    pub full_path: String,
     /// The key is an ordered chunk number starting at 0, no relation to any disk location.
     /// Contraints on the length of the data are undefined at this level.
     pub chunks: HashMap<usize,Vec<u8>>
 }
 
-impl FileImage {
-    pub fn fimg_version() -> String {
-        "2.1.0".to_string()
-    }
-    /// the string slices must be in the form X.Y.Z or else we panic
-    pub fn version_tuple(vers: &str) -> (usize,usize,usize) {
-        let v: Vec<usize> = vers.split(".").map(|s| usize::from_str(s).expect("bad version format")).collect();
-        (v[0],v[1],v[2])
-    }
-    pub fn ordered_indices(&self) -> Vec<usize> {
-        let copy = self.chunks.clone();
-        let mut idx_list = copy.into_keys().collect::<Vec<usize>>();
-        idx_list.sort_unstable();
-        return idx_list;
-    }
-    /// Find the logical number of chunks (assuming indexing from 0..end)
-    pub fn end(&self) -> usize {
-        match self.ordered_indices().pop() {
-            Some(idx) => idx+1,
-            None => 0
-        }
-    }
-    /// pack the data sequentially, all structure is lost
-    pub fn sequence(&self) -> Vec<u8> {
-        let mut ans: Vec<u8> = Vec::new();
-        for chunk in self.ordered_indices() {
-            match self.chunks.get(&chunk) {
-                Some(v) => ans.append(&mut v.clone()),
-                _ => panic!("unreachable")
-            };
-        }
-        return ans;
-    }
-    /// pack the data sequentially, all structure is lost
-    pub fn sequence_limited(&self,max_len: usize) -> Vec<u8> {
-        let mut ans = self.sequence();
-        if max_len < ans.len() {
-            ans = ans[0..max_len].to_vec();
-        }
-        return ans;
-    }
-    /// Use any byte stream as the file image data.  The eof is set to the length of the data.
-    /// The last chunk is not padded.
-    pub fn desequence(&mut self, dat: &[u8]) {
-        let mut mark = 0;
-        let mut idx = 0;
-        if dat.len()==0 {
-            self.eof = vec![0;self.eof.len()];
-            return;
-        }
-        loop {
-            let mut end = mark + self.chunk_len;
-            if end > dat.len() {
-                end = dat.len();
-            }
-            self.chunks.insert(idx,dat[mark..end].to_vec());
-            mark = end;
-            if mark == dat.len() {
-                self.eof = Self::fix_le_vec(dat.len(),self.eof.len());
-                return;
-            }
-            idx += 1;
-        }
-    }
-    /// throw out trailing zeros with minimum length constraint
-    fn fix_le_vec(val: usize,min_len: usize) -> Vec<u8> {
-        let mut ans = usize::to_le_bytes(val).to_vec();
-        let mut count = 0;
-        for byte in ans.iter().rev() {
-            if *byte>0 {
-                break;
-            }
-            count += 1;
-        }
-        for _i in 0..count {
-            ans.pop();
-        }
-        for _i in ans.len()..min_len {
-            ans.push(0);
-        }
-        ans
-    }
-    /// compute a usize assuming missing trailing bytes are 0
-    fn usize_from_truncated_le_bytes(bytes: &[u8]) -> usize {
-        let mut ans: usize = 0;
-        for i in 0..bytes.len() {
-            if i == usize::BITS as usize/8 {
-                break;
-            }
-            ans += (bytes[i] as usize) << (i*8);
-        }
-        ans
-    }
-    pub fn parse_hex_to_vec(key: &str,parsed: &json::JsonValue) -> Result<Vec<u8>,DYNERR> {
-        if let Some(s) = parsed[key].as_str() {
-            if let Ok(bytes) = hex::decode(s) {
-                return Ok(bytes);
-            }
-        }
-        log::error!("a record is missing in the file image");
-        return Err(Box::new(Error::FileImageFormat));
-    }
-    pub fn parse_usize(key: &str,parsed: &json::JsonValue) -> Result<usize,DYNERR> {
-        if let Some(val) = parsed[key].as_usize() {
-            return Ok(val);
-        }
-        log::error!("a record is missing in the file image");
-        return Err(Box::new(Error::FileImageFormat));
-    }
-    pub fn parse_str(key: &str,parsed: &json::JsonValue) -> Result<String,DYNERR> {
-        if let Some(s) = parsed[key].as_str() {
-            return Ok(s.to_string());
-        }
-        log::error!("a record is missing in the file image");
-        return Err(Box::new(Error::FileImageFormat));
-    }
-    /// Get chunks from the JSON string representation
-    pub fn from_json(json_str: &str) -> Result<FileImage,DYNERR> {
-        let parsed = json::parse(json_str)?;
-        let fimg_version = FileImage::parse_str("fimg_version",&parsed)?;
-        let vers_tup = Self::version_tuple(&fimg_version);
-        if vers_tup < (2,0,0) {
-            log::error!("file image v2 or higher is required");
-            return Err(Box::new(Error::FileFormat));
-        }
-        let fs = FileImage::parse_str("file_system",&parsed)?;
-        let chunk_len = FileImage::parse_usize("chunk_len", &parsed)?;
-        let fs_type = FileImage::parse_hex_to_vec("fs_type",&parsed)?;
-        let aux = FileImage::parse_hex_to_vec("aux",&parsed)?;
-        let eof = FileImage::parse_hex_to_vec("eof",&parsed)?;
-        let access = FileImage::parse_hex_to_vec("access",&parsed)?;
-        let created = FileImage::parse_hex_to_vec("created",&parsed)?;
-        let modified = FileImage::parse_hex_to_vec("modified",&parsed)?;
-        let version = FileImage::parse_hex_to_vec("version",&parsed)?;
-        let min_version = FileImage::parse_hex_to_vec("min_version",&parsed)?;
-        let accessed = match vers_tup > (2,0,0) {
-            true => FileImage::parse_hex_to_vec("accessed",&parsed)?,
-            false => vec![]
-        };
-        let mut chunks: HashMap<usize,Vec<u8>> = HashMap::new();
-        let map_obj = &parsed["chunks"];
-        if map_obj.entries().len()==0 {
-            log::warn!("file image contains metadata, but no data");
-        }
-        for (key,hex) in map_obj.entries() {
-            let prev_len = chunks.len();
-            if let Ok(num) = usize::from_str(key) {
-                if let Some(hex_str) = hex.as_str() {
-                    if let Ok(dat) = hex::decode(hex_str) {
-                        chunks.insert(num,dat);
-                    }
-                }
-            }
-            if chunks.len()==prev_len {
-                log::error!("could not read hex string from chunk");
-                return Err(Box::new(Error::FileImageFormat));
-            }
-        }
-        return Ok(Self {
-            fimg_version,
-            file_system: fs.to_string(),
-            chunk_len,
-            eof,
-            fs_type,
-            aux,
-            access,
-            accessed,
-            created,
-            modified,
-            version,
-            min_version,
-            chunks
-        });
-    }
-    /// Put chunks into the JSON string representation, if indent=0 use unpretty form
-    pub fn to_json(&self,indent: u16) -> String {
-        let mut json_map = json::JsonValue::new_object();
-        let mut sorted : BTreeMap<usize,Vec<u8>> = BTreeMap::new();
-        for (c,v) in &self.chunks {
-            sorted.insert(*c,v.clone());
-        }
-        for (c,v) in &sorted {
-            json_map[c.to_string()] = json::JsonValue::String(hex::encode_upper(v));
-        }
-        let ans = json::object! {
-            fimg_version: self.fimg_version.clone(),
-            file_system: self.file_system.clone(),
-            chunk_len: self.chunk_len,
-            eof: hex::encode_upper(self.eof.clone()),
-            fs_type: hex::encode_upper(self.fs_type.clone()),
-            aux: hex::encode_upper(self.aux.clone()),
-            access: hex::encode_upper(self.access.clone()),
-            accessed: hex::encode_upper(self.accessed.clone()),
-            created: hex::encode_upper(self.created.clone()),
-            modified: hex::encode_upper(self.modified.clone()),
-            version: hex::encode_upper(self.version.clone()),
-            min_version: hex::encode_upper(self.min_version.clone()),
-            chunks: json_map
-        };
-        if indent > 0 {
-            return json::stringify_pretty(ans, indent);
-        } else {
-            return json::stringify(ans);
-        }
-    }}
-
+/// Trait implemented by the `Packer` delegates of `FileImage`.
+/// Usually not called directly, because `FileImage` provides wrappers.
+pub trait Packing {
+    /// Check syntax and set the path for this file image
+    fn set_path(&self,fimg: &mut FileImage,path: &str) -> STDRESULT;
+    /// Get load address for this file image, if applicable.
+    fn get_load_address(&self,fimg: &FileImage) -> u16;
+    /// automatically select an unpacking strategy based on the file image metadata
+    fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR>;
+    /// Pack raw byte stream into file image.
+    /// Headers used by the file system are *not* automatically inserted.
+    /// If the file system has explicit typing, the type is set to text.
+    fn pack_raw(&self, fimg: &mut FileImage, dat: &[u8]) -> STDRESULT;
+    /// Get the raw bytestream, including any header used by the file system.
+    /// The byte stream will extend to end of block unless `trunc==true`.
+    /// Setting `trunc==true` only works if the EOF is stored in the directory.
+    fn unpack_raw(&self,fimg: &FileImage,trunc: bool) -> Result<Vec<u8>,DYNERR>;
+    /// Pack bytes into file image, if file system uses a header it is added.
+    /// The load address will be checked for validity, if not used by FS it must be None.
+    fn pack_bin(&self,fimg: &mut FileImage,dat: &[u8],load_addr: Option<usize>,trailing: Option<&[u8]>) -> STDRESULT;
+    /// get bytes from file image, if file system uses a header it is stripped
+    fn unpack_bin(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
+    /// convert UTF8 with either LF or CRLF to the file system's text format, if possible
+    fn pack_txt(&self, fimg: &mut FileImage, txt: &str) -> STDRESULT;
+    /// convert the file system's text format to UTF8 with LF, if possible
+    fn unpack_txt(&self,fimg: &FileImage) -> Result<String,DYNERR>;
+    /// pack language tokens into file image, if file system uses a header it is added
+    fn pack_tok(&self,fimg: &mut FileImage,tok: &[u8],lang: ItemType,trailing: Option<&[u8]>) -> STDRESULT;
+    /// get language tokens from file image, if file system uses a header it is stripped
+    fn unpack_tok(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
+    /// turn JSON representation of random access text into a file image
+    fn pack_rec_str(&self, fimg: &mut FileImage, json: &str) -> STDRESULT;
+    /// turn the file image into JSON representation of random access text
+    fn unpack_rec_str(&self,fimg: &FileImage,rec_len: Option<usize>,indent: Option<u16>) -> Result<String,DYNERR>;
+    /// turn random access text records into a file image
+    fn pack_rec(&self, fimg: &mut FileImage, recs: &Records) -> STDRESULT;
+    /// turn the file image into random access text records
+    fn unpack_rec(&self,fimg: &FileImage,rec_len: Option<usize>) -> Result<Records,DYNERR>;
+}
 
 /// This is an abstraction used in handling random access text files.
 /// Text encoding at this level is UTF8, it may be translated at lower levels.
-/// This will usually be translated into `FileImage` for lower level handling.
+/// This can be translated into `FileImage` for lower level handling,
+/// or a JSON string for outward facing interactions.
 pub struct Records {
     /// The fixed length of all records in this collection
     pub record_len: usize,
@@ -401,198 +245,6 @@ pub struct Records {
     pub map: HashMap<usize,String>
 }
 
-impl Records {
-    pub fn new(record_len: usize) -> Self {
-        Self {
-            record_len,
-            map: HashMap::new()
-        }
-    }
-    /// add a string as record number `num`, fields should be separated by LF or CRLF.
-    pub fn add_record(&mut self,num: usize,fields: &str) {
-        self.map.insert(num,fields.to_string());
-    }
-    /// Derive records from file image, this should find any real record, but may also find spurious ones.
-    /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
-    /// This routine assumes ASCII null terminates any record.
-    pub fn from_fimg(fimg: &FileImage,record_length: usize,encoder: impl TextEncoder) -> Result<Records,DYNERR> {
-        if record_length==0 {
-            return Err(Box::new(Error::FileFormat));
-        }
-        let mut ans = Records::new(record_length);
-        let mut list: Vec<usize> = Vec::new();
-        // add record index for each starting record boundary that falls within a chunk
-        let chunk_len = fimg.chunk_len;
-        for c in fimg.chunks.keys() {
-            let start_rec = c*chunk_len/record_length + match c*chunk_len%record_length { x if x>0 => 1, _ => 0 };
-            let end_rec = (c+1)*chunk_len/record_length + match (c+1)*chunk_len%record_length { x if x>0 => 1, _ => 0 };
-            for r in start_rec..end_rec {
-                list.push(r);
-            }
-        }
-        // add only records with complete data
-        for r in list {
-            let start_chunk = r*record_length/chunk_len;
-            let end_chunk = 1 + (r+1)*record_length/chunk_len;
-            let start_offset = r*record_length%chunk_len;
-            let mut bytes: Vec<u8> = Vec::new();
-            let mut complete = true;
-            for chunk_num in start_chunk..end_chunk {
-                match fimg.chunks.get(&chunk_num) {
-                    Some(chunk) => {
-                       for i in chunk {
-                            bytes.push(*i);
-                        }
-                    },
-                    _ => complete = false
-                }
-            }
-            if complete && start_offset < bytes.len() {
-                let actual_end = usize::min(start_offset+record_length,bytes.len());
-                if let Some(long_str) = encoder.decode(&bytes[start_offset..actual_end].to_vec()) {
-                    if let Some(partial) = long_str.split("\u{0000}").next() {
-                        if partial.len()>0 {
-                            ans.map.insert(r,partial.to_string());
-                        }
-                    } else {
-                        if long_str.len()>0 {
-                            ans.map.insert(r,long_str);
-                        }
-                    }
-                }
-            }
-        }
-        return Ok(ans);
-    }
-    /// Update a file image's data using the records, this is usually done before writing to a disk image.
-    /// This will set the file image's eof, but no other metadata.
-    pub fn update_fimg(&self,ans: &mut FileImage,require_first: bool,encoder: impl TextEncoder) -> STDRESULT {
-        let chunk_len = ans.chunk_len;
-        let mut eof: usize = 0;
-        // always need to have the first chunk referenced on ProDOS
-        if require_first {
-            ans.chunks.insert(0,vec![0;chunk_len]);
-        }
-        // now insert the actual records, first chunk can always be overwritten
-        for (rec_num,fields) in &self.map {
-            match encoder.encode(fields) {
-                Some(data_bytes) => {
-                    let logical_chunk = self.record_len * rec_num / chunk_len;
-                    let end_logical_chunk = 1 + (self.record_len * (rec_num+1) - 1) / chunk_len;
-                    let fwd_offset = self.record_len * rec_num % chunk_len;
-                    for lb in logical_chunk..end_logical_chunk {
-                        let start_byte = match lb {
-                            l if l==logical_chunk => fwd_offset,
-                            _ => 0
-                        };
-                        let end_byte = match lb {
-                            l if l==end_logical_chunk-1 => fwd_offset + data_bytes.len() - chunk_len*(end_logical_chunk-logical_chunk-1),
-                            _ => chunk_len
-                        };
-                        let mut buf = match ans.chunks.contains_key(&lb) {
-                            true => ans.chunks.get(&lb).unwrap().clone(),
-                            false => Vec::new()
-                        };
-                        // extend only to the end of data
-                        for _i in buf.len()..end_byte as usize {
-                            buf.push(0);
-                        }
-                        // load the part of the chunk with the data
-                        for i in start_byte..end_byte {
-                            buf[i as usize] = data_bytes[chunk_len*(lb-logical_chunk) + i - fwd_offset];
-                        }
-                        eof = usize::max(lb*512 + buf.len(),eof);
-                        ans.chunks.insert(lb as usize,buf);
-                    }
-                },
-                None => return Err(Box::new(std::fmt::Error))
-            }
-        }
-        ans.eof = FileImage::fix_le_vec(eof,ans.eof.len());
-        return Ok(());
-    }
-    /// Get records from the JSON string representation
-    pub fn from_json(json_str: &str) -> Result<Records,DYNERR> {
-        match json::parse(json_str) {
-            Ok(parsed) => {
-                let maybe_type = parsed["fimg_type"].as_str();
-                let maybe_len = parsed["record_length"].as_usize();
-                if let (Some(typ),Some(len)) = (maybe_type,maybe_len) {
-                    if typ=="rec" {
-                        let mut records: HashMap<usize,String> = HashMap::new();
-                        let map_obj = &parsed["records"];
-                        if map_obj.entries().len()==0 {
-                            log::error!("no object entries in json records");
-                            return Err(Box::new(Error::FileImageFormat));
-                        }
-                        for (key,lines) in map_obj.entries() {
-                            if let Ok(num) = usize::from_str(key) {
-                                let mut fields = String::new();
-                                for maybe_field in lines.members() {
-                                    if let Some(line) = maybe_field.as_str() {
-                                        fields = fields + line + "\n";
-                                    } else {
-                                        log::error!("record is not a string");
-                                        return Err(Box::new(Error::FileImageFormat));
-                                    }
-                                }
-                                records.insert(num,fields);
-                            } else {
-                                log::error!("key is not a number");
-                                return Err(Box::new(Error::FileImageFormat));
-                            }
-                        }
-                        return Ok(Self {
-                            record_len: len,
-                            map: records
-                        });    
-                    } else {
-                        log::error!("json metadata type mismatch");
-                        return Err(Box::new(Error::FileImageFormat));
-                    }
-                }
-                log::error!("json records missing metadata");
-                Err(Box::new(Error::FileImageFormat))
-            },
-            Err(_e) => Err(Box::new(Error::FileImageFormat))
-        } 
-    }
-    /// Put records into the JSON string representation, if indent=0 use unpretty form
-    pub fn to_json(&self,indent: u16) -> String {
-        let mut json_map = json::JsonValue::new_object();
-        for (r,l) in &self.map {
-            let mut json_array = json::JsonValue::new_array();
-            for line in l.lines() {
-                json_array.push(line).expect("error while building JSON array");
-            }
-            json_map[r.to_string()] = json_array;
-        }
-        let ans = json::object! {
-            fimg_type: "rec",
-            record_length: self.record_len,
-            records: json_map
-        };
-        if indent > 0 {
-            return json::stringify_pretty(ans, indent);
-        } else {
-            return json::stringify(ans);
-        }
-    }
-}
-
-/// Allows the records to be displayed to the console using `println!`.  This also
-/// derives `to_string`, so the structure can be converted to `String`.
-impl fmt::Display for Records {
-    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (idx,fields) in &self.map {
-            write!(f,"Record {}",idx).expect("format error");
-            for field in fields.lines() {
-                write!(f,"    {}",field).expect("format error");
-            }
-        }
-        write!(f,"Record Count = {}",self.map.len())
-    }
-}
 
 pub struct Stat {
     pub fs_name: String,
@@ -607,21 +259,27 @@ pub struct Stat {
 }
 
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
-/// Provides BASIC-like high level commands, block operations, and file image operations.
+/// Handles files, blocks, and directory structures.
+/// Files are loaded or saved by passing file images.
+/// File images are manipulated using the `FileData` trait.
 pub trait DiskFS {
-    /// Create an empty file image appropriate for this file system
-    fn new_fimg(&self,chunk_len: usize) -> FileImage;
+    /// Create an empty file image appropriate for this file system.
+    /// To use the block size of this specific disk set `chunk_len` to `None`.
+    fn new_fimg(&self, chunk_len: Option<usize>, set_time: bool, path: &str) -> Result<FileImage,DYNERR>;
     /// Stat the file system
     fn stat(&mut self) -> Result<Stat,DYNERR>;
     /// Directory listing to standard output in the file system's native style
     fn catalog_to_stdout(&mut self, path: &str) -> STDRESULT;
     /// Get directory listing as a Vec<String>.
     /// The rows are in an easily parsed fixed column format that is the same for all file systems.
+    /// Columns 0..4 are the type/extension, 5..10 are the block count, 12.. is the basename.
     /// For flat file systems, the path must be "" or "/", or else an error is returned.
     /// For any file system, if the path resolves to a file, an error is returned.
     fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR>;
+    /// Return vector of paths based on the glob pattern
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR>;
     /// Get the file system tree as a JSON string
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR>;
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR>;
     /// Create a new directory
     fn create(&mut self,path: &str) -> STDRESULT;
     /// Delete a file or directory
@@ -639,56 +297,15 @@ pub trait DiskFS {
     fn unlock(&mut self,path: &str) -> STDRESULT;
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
     fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> STDRESULT;
-    /// Read a binary file from the disk.  Returns (load address,data).
-    fn bload(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write a binary file to the disk.
-    fn bsave(&mut self,path: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
-    /// Read a BASIC program file from the disk, program is in tokenized form.
-    /// Detokenization is handled in a different module.  Returns (load address,data).
-    fn load(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write a BASIC program to the disk, program must already be tokenized.
-    /// Tokenization is handled in a different module.
-    fn save(&mut self,path: &str, dat: &[u8], typ: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR>;
-    /// Get load address for this file image, if applicable.
-    fn fimg_load_address(&self,fimg: &FileImage) -> u16;
-    /// Extract file's data using the file image's metadata to select the methodology.
-    /// In particular, the stream starts after any FS-defined headers and stops before any FS-defined EOF.
-    fn fimg_file_data(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
-    /// Convenience function, returns (load address,data), using `fimg` methods.
-    /// Default method should usually be fine.
-    fn load_any(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        let fimg = self.read_any(path)?;
-        let dat = self.fimg_file_data(&fimg)?;
-        Ok((self.fimg_load_address(&fimg),dat))
-    }
-    /// Read sequential data from the disk, Returns (aux,data), aux is implementation dependent.
-    /// If `trunc=true` the data will be truncated at the EOF given by the file's metadata (if available),
-    /// otherwise it extends to the block boundary.
-    fn read_raw(&mut self,path: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Write sequential data to the disk.
-    fn write_raw(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
-    /// Usually same as `read_raw` with `trunc=true`. Use `decode_text` on the result to get a UTF8 string.
-    fn read_text(&mut self,path: &str) -> Result<(u16,Vec<u8>),DYNERR>;
-    /// Usually same as `write_raw`. Use `encode_text` to generate `dat` from a UTF8 string.
-    fn write_text(&mut self,path: &str, dat: &[u8]) -> Result<usize,DYNERR>;
-    /// Read records from a random access text file.  This finds all possible records, some may be spurious.
-    /// The `record_length` can be set to 0 on file systems where this is stored with the file.
-    fn read_records(&mut self,path: &str,record_length: usize) -> Result<Records,DYNERR>;
-    /// Write records to a random access text file
-    fn write_records(&mut self,path: &str, records: &Records) -> Result<usize,DYNERR>;
-    /// Read a file into a generalized representation
-    fn read_any(&mut self,path: &str) -> Result<FileImage,DYNERR>;
-    /// Write a file from a generalized representation
-    fn write_any(&mut self,path: &str,fimg: &FileImage) -> Result<usize,DYNERR>;
+    /// Get file image from the `path` within this disk image.
+    fn get(&mut self,path: &str) -> Result<FileImage,DYNERR>;
+    /// Write file image to this disk image at the path stored in `fimg`.
+    fn put(&mut self,fimg: &FileImage) -> Result<usize,DYNERR>;
     /// Get a native file system allocation unit
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR>;
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR>;
     /// Put a native file system allocation unit
     /// N.b. this simply zaps the block and can break the file system.
     fn write_block(&mut self, num: &str, dat: &[u8]) -> Result<usize,DYNERR>;
-    /// Convert file system text to a UTF8 string
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR>;
-    /// Convert UTF8 string to file system text
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR>;
     /// Standardize for comparison with other sources of disk images.
     /// Returns a map from blocks to offsets within the block that are to be zeroed or ignored.
     /// Typically it is important to call this before deletions happen.
@@ -698,10 +315,58 @@ pub trait DiskFS {
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>);
     /// Mutably borrow the underlying disk image
     fn get_img(&mut self) -> &mut Box<dyn img::DiskImage>;
+
+    /// Convenience function to set path and put (default method)
+    fn put_at(&mut self,path: &str,fimg: &mut FileImage) -> Result<usize,DYNERR> {
+        fimg.set_path(path)?;
+        self.put(fimg)
+    }
+    /// Convenience function to get (load_addr,binary_data) (default method)
+    fn bload(&mut self,path: &str) -> Result<(usize,Vec<u8>),DYNERR> {
+        let fimg = self.get(path)?;
+        Ok((fimg.get_load_address() as usize, fimg.unpack_bin()?))
+    }
+    /// Convenience function to save binary file (default method)
+    fn bsave(&mut self,path: &str,dat: &[u8],load_addr: Option<usize>,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
+        let mut fimg = self.new_fimg(None, true, path)?;
+        fimg.pack_bin(dat,load_addr,trailing)?;
+        self.put(&fimg)
+    }
+    /// Convenience function to get (load_addr,tokens) (default method)
+    fn load(&mut self,path: &str) -> Result<(usize,Vec<u8>),DYNERR> {
+        let fimg = self.get(path)?;
+        Ok((fimg.get_load_address() as usize, fimg.unpack_tok()?))
+    }
+    /// Convenience function to save tokens (default method)
+    fn save(&mut self,path: &str,dat: &[u8],lang: ItemType,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
+        let mut fimg = self.new_fimg(None, true, path)?;
+        fimg.pack_tok(dat,lang,trailing)?;
+        self.put(&fimg)
+    }
+    /// Convenience function to load text (default method)
+    fn read_text(&mut self,path: &str) -> Result<String,DYNERR> {
+        self.get(path)?.unpack_txt()
+    }
+    /// Convenience function to save text (default method)
+    fn write_text(&mut self,path: &str,txt: &str) -> Result<usize,DYNERR> {
+        let mut fimg = self.new_fimg(None, true, path)?;
+        fimg.pack_txt(txt)?;
+        self.put(&fimg)
+    }    
+    /// Convenience function to load records (default method)
+    fn read_records(&mut self,path: &str,rec_len: Option<usize>) -> Result<Records,DYNERR> {
+        self.get(path)?.unpack_rec(rec_len)
+    }
+    /// Convenience function to save records (default method)
+    fn write_records(&mut self,path: &str,recs: &Records) -> Result<usize,DYNERR> {
+        let mut fimg = self.new_fimg(None, true, path)?;
+        fimg.pack_rec(recs)?;
+        self.put(&fimg)
+    }    
 }
 
 impl Stat {
-    pub fn to_json(&self,indent: u16) -> String {
+    pub fn to_json(&self,indent: Option<u16>) -> String {
         let mut ans = json::JsonValue::new_object();
         ans["fs_name"] = json::JsonValue::String(self.fs_name.clone());
         ans["label"] = json::JsonValue::String(self.label.clone());
@@ -715,10 +380,10 @@ impl Stat {
         } else {
             ans["raw"] = json::JsonValue::Null;
         }
-        if indent > 0 {
-            return json::stringify_pretty(ans, indent);
+        if let Some(spaces) = indent {
+            return json::stringify_pretty(ans, spaces);
         } else {
             return json::stringify(ans);
         }
-        }
+    }
 }

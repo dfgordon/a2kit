@@ -407,14 +407,14 @@ pub trait DiskImage {
     fn display_track(&self,bytes: &[u8]) -> String;
     /// Get image metadata into JSON string.
     /// Default contains only the image type.
-    fn get_metadata(&self,indent: u16) -> String {
+    fn get_metadata(&self,indent: Option<u16>) -> String {
         let mut root = json::JsonValue::new_object();
         let typ = self.what_am_i().to_string();
         root[typ] = json::JsonValue::new_object();
-        if indent==0 {
-            json::stringify(root)
+        if let Some(spaces) = indent {
+            json::stringify_pretty(root,spaces)
         } else {
-            json::stringify_pretty(root, indent)
+            json::stringify(root)
         }
     }
     /// Add or change a single metadata item.  This is designed to take as its arguments the
@@ -428,7 +428,7 @@ pub trait DiskImage {
         meta::test_metadata(key_path,self.what_am_i())
     }
     /// Write the disk geometry, including all track solutions, into a JSON string
-    fn export_geometry(&mut self,indent: u16) -> Result<String,DYNERR> {
+    fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
         let mut solved_track_count = 0;
         let mut root = json::JsonValue::new_object();
         root["package"] = json::JsonValue::String(package_string(&self.kind()));
@@ -468,10 +468,10 @@ pub trait DiskImage {
         } else {
             root["tracks"] = trk_ary;
         }
-        if indent==0 {
-            Ok(json::stringify(root))
+        if let Some(spaces) = indent {
+            Ok(json::stringify_pretty(root,spaces))
         } else {
-            Ok(json::stringify_pretty(root, indent))
+            Ok(json::stringify(root))
         }
     }
 }

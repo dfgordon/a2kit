@@ -3,7 +3,7 @@ use num_traits::FromPrimitive;
 use std::str::FromStr;
 use std::fmt;
 use a2kit_macro::{DiskStructError,DiskStruct};
-use super::TextEncoder;
+use crate::fs::TextConversion;
 
 pub const VTOC_TRACK: u8 = 17;
 pub const MAX_DIRECTORY_REPS: usize = 100;
@@ -79,18 +79,18 @@ fn append_junk(dat: &[u8],trailing: Option<&[u8]>) -> Vec<u8> {
 }
 
 /// Transforms between UTF8 and DOS text encodings.
-/// DOS uses negative ASCII with CR line separators.
-pub struct Encoder {
+/// DOS uses negative ASCII with CR line separators and NULL overall terminator.
+pub struct TextConverter {
     line_terminator: Vec<u8>
 }
 
-impl TextEncoder for Encoder {
+impl TextConversion for TextConverter {
     fn new(line_terminator: Vec<u8>) -> Self {
         Self {
             line_terminator
         }
     }
-    fn encode(&self,txt: &str) -> Option<Vec<u8>> {
+    fn from_utf8(&self,txt: &str) -> Option<Vec<u8>> {
         let src: Vec<u8> = txt.as_bytes().to_vec();
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
@@ -110,7 +110,7 @@ impl TextEncoder for Encoder {
         }
         return Some(ans);
     }
-    fn decode(&self,src: &[u8]) -> Option<String> {
+    fn to_utf8(&self,src: &[u8]) -> Option<String> {
         let mut ans: Vec<u8> = Vec::new();
         for i in 0..src.len() {
             if src[i]==0x8d {
@@ -202,8 +202,8 @@ pub struct SequentialText {
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
-        let encoder = Encoder::new(vec![0x8d]);
-        if let Some(dat) = encoder.encode(s) {
+        let encoder = TextConverter::new(vec![0x8d]);
+        if let Some(dat) = encoder.from_utf8(s) {
             return Ok(Self {
                 text: dat.clone(),
                 terminator: 0
@@ -218,8 +218,8 @@ impl FromStr for SequentialText {
 /// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoder = Encoder::new(vec![0x8d]);
-        if let Some(ans) = encoder.decode(&self.text) {
+        let encoder = TextConverter::new(vec![0x8d]);
+        if let Some(ans) = encoder.to_utf8(&self.text) {
             return write!(f,"{}",ans);
         }
         write!(f,"err")

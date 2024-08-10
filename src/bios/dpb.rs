@@ -51,7 +51,7 @@ pub struct DiskParameterBlock {
 }
 
 impl DiskParameterBlock {
-    pub fn to_json(&self,indent: u16) -> String {
+    pub fn to_json(&self,indent: Option<u16>) -> String {
         let mut ans = json::JsonValue::new_object();
         let mut dpb = json::JsonValue::new_object();
         dpb["spt"] = json::JsonValue::String(hex::encode_upper(&u16::to_le_bytes(self.spt)));
@@ -67,10 +67,10 @@ impl DiskParameterBlock {
         dpb["psh"] = json::JsonValue::String(hex::encode_upper(&vec![self.psh]));
         dpb["phm"] = json::JsonValue::String(hex::encode_upper(&vec![self.phm]));
         ans["dpb"] = dpb;
-        if indent==0 {
-            return json::stringify(ans);
+        if let Some(spaces) = indent {
+            return json::stringify_pretty(ans,spaces);
         } else {
-            return json::stringify_pretty(ans,indent);
+            return json::stringify(ans);
         }
     }
 }

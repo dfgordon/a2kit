@@ -1,70 +1,56 @@
 //! ## DOS 3.x file system module
+//! 
 //! This manipulates disk images containing one standard bootable
 //! or non-bootable DOS 3.x volume.  At the level of this module,
 //! wide latitude is allowed for track counts, while sector counts
 //! are restricted to 13, 16, or 32.
 //! 
-//! * Analogues of BASIC commands like SAVE, BSAVE etc. are exposed through the `DiskFS` trait
-//! * The module will try to emulate the order in which DOS would access sectors
+//! The module will try to emulate the order in which DOS would access sectors
 
 pub mod types;
 mod boot;
 mod directory;
+mod pack;
 
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
-use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
-use log::{info,debug,error};
 
 use types::*;
+use pack::*;
 use directory::*;
-use super::{Block,TextEncoder};
+use super::Block;
 use crate::img;
-use crate::commands::ItemType;
 
-use crate::lang::applesoft;
 use crate::{STDRESULT,DYNERR};
 
 pub const FS_NAME: &str = "a2 dos";
 
-/// This will accept lower case; case will be automatically converted as appropriate
-fn is_name_valid(s: &str) -> bool {
-    for char in s.chars() {
-        if !char.is_ascii() {
-            debug!("non-ascii file name character `{}` (codepoint {})",char,char as u32);
-            info!("use hex escapes to introduce arbitrary bytes");
-            return false;
-        }
+pub fn new_fimg(chunk_len: usize,name: &str) -> Result<super::FileImage,DYNERR> {
+    if !pack::is_name_valid(name) {
+        return Err(Box::new(Error::SyntaxError))
     }
-    if s.len()>30 {
-        info!("file name too long, max 30");
-        return false;
-    }
-    true
+    Ok(super::FileImage {
+        fimg_version: super::FileImage::fimg_version(),
+        file_system: String::from(FS_NAME),
+        fs_type: vec![0],
+        aux: vec![],
+        eof: vec![],
+        accessed: vec![],
+        created: vec![],
+        modified: vec![],
+        access: vec![],
+        version: vec![],
+        min_version: vec![],
+        chunk_len,
+        full_path: name.to_string(),
+        chunks: HashMap::new()
+    })
 }
 
-fn file_name_to_string(fname: [u8;30]) -> String {
-    // fname is negative ASCII padded to the end with spaces
-    // non-ASCII will go as hex escapes
-    return String::from(crate::escaped_ascii_from_bytes(&fname.to_vec(),true,true).trim_end());
+pub struct Packer {
 }
-
-fn string_to_file_name(s: &str) -> [u8;30] {
-    if s.len()> 30 {
-        panic!("DOS filename was loo long");
-    }
-    let mut ans: [u8;30] = [0xa0;30]; // fill with negative spaces
-    let unescaped = crate::escaped_ascii_to_bytes(s, true);
-    for i in 0..30 {
-        if i<unescaped.len() {
-            ans[i] = unescaped[i];
-        }
-    }
-    return ans;
-}
-
 
 /// The primary interface for disk operations.
 pub struct Disk
@@ -76,23 +62,6 @@ pub struct Disk
 
 impl Disk
 {
-    fn new_fimg(chunk_len: usize) -> super::FileImage {
-        super::FileImage {
-            fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from(FS_NAME),
-            fs_type: vec![0],
-            aux: vec![],
-            eof: vec![],
-            accessed: vec![],
-            created: vec![],
-            modified: vec![],
-            access: vec![],
-            version: vec![],
-            min_version: vec![],
-            chunk_len,
-            chunks: HashMap::new()
-        }
-    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
@@ -109,24 +78,24 @@ impl Disk
             };
             let (tlen,slen) = (35,13);
             if vtoc.version>2 {
-                debug!("D13: VTOC wrong version {}",vtoc.version);
+                log::debug!("D13: VTOC wrong version {}",vtoc.version);
                 return false;
             }
             if vtoc.vol<1 || vtoc.vol>254 {
-                debug!("D13: Volume {} out of range",vtoc.vol);
+                log::debug!("D13: Volume {} out of range",vtoc.vol);
                 return false;
             }
             if vtoc.track1 != VTOC_TRACK || vtoc.sector1 != slen-1 {
-                debug!("D13: VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
+                log::debug!("D13: VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
                 return false;
             }
             if vtoc.bytes != [0,1] || vtoc.sectors != slen as u8 || vtoc.tracks != tlen as u8 {
-                debug!("D13: VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
+                log::debug!("D13: VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
                 return false;
             }
             return true;
         }
-        debug!("VTOC sector was not readable as D13");
+        log::debug!("VTOC sector was not readable as D13");
         return false;
     }
     fn test_img_16(img: &mut Box<dyn img::DiskImage>) -> bool {
@@ -137,40 +106,40 @@ impl Disk
             };
             let (tlen,slen) = (35,16);
             if vtoc.version<3 {
-                debug!("VTOC wrong version {}",vtoc.version);
+                log::debug!("VTOC wrong version {}",vtoc.version);
                 return false;
             }
             if vtoc.vol<1 || vtoc.vol>254 {
-                debug!("Volume {} out of range",vtoc.vol);
+                log::debug!("Volume {} out of range",vtoc.vol);
                 return false;
             }
             if vtoc.track1 != VTOC_TRACK || vtoc.sector1 != slen-1 {
-                debug!("VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
+                log::debug!("VTOC wrong track1 {}, sector1 {}",vtoc.track1,vtoc.sector1);
                 return false;
             }
             if vtoc.bytes != [0,1] || vtoc.sectors != slen as u8 || vtoc.tracks != tlen as u8 {
-                debug!("VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
+                log::debug!("VTOC wrong bytes {:?}, sectors {}, tracks {}",vtoc.bytes,vtoc.sectors,vtoc.tracks);
                 return false;
             }
             return true;
         }
-        debug!("VTOC sector was not readable as DO");
+        log::debug!("VTOC sector was not readable as DO");
         return false;
     }
     /// Test an image to see if it already contains DOS 3.x.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         let tlen = img.track_count();
         if tlen!=35 {
-            debug!("track count is unexpected");
+            log::debug!("track count is unexpected");
             return false;
         }
         let old_kind = img.kind();
         img.change_kind(img::names::A2_DOS32_KIND);
-        debug!("change to 13 sectors");
+        log::debug!("change to 13 sectors");
         if Self::test_img_13(img) {
             return true;
         }
-        debug!("change to 16 sectors");
+        log::debug!("change to 16 sectors");
         img.change_kind(img::names::A2_DOS33_KIND);
         if Self::test_img_16(img) {
             return true;
@@ -183,7 +152,7 @@ impl Disk
         match &self.maybe_vtoc {
             Some(_) => Ok(()),
             None => {
-                debug!("open VTOC buffer");
+                log::debug!("open VTOC buffer");
                 // We can use physical addressing for either DOS if sector = 0
                 let buf = self.img.read_sector(VTOC_TRACK as usize, 0, 0)?;
                 self.maybe_vtoc = match VTOC::from_bytes(&buf) {
@@ -225,7 +194,7 @@ impl Disk
             Some(vtoc) => vtoc.to_bytes(),
             None => return Ok(())
         };
-        debug!("writeback VTOC buffer");
+        log::debug!("writeback VTOC buffer");
         // We can use physical addressing for either DOS if sector = 0
         self.img.write_sector(VTOC_TRACK as usize, 0, 0, &buf)
     }
@@ -238,7 +207,7 @@ impl Disk
     }
     fn verify_ts(vconst: &VolumeConstants,track: u8,sector: u8) -> STDRESULT {
         if track>=vconst.tracks || sector>=vconst.sectors {
-            error!("track {} sector {} out of bounds",track,sector);
+            log::error!("track {} sector {} out of bounds",track,sector);
             return Err(Box::new(Error::Range));
         }
         Ok(())
@@ -490,7 +459,7 @@ impl Disk
                 return Err(Box::new(Error::DiskFull));
             }
         }
-        error!("number of directory sectors is not plausible, aborting");
+        log::error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
     /// Scan the directory sectors to find the named file, possible returned tuple is (tslist ptr,file type)
@@ -513,7 +482,7 @@ impl Disk
                 return Ok(None);
             }
         }
-        error!("number of directory sectors is not plausible, aborting");
+        log::error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
     /// Read any file into the sparse file format.  Use `FileImage.sequence()` to flatten the result
@@ -525,7 +494,7 @@ impl Disk
             Ok(None) => return Err(Box::new(Error::FileNotFound)),
             Err(e) => return Err(e)
         };
-        let mut ans = Disk::new_fimg(256);
+        let mut ans = new_fimg(256,name)?;
         let mut buf = vec![0;256];
         let mut count: usize = 0;
         // loop up to a maximum, if it is reached return error
@@ -547,28 +516,29 @@ impl Disk
             }
             next_tslist = [tslist.next_track,tslist.next_sector];
         }
-        error!("number of track-sector list sectors is not plausible, aborting");
+        log::error!("number of track-sector list sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
     /// Write any sparse or sequential file.  Use `FileImage::desequence` to put sequential data
     /// into the sparse file format, with no loss of generality.
     /// Unlike DOS, nothing is written unless there is enough space for all the data.
-    fn write_file(&mut self,name: &str, fimg: &super::FileImage) -> Result<usize,DYNERR> {
+    fn write_file(&mut self,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+        let name = &fimg.full_path;
         if !is_name_valid(name) {
-            error!("invalid DOS filename");
+            log::error!("invalid DOS filename");
             return Err(Box::new(Error::SyntaxError));
         }
         let vconst = self.get_vtoc_constants()?;
         if fimg.chunks.len()==0 {
-            error!("empty data is not allowed for DOS 3.x file images");
+            log::error!("empty data is not allowed for DOS 3.x file images");
             return Err(Box::new(Error::EndOfData));
         }
         match self.get_tslist_sector(name) {
             Ok(Some(_)) => {
-                error!("overwriting is not allowed");
+                log::error!("overwriting is not allowed");
                 return Err(Box::new(Error::WriteProtected))
             },
-            Ok(None) => debug!("no existing file, OK to proceed"),
+            Ok(None) => log::debug!("no existing file, OK to proceed"),
             Err(e) => return Err(e)
         };
         // this is a new file
@@ -576,7 +546,7 @@ impl Disk
         assert!(fimg.chunks.len()>0);
         let data_sectors = fimg.chunks.len();
         let tslist_sectors = 1 + (fimg.end()-1)/vconst.max_pairs as usize;
-        debug!("file needs {} data secs, {} tslist secs; {} available",data_sectors,tslist_sectors,self.num_free_sectors()?);
+        log::debug!("file needs {} data secs, {} tslist secs; {} available",data_sectors,tslist_sectors,self.num_free_sectors()?);
         if data_sectors + tslist_sectors > self.num_free_sectors()? {
             return Err(Box::new(Error::DiskFull));
         }
@@ -639,7 +609,7 @@ impl Disk
     /// Verify that the new name does not already exist
     fn ok_to_rename(&mut self,new_name: &str) -> STDRESULT {
         if !is_name_valid(&new_name) {
-            error!("invalid DOS filename");
+            log::error!("invalid DOS filename");
             return Err(Box::new(Error::SyntaxError));
         }
         match self.get_tslist_sector(new_name) {
@@ -651,7 +621,7 @@ impl Disk
     /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
     fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
         if !is_name_valid(&name) {
-            error!("old name is invalid, perhaps use hex escapes");
+            log::error!("old name is invalid, perhaps use hex escapes");
             return Err(Box::new(Error::SyntaxError));
         }
         let vconst = self.get_vtoc_constants()?;
@@ -689,14 +659,17 @@ impl Disk
                 return Err(Box::new(Error::FileNotFound));
             }
         }
-        error!("number of directory sectors is not plausible, aborting");
+        log::error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
 }
 
 impl super::DiskFS for Disk {
-    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len)
+    fn new_fimg(&self, chunk_len: Option<usize>,_set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
+        match chunk_len {
+            Some(l) => new_fimg(l,path),
+            None => new_fimg(256,path)
+        }
     }
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let vtoc = &self.get_vtoc_constants()?;
@@ -740,7 +713,7 @@ impl super::DiskFS for Disk {
                 return Ok(());
             }
         }
-        error!("the disk image directory seems to be damaged");
+        log::error!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
     fn catalog_to_vec(&mut self, path: &str) -> Result<Vec<String>,DYNERR> {
@@ -773,10 +746,42 @@ impl super::DiskFS for Disk {
                 return Ok(ans);
             }
         }
-        error!("the disk image directory seems to be damaged");
+        log::error!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let mut ans = Vec::new();
+        let glob = match case_sensitive {
+            true => globset::Glob::new(pattern)?.compile_matcher(),
+            false => globset::Glob::new(&pattern.to_uppercase())?.compile_matcher()
+        };
+        let vconst = self.get_vtoc_constants()?;
+        let mut ts = [vconst.track1,vconst.sector1];
+        let mut buf = vec![0;256];
+        for _try in 0..types::MAX_DIRECTORY_REPS {
+            Self::verify_ts(&vconst,ts[0], ts[1])?;
+            self.read_sector(&mut buf, ts, 0)?;
+            let dir = DirectorySector::from_bytes(&buf)?;
+            for entry in dir.entries.as_ref() {
+                if entry.tsl_track>0 && entry.tsl_track<255 {
+                    let name = match case_sensitive {
+                        true => file_name_to_string(entry.name),
+                        false => file_name_to_string(entry.name).to_uppercase()
+                    };
+                    if glob.is_match(&name) {
+                        ans.push(name);
+                    }
+                }
+            }
+            ts = [dir.next_track,dir.next_sector];
+            if ts == [0,0] {
+                return Ok(ans);
+            }
+        }
+        log::error!("the disk image directory seems to be damaged");
+        return Err(Box::new(Error::IOError));
+    }
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let vconst = self.get_vtoc_constants()?;
         let mut ts = [vconst.track1,vconst.sector1];
         let mut buf = vec![0;256];
@@ -819,14 +824,17 @@ impl super::DiskFS for Disk {
             }
             ts = [dir.next_track,dir.next_sector];
             if ts == [0,0] {
-                return Ok(json::stringify_pretty(tree, 2));
+                return match indent {
+                    Some(spaces) => Ok(json::stringify_pretty(tree, spaces)),
+                    None => Ok(json::stringify(tree))
+                };
             }
         }
-        error!("the disk image directory seems to be damaged");
+        log::error!("the disk image directory seems to be damaged");
         return Err(Box::new(Error::IOError));
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
-        error!("DOS 3.x does not support operation");
+        log::error!("DOS 3.x does not support operation");
         return Err(Box::new(Error::SyntaxError));
     }
     fn delete(&mut self,name: &str) -> STDRESULT {
@@ -860,7 +868,7 @@ impl super::DiskFS for Disk {
                             return self.write_sector(&dir.to_bytes(),dir_ts,0)
                         }
                     }
-                    error!("number of track-sector list sectors is not plausible, aborting");
+                    log::error!("number of track-sector list sectors is not plausible, aborting");
                     return Err(Box::new(Error::EndOfData));
                 }
             }
@@ -869,15 +877,15 @@ impl super::DiskFS for Disk {
                 return Err(Box::new(Error::FileNotFound));
             }
         }
-        error!("number of directory sectors is not plausible, aborting");
+        log::error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
     fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
-        error!("DOS does not support operation");
+        log::error!("DOS does not support operation");
         Err(Box::new(Error::SyntaxError))
     }
     fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        error!("DOS does not support operation");
+        log::error!("DOS does not support operation");
         Err(Box::new(Error::SyntaxError))
     }
     fn lock(&mut self,name: &str) -> STDRESULT {
@@ -893,133 +901,21 @@ impl super::DiskFS for Disk {
     fn retype(&mut self,name: &str,new_type: &str,_sub_type: &str) -> STDRESULT {
         return self.modify(name, None,None, Some(new_type));
     }
-    fn bload(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(name) {
-            Ok(fimg) => {
-                let ans = types::BinaryData::from_bytes(&fimg.sequence())?;
-                Ok((u16::from_le_bytes(ans.start),ans.data))
-            },
-            Err(e) => Err(e)
+    fn get(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
+        return self.read_file(name);
+    }
+    fn put(&mut self,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+        if fimg.file_system!=FS_NAME {
+            log::error!("cannot write {} file image to a2 dos",fimg.file_system);
+            return Err(Box::new(Error::IOError));
         }
-    }
-    fn bsave(&mut self,name: &str, dat: &[u8],start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let file = types::BinaryData::pack(&dat,start_addr);
-        let padded = match trailing {
-            Some(v) => [file.to_bytes(),v.to_vec()].concat(),
-            None => file.to_bytes()
-        };
-        let mut fimg = Disk::new_fimg(256);
-        fimg.desequence(&padded);
-        fimg.fs_type = vec![FileType::Binary as u8];
-        return self.write_file(name, &fimg);
-    }
-    fn load(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(name) {
-            Ok(fimg) => {
-                let tokens = types::TokenizedProgram::from_bytes(&fimg.sequence())?.program;
-                match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
-                    Some(FileType::Integer) => Ok((0,tokens)),
-                    Some(FileType::Applesoft) => Ok((applesoft::deduce_address(&tokens),tokens)),
-                    _ => Err(Box::new(Error::FileTypeMismatch))
-                }
-            },
-            Err(e) => Err(e)
-        }
-    }
-    fn save(&mut self,name: &str, dat: &[u8], typ: ItemType, trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let padded = types::TokenizedProgram::pack(&dat,trailing).to_bytes();
-        let fs_type = match typ {
-            ItemType::ApplesoftTokens => FileType::Applesoft,
-            ItemType::IntegerTokens => FileType::Integer,
-            _ => return Err(Box::new(Error::FileTypeMismatch))
-        };
-        let mut fimg = Disk::new_fimg(256);
-        fimg.desequence(&padded);
-        fimg.fs_type = vec![fs_type as u8];
-        return self.write_file(name, &fimg);
-    }
-    fn fimg_load_address(&self,fimg: &super::FileImage) -> u16 {
-        match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
-            Some(FileType::Integer) => 0,
-            Some(FileType::Applesoft) => {
-                match fimg.chunks.get(&0) {
-                    Some(chunk) => match chunk.len()>2 {
-                        true => applesoft::deduce_address(&chunk[2..]),
-                        false => 0
-                    },
-                    None => 0
-                }
-            },
-            Some(FileType::Binary) => {
-                match fimg.chunks.get(&0) {
-                    Some(chunk) => match chunk.len()>2 {
-                        true => u16::from_le_bytes([chunk[0],chunk[1]]),
-                        false => 0
-                    },
-                    None => 0
-                }
-            },
-            _ => 0
-        }
-    }
-    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
-        if &fimg.file_system != FS_NAME {
-            return Err(Box::new(Error::VolumeMismatch));
-        }
-        let seq = fimg.sequence();
-        match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
-            Some(FileType::Applesoft) => Ok(types::TokenizedProgram::from_bytes(&seq)?.program),
-            Some(FileType::Integer) => Ok(types::TokenizedProgram::from_bytes(&seq)?.program),
-            Some(FileType::Text) => Ok(types::SequentialText::from_bytes(&seq)?.text),
-            Some(FileType::Binary) => Ok(types::BinaryData::from_bytes(&seq)?.data),
-            None => Ok(seq)
-        }
-    }
-    fn read_raw(&mut self,name: &str,_trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
-        // eof is not generally available in DOS 3.x
-        match self.read_file(name) {
-            Ok(fimg) => Ok((0,fimg.sequence())),
-            Err(e) => Err(e)
-        }
-    }
-    fn write_raw(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let mut fimg = Disk::new_fimg(256);
-        fimg.desequence(dat);
-        fimg.fs_type = vec![FileType::Text as u8];
-        return self.write_file(name, &fimg);
-    }
-    fn read_text(&mut self,name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(name,false)
-    }
-    fn write_text(&mut self,name: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        self.write_raw(name,dat)
-    }
-    fn read_records(&mut self,name: &str,record_length: usize) -> Result<super::Records,DYNERR> {
-        if record_length==0 {
-            error!("DOS 3.x requires specifying a non-zero record length");
+        if fimg.chunk_len!=256 {
+            log::error!("chunk length is incompatible with DOS 3.x");
             return Err(Box::new(Error::Range));
         }
-        let encoder = Encoder::new(vec![0x8d]);
-        match self.read_file(name) {
-            Ok(fimg) => {
-                match super::Records::from_fimg(&fimg,record_length,encoder) {
-                    Ok(ans) => Ok(ans),
-                    Err(e) => Err(e)
-                }
-            },
-            Err(e) => return Err(e)
-        }
+        return self.write_file(fimg);
     }
-    fn write_records(&mut self,name: &str, records: &super::Records) -> Result<usize,DYNERR> {
-        let encoder = Encoder::new(vec![0x8d]);
-        let mut fimg = self.new_fimg(256);
-        fimg.fs_type = vec![FileType::Text as u8];
-        match records.update_fimg(&mut fimg, false, encoder) {
-            Ok(_) => self.write_file(name,&fimg),
-            Err(e) => Err(e)
-        }
-    }
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR> {
         let vconst = self.get_vtoc_constants()?;
         let sec_cnt = vconst.sectors as usize;
         let bytes_per_sector = u16::from_le_bytes(vconst.bytes) as usize;
@@ -1030,7 +926,7 @@ impl super::DiskFS for Disk {
                 }
                 let mut buf: Vec<u8> = vec![0;bytes_per_sector];
                 self.read_sector(&mut buf,[(sector/sec_cnt) as u8,(sector%sec_cnt) as u8],0)?;
-                Ok((0,buf))
+                Ok(buf)
             },
             Err(e) => Err(Box::new(e))
         }
@@ -1048,34 +944,6 @@ impl super::DiskFS for Disk {
                 Ok(dat.len())
             },
             Err(e) => Err(Box::new(e))
-        }
-    }
-    fn read_any(&mut self,name: &str) -> Result<super::FileImage,DYNERR> {
-        return self.read_file(name);
-    }
-    fn write_any(&mut self,name: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
-        if fimg.file_system!=FS_NAME {
-            error!("cannot write {} file image to a2 dos",fimg.file_system);
-            return Err(Box::new(Error::IOError));
-        }
-        if fimg.chunk_len!=256 {
-            error!("chunk length is incompatible with DOS 3.x");
-            return Err(Box::new(Error::Range));
-        }
-        return self.write_file(name,fimg);
-    }
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(dat)?;
-        Ok(file.to_string())
-    }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
-        let file = types::SequentialText::from_str(&s);
-        match file {
-            Ok(txt) => Ok(txt.to_bytes()),
-            Err(_) => {
-                error!("Cannot encode, perhaps use raw type");
-                Err(Box::new(Error::FileTypeMismatch))
-            }
         }
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {

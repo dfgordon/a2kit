@@ -37,20 +37,22 @@ use directory::*;
 use super::Block;
 use crate::bios::dpb::DiskParameterBlock;
 use crate::img;
-use crate::commands::ItemType;
+use crate::fs::FileImage;
 
 use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
 pub const FS_NAME: &str = "cpm";
 
-/// Given a CP/M filename string, update the file image
-/// with standard access and equate type with extension
-fn update_fimg_with_name(fimg: &mut super::FileImage,s: &str) {
-    fimg.access = vec![0x20;11];
+/// Given a CP/M extended filename string, get the access and fs_type fields
+/// to be used in a file image.  These are tied together because of the way
+/// CP/M stores the access bits and file type.
+fn std_access_and_typ(xname: &str) -> Result<(Vec<u8>,Vec<u8>),DYNERR> {
+    let (_,name) = pack::split_user_filename(xname)?;
+    let mut access = vec![0x20;11];
     let mut temp_fs_type = vec![0x20;3];
-    // assumes is_name_valid was true; 
-    let upper = s.to_uppercase();
+    // assumes is_xname_valid was true; 
+    let upper = name.to_uppercase();
     let it: Vec<&str> = upper.split('.').collect();
     let base = it[0].as_bytes().to_vec();
     let ext = match it.len() {
@@ -59,21 +61,22 @@ fn update_fimg_with_name(fimg: &mut super::FileImage,s: &str) {
     };
     for i in 0..8 {
         if i<base.len() {
-            fimg.access[i] = base[i];
+            access[i] = base[i];
         } else {
-            fimg.access[i] = 0x20;
+            access[i] = 0x20;
         }
     }
     for i in 0..3 {
         if i<ext.len() {
-            fimg.access[8+i] = ext[i];
+            access[8+i] = ext[i];
             temp_fs_type[i] = ext[i];
         } else {
-            fimg.access[8+i] = 0x20;
+            access[8+i] = 0x20;
             temp_fs_type[i] = 0x20;
         }
     }
-    fimg.fs_type = vec![temp_fs_type[0],temp_fs_type[1],temp_fs_type[2]];
+    let fs_type = vec![temp_fs_type[0],temp_fs_type[1],temp_fs_type[2]];
+    Ok((access,fs_type))
 }
 
 /// Load directory structure from a borrowed disk image.
@@ -98,6 +101,36 @@ fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> 
     Some(Directory::from_bytes(&buf[0..buf_size]).expect(RCH))
 }
 
+pub fn new_fimg(chunk_len: usize,set_time: bool,xname: &str) -> Result<FileImage,DYNERR> {
+    if !is_xname_valid(xname) {
+        return Err(Box::new(Error::BadFormat))
+    }
+    let created = match set_time {
+        true => pack::pack_date(None).to_vec(),
+        false => vec![]
+    };
+    let (access,fs_type) = std_access_and_typ(xname)?;
+    Ok(FileImage {
+        fimg_version: FileImage::fimg_version(),
+        file_system: String::from(FS_NAME),
+        fs_type,
+        aux: vec![],
+        eof: vec![0;4],
+        accessed: created.clone(),
+        created,
+        modified: vec![],
+        access,
+        version: vec![],
+        min_version: vec![],
+        chunk_len,
+        full_path: xname.to_string(),
+        chunks: HashMap::new()
+    })
+}
+
+pub struct Packer {
+}
+
 /// The primary interface for disk operations.
 /// The "Disk Parameter Block" that is provided upon creation
 /// should be in correspondence with DRI specifications.
@@ -110,23 +143,6 @@ pub struct Disk
 
 impl Disk
 {
-    fn new_fimg(chunk_len: usize) -> super::FileImage {
-        super::FileImage {
-            fimg_version: super::FileImage::fimg_version(),
-            file_system: String::from(FS_NAME),
-            fs_type: vec![0;3],
-            aux: vec![],
-            eof: vec![0;4],
-            accessed: vec![],
-            created: vec![],
-            modified: vec![],
-            access: vec![0;11],
-            version: vec![],
-            min_version: vec![],
-            chunk_len,
-            chunks: HashMap::new()
-        }
-    }
     /// Create a disk file system using the given image as storage.
     /// The DiskFS takes ownership of the image and DPB.
     pub fn from_img(img: Box<dyn img::DiskImage>,dpb: DiskParameterBlock,cpm_vers: [u8;3]) -> Result<Self,DYNERR> {
@@ -301,13 +317,13 @@ impl Disk
         return Ok(());
     }
     /// Read any file into a file image. Use `FileImage::sequence` to make the result sequential.
-    fn read_file(&mut self,xname: &str) -> Result<super::FileImage,DYNERR> {
+    fn read_file(&mut self,xname: &str) -> Result<FileImage,DYNERR> {
         trace!("attempt to read {}",xname);
         let dir = self.get_directory();
         let files = dir.build_files(&self.dpb,self.cpm_vers)?;
         if let Some(finfo) = get_file(xname,&files) {
             let pointers: Vec<&Ptr> = finfo.entries.values().collect();
-            let mut ans = Disk::new_fimg(self.dpb.block_size());
+            let mut ans = new_fimg(self.dpb.block_size(),false,xname)?;
             let mut buf = vec![0;self.dpb.block_size()];
             let mut block_count = 0;
             let mut prev_lx_count = 0;
@@ -362,7 +378,7 @@ impl Disk
         return Err(Box::new(Error::FileNotFound));
     }
     /// Used to create extents as a file is being written
-    fn open_extent(&self,name: &str,user: u8,fimg: &super::FileImage,dir: &Directory,first: &mut Option<Ptr>) -> (Ptr,Option<Extent>) {
+    fn open_extent(&self,name: &str,user: u8,fimg: &FileImage,dir: &Directory,first: &mut Option<Ptr>) -> (Ptr,Option<Extent>) {
         // First sort out filename and access
         let (base,typ) = string_to_file_name(name);
         let img_typ = fimg.fs_type.clone();
@@ -387,11 +403,11 @@ impl Disk
         return (Ptr::ExtentEntry(entry_idx),Some(fx));
     }
     /// Update extent data and save to directory buffer
-    fn close_extent(&self,entry_ptr: &Ptr,fx: &mut Extent,dir: &mut Directory,lx_count: usize,is_last: bool,fimg: &super::FileImage) {
+    fn close_extent(&self,entry_ptr: &Ptr,fx: &mut Extent,dir: &mut Directory,lx_count: usize,is_last: bool,fimg: &FileImage) {
         trace!("close extent with index {}",lx_count-1);
         trace!("block pointers {:?}",fx.block_list);
         fx.set_data_ptr(Ptr::ExtentData(lx_count-1));
-        let eof = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
+        let eof = fimg.get_eof();
         let mut remainder = eof % self.dpb.extent_capacity();
         if (!is_last && eof>0) || (remainder==0 && eof>0) {
             remainder = self.dpb.extent_capacity();
@@ -400,7 +416,7 @@ impl Disk
         dir.set_entry(entry_ptr,fx);
     }
     /// Write any file from a file image.  Use `FileImage::desequence` to convert sequential data.
-    fn write_file(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+    fn write_file(&mut self,xname: &str,fimg: &FileImage) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         if !is_name_valid(&name) {
             error!("invalid CP/M filename");
@@ -565,8 +581,11 @@ impl Disk
 }
 
 impl super::DiskFS for Disk {
-    fn new_fimg(&self,chunk_len: usize) -> super::FileImage {
-        Disk::new_fimg(chunk_len)
+    fn new_fimg(&self, chunk_len: Option<usize>,set_time: bool,path: &str) -> Result<FileImage,DYNERR> {
+        match chunk_len {
+            Some(l) => new_fimg(l,set_time,path),
+            None => new_fimg(self.dpb.block_size(),set_time,path)
+        }
     }
     fn stat(&mut self) -> Result<super::Stat,DYNERR> {
         let dir = &self.get_directory();
@@ -588,7 +607,7 @@ impl super::DiskFS for Disk {
             block_beg: 0,
             block_end: self.dpb.user_blocks(),
             free_blocks: self.num_free_blocks(dir) as usize,
-            raw: self.dpb.to_json(0)
+            raw: self.dpb.to_json(Some(1))
         })
     }
     fn catalog_to_stdout(&mut self, opt: &str) -> STDRESULT {
@@ -614,9 +633,28 @@ impl super::DiskFS for Disk {
             Err(e) => Err(e)
         }
     }
-    fn tree(&mut self,include_meta: bool) -> Result<String,DYNERR> {
+    fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let mut ans = Vec::new();
+        let glob = match case_sensitive {
+            true => globset::Glob::new(pattern)?.compile_matcher(),
+            false => globset::Glob::new(&pattern.to_uppercase())?.compile_matcher()
+        };
         let dir = self.get_directory();
-        display::tree(&dir,&self.dpb,include_meta)
+        let files = dir.build_files(&self.dpb, self.cpm_vers)?;
+        for (name,info) in files {
+            let name = match case_sensitive {
+                true => name.clone(),
+                false => name.to_uppercase()
+            };
+            if glob.is_match(&name) {
+                ans.push(name);
+            }
+        }
+        Ok(ans)
+    }
+    fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
+        let dir = self.get_directory();
+        display::tree(&dir,&self.dpb,include_meta,indent)
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
         error!("CP/M implementation does not support operation");
@@ -735,77 +773,9 @@ impl super::DiskFS for Disk {
             return Err(Box::new(Error::Select));
         }
     }
-    fn bload(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(xname,true)
-    }
-    fn bsave(&mut self,xname: &str, dat: &[u8],_start_addr: u16,trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        let (_user,name) = split_user_filename(xname)?;
-        let padded = match trailing {
-            Some(v) => [dat.to_vec(),v.to_vec()].concat(),
-            None => dat.to_vec()
-        };
-        let mut fimg = self.new_fimg(self.dpb.block_size());
-        fimg.desequence(&padded);
-        update_fimg_with_name(&mut fimg, &name);
-        return self.write_file(xname,&fimg);
-    }
-    fn load(&mut self,_name: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        error!("CP/M implementation does not support operation");
-        return Err(Box::new(Error::Select));
-    }
-    fn save(&mut self,_name: &str, _dat: &[u8], _typ: ItemType, _trailing: Option<&[u8]>) -> Result<usize,DYNERR> {
-        error!("CP/M implementation does not support operation");
-        return Err(Box::new(Error::Select));
-    }
-    fn fimg_load_address(&self,_fimg: &super::FileImage) -> u16 {
-        0
-    }
-    fn fimg_file_data(&self,fimg: &super::FileImage) -> Result<Vec<u8>,DYNERR> {
-        let eof: usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-        Ok(fimg.sequence_limited(eof))
-    }
-    fn read_raw(&mut self,xname: &str,trunc: bool) -> Result<(u16,Vec<u8>),DYNERR> {
-        match self.read_file(xname) {
-            Ok(fimg) => {
-                if trunc {
-                    let eof: usize = super::FileImage::usize_from_truncated_le_bytes(&fimg.eof);
-                    Ok((0,fimg.sequence_limited(eof)))
-                } else {
-                    Ok((0,fimg.sequence()))
-                }
-            },
-            Err(e) => Err(e)  
-        }
-    }
-    fn write_raw(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        let (_user,name) = split_user_filename(xname)?;
-        let mut fimg = self.new_fimg(self.dpb.block_size());
-        fimg.desequence(&dat);
-        update_fimg_with_name(&mut fimg, &name);
-        return self.write_file(xname, &fimg);
-    }
-    fn read_text(&mut self,xname: &str) -> Result<(u16,Vec<u8>),DYNERR> {
-        self.read_raw(xname, true)
-    }
-    fn write_text(&mut self,xname: &str, dat: &[u8]) -> Result<usize,DYNERR> {
-        self.write_raw(xname,dat)
-    }
-    fn read_records(&mut self,_name: &str,_record_length: usize) -> Result<super::Records,DYNERR> {
-        error!("CP/M implementation does not support operation");
-        return Err(Box::new(Error::Select));
-    }
-    fn write_records(&mut self,_name: &str, _records: &super::Records) -> Result<usize,DYNERR> {
-        error!("CP/M implementation does not support operation");
-        return Err(Box::new(Error::Select));
-    }
-    fn read_block(&mut self,num: &str) -> Result<(u16,Vec<u8>),DYNERR> {
+    fn read_block(&mut self,num: &str) -> Result<Vec<u8>,DYNERR> {
         match usize::from_str(num) {
-            Ok(block) => {
-                match self.img.read_block(Block::CPM((block,self.dpb.bsh,self.dpb.off))) {
-                    Ok(buf) => Ok((0,buf)),
-                    Err(e) => Err(e)
-                }
-            },
+            Ok(block) => self.img.read_block(Block::CPM((block,self.dpb.bsh,self.dpb.off))),
             Err(e) => Err(Box::new(e))
         }
     }
@@ -823,10 +793,10 @@ impl super::DiskFS for Disk {
             Err(e) => Err(Box::new(e))
         }
     }
-    fn read_any(&mut self,xname: &str) -> Result<super::FileImage,DYNERR> {
-        return self.read_file(xname);
+    fn get(&mut self,xname: &str) -> Result<FileImage,DYNERR> {
+        self.read_file(xname)
     }
-    fn write_any(&mut self,xname: &str,fimg: &super::FileImage) -> Result<usize,DYNERR> {
+    fn put(&mut self,fimg: &FileImage) -> Result<usize,DYNERR> {
         if fimg.file_system!=FS_NAME {
             error!("cannot write {} file image to cpm",fimg.file_system);
             return Err(Box::new(Error::Select));
@@ -835,21 +805,7 @@ impl super::DiskFS for Disk {
             error!("chunk length {} is incompatible with the DPB for this CP/M",fimg.chunk_len);
             return Err(Box::new(Error::Select));
         }
-        return self.write_file(xname,fimg);
-    }
-    fn decode_text(&self,dat: &[u8]) -> Result<String,DYNERR> {
-        let file = types::SequentialText::from_bytes(&dat).expect(RCH);
-        Ok(file.to_string())
-    }
-    fn encode_text(&self,s: &str) -> Result<Vec<u8>,DYNERR> {
-        let file = types::SequentialText::from_str(&s);
-        match file {
-            Ok(txt) => Ok(txt.to_bytes()),
-            Err(_) => {
-                error!("Cannot encode, perhaps use raw type");
-                Err(Box::new(Error::BadFormat))
-            }
-        }
+        self.write_file(&fimg.full_path,fimg)
     }
     fn standardize(&mut self,_ref_con: u16) -> HashMap<Block,Vec<usize>> {
         // TODO: this is rather specialized for the particular test that uses it

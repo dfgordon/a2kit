@@ -69,7 +69,7 @@ pub struct BPBFoundation {
 }
 
 impl BPBFoundation {
-    fn to_json(&self,indent: u16) -> String {
+    fn to_json(&self,indent: Option<u16>) -> String {
         let mut ans = json::JsonValue::new_object();
         let mut bpb = json::JsonValue::new_object();
         bpb["bytes_per_sec"] = json::JsonValue::String(hex::encode_upper(&self.bytes_per_sec));
@@ -85,10 +85,10 @@ impl BPBFoundation {
         bpb["hidd_sec"] = json::JsonValue::String(hex::encode_upper(&self.hidd_sec));
         bpb["tot_sec_32"] = json::JsonValue::String(hex::encode_upper(&self.tot_sec_32));
         ans["bpb"] = bpb;
-        if indent==0 {
-            return json::stringify(ans);
+        if let Some(spaces) = indent {
+            return json::stringify_pretty(ans,spaces);
         } else {
-            return json::stringify_pretty(ans,indent);
+            return json::stringify(ans);
         }
     }
 }
@@ -503,7 +503,7 @@ impl BootSector {
         self.tail.vol_id = id;
         self.tail.vol_lab = label;
     }
-    pub fn to_json(&self,indent: u16) -> String {
+    pub fn to_json(&self,indent: Option<u16>) -> String {
         self.foundation.to_json(indent)
     }
 }

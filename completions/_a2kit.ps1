@@ -25,6 +25,12 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('-V', 'V ', [CompletionResultType]::ParameterName, 'Print version')
             [CompletionResult]::new('--version', 'version', [CompletionResultType]::ParameterName, 'Print version')
+            [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'read from stdin, local, or disk image, write to stdout')
+            [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
+            [CompletionResult]::new('mget', 'mget', [CompletionResultType]::ParameterValue, 'read list of paths from stdin, get files from disk image, write file images to stdout')
+            [CompletionResult]::new('mput', 'mput', [CompletionResultType]::ParameterValue, 'read list of file images from stdin, restore files to a disk image')
+            [CompletionResult]::new('pack', 'pack', [CompletionResultType]::ParameterValue, 'pack data into a file image')
+            [CompletionResult]::new('unpack', 'unpack', [CompletionResultType]::ParameterValue, 'unpack data from a file image')
             [CompletionResult]::new('mkdsk', 'mkdsk', [CompletionResultType]::ParameterValue, 'write a blank disk image to the given path')
             [CompletionResult]::new('mkdir', 'mkdir', [CompletionResultType]::ParameterValue, 'create a new directory inside a disk image')
             [CompletionResult]::new('delete', 'delete', [CompletionResultType]::ParameterValue, 'delete a file or directory inside a disk image')
@@ -36,11 +42,9 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('unlock', 'unlock', [CompletionResultType]::ParameterValue, 'remove write protection from a file or directory inside a disk image')
             [CompletionResult]::new('rename', 'rename', [CompletionResultType]::ParameterValue, 'rename a file or directory inside a disk image')
             [CompletionResult]::new('retype', 'retype', [CompletionResultType]::ParameterValue, 'change file type inside a disk image')
-            [CompletionResult]::new('verify', 'verify', [CompletionResultType]::ParameterValue, 'read from stdin and error check')
+            [CompletionResult]::new('verify', 'verify', [CompletionResultType]::ParameterValue, 'read from stdin and perform language analysis')
             [CompletionResult]::new('minify', 'minify', [CompletionResultType]::ParameterValue, 'reduce program size')
             [CompletionResult]::new('renumber', 'renumber', [CompletionResultType]::ParameterValue, 'renumber BASIC program lines')
-            [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'read from stdin, local, or disk image, write to stdout')
-            [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
             [CompletionResult]::new('catalog', 'catalog', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('cat', 'cat', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('dir', 'dir', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
@@ -54,7 +58,76 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('dtok', 'dtok', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
             [CompletionResult]::new('asm', 'asm', [CompletionResultType]::ParameterValue, 'read from stdin, assemble, write to stdout')
             [CompletionResult]::new('dasm', 'dasm', [CompletionResultType]::ParameterValue, 'read from stdin, disassemble, write to stdout')
+            [CompletionResult]::new('glob', 'glob', [CompletionResultType]::ParameterValue, 'write JSON list of matching paths to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'a2kit;get' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-l', 'l', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
+            [CompletionResult]::new('--len', 'len', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
+            [CompletionResult]::new('--trunc', 'trunc', [CompletionResultType]::ParameterName, 'truncate raw at EOF if possible')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;put' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'load-address if applicable')
+            [CompletionResult]::new('--addr', 'addr', [CompletionResultType]::ParameterName, 'load-address if applicable')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;mget' {
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;mput' {
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'override target paths')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'override target paths')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;pack' {
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'target path for this file image')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'target path for this file image')
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'load-address if applicable')
+            [CompletionResult]::new('--addr', 'addr', [CompletionResultType]::ParameterName, 'load-address if applicable')
+            [CompletionResult]::new('-b', 'b', [CompletionResultType]::ParameterName, 'size of block in bytes if needed')
+            [CompletionResult]::new('--block', 'block', [CompletionResultType]::ParameterName, 'size of block in bytes if needed')
+            [CompletionResult]::new('-o', 'o', [CompletionResultType]::ParameterName, 'operating system format')
+            [CompletionResult]::new('--os', 'os', [CompletionResultType]::ParameterName, 'operating system format')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
+        'a2kit;unpack' {
+            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
+            [CompletionResult]::new('-l', 'l', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
+            [CompletionResult]::new('--len', 'len', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
+            [CompletionResult]::new('--trunc', 'trunc', [CompletionResultType]::ParameterName, 'truncate raw at EOF if possible')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'a2kit;mkdsk' {
@@ -216,38 +289,11 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
-        'a2kit;get' {
-            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
-            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
-            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
-            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('-l', 'l', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
-            [CompletionResult]::new('--len', 'len', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
-            [CompletionResult]::new('--trunc', 'trunc', [CompletionResultType]::ParameterName, 'truncate raw at EOF if possible')
-            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
-            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
-            break
-        }
-        'a2kit;put' {
-            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
-            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path, key, or address, maybe inside disk image')
-            [CompletionResult]::new('-t', 't', [CompletionResultType]::ParameterName, 'type of the item')
-            [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('-a', 'a', [CompletionResultType]::ParameterName, 'address of binary file')
-            [CompletionResult]::new('--addr', 'addr', [CompletionResultType]::ParameterName, 'address of binary file')
-            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
-            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
-            break
-        }
         'a2kit;catalog' {
             [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
@@ -256,8 +302,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;cat' {
             [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
@@ -266,8 +312,8 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;dir' {
             [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
@@ -276,31 +322,34 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;ls' {
             [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
             [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'path of directory inside disk image')
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--generic', 'generic', [CompletionResultType]::ParameterName, 'use generic output format')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'a2kit;tree' {
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('--meta', 'meta', [CompletionResultType]::ParameterName, 'include metadata')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'a2kit;stat' {
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
         'a2kit;geometry' {
-            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image')
-            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image')
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -357,7 +406,23 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'a2kit;glob' {
+            [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('-f', 'f', [CompletionResultType]::ParameterName, 'glob pattern to match against')
+            [CompletionResult]::new('--file', 'file', [CompletionResultType]::ParameterName, 'glob pattern to match against')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
+            [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'a2kit;help' {
+            [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'read from stdin, local, or disk image, write to stdout')
+            [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
+            [CompletionResult]::new('mget', 'mget', [CompletionResultType]::ParameterValue, 'read list of paths from stdin, get files from disk image, write file images to stdout')
+            [CompletionResult]::new('mput', 'mput', [CompletionResultType]::ParameterValue, 'read list of file images from stdin, restore files to a disk image')
+            [CompletionResult]::new('pack', 'pack', [CompletionResultType]::ParameterValue, 'pack data into a file image')
+            [CompletionResult]::new('unpack', 'unpack', [CompletionResultType]::ParameterValue, 'unpack data from a file image')
             [CompletionResult]::new('mkdsk', 'mkdsk', [CompletionResultType]::ParameterValue, 'write a blank disk image to the given path')
             [CompletionResult]::new('mkdir', 'mkdir', [CompletionResultType]::ParameterValue, 'create a new directory inside a disk image')
             [CompletionResult]::new('delete', 'delete', [CompletionResultType]::ParameterValue, 'delete a file or directory inside a disk image')
@@ -367,11 +432,9 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('unlock', 'unlock', [CompletionResultType]::ParameterValue, 'remove write protection from a file or directory inside a disk image')
             [CompletionResult]::new('rename', 'rename', [CompletionResultType]::ParameterValue, 'rename a file or directory inside a disk image')
             [CompletionResult]::new('retype', 'retype', [CompletionResultType]::ParameterValue, 'change file type inside a disk image')
-            [CompletionResult]::new('verify', 'verify', [CompletionResultType]::ParameterValue, 'read from stdin and error check')
+            [CompletionResult]::new('verify', 'verify', [CompletionResultType]::ParameterValue, 'read from stdin and perform language analysis')
             [CompletionResult]::new('minify', 'minify', [CompletionResultType]::ParameterValue, 'reduce program size')
             [CompletionResult]::new('renumber', 'renumber', [CompletionResultType]::ParameterValue, 'renumber BASIC program lines')
-            [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'read from stdin, local, or disk image, write to stdout')
-            [CompletionResult]::new('put', 'put', [CompletionResultType]::ParameterValue, 'read from stdin, write to local or disk image')
             [CompletionResult]::new('catalog', 'catalog', [CompletionResultType]::ParameterValue, 'write disk image catalog to stdout')
             [CompletionResult]::new('tree', 'tree', [CompletionResultType]::ParameterValue, 'write directory tree as a JSON string to stdout')
             [CompletionResult]::new('stat', 'stat', [CompletionResultType]::ParameterValue, 'write FS statistics as a JSON string to stdout')
@@ -380,7 +443,26 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('detokenize', 'detokenize', [CompletionResultType]::ParameterValue, 'read from stdin, detokenize, write to stdout')
             [CompletionResult]::new('asm', 'asm', [CompletionResultType]::ParameterValue, 'read from stdin, assemble, write to stdout')
             [CompletionResult]::new('dasm', 'dasm', [CompletionResultType]::ParameterValue, 'read from stdin, disassemble, write to stdout')
+            [CompletionResult]::new('glob', 'glob', [CompletionResultType]::ParameterValue, 'write JSON list of matching paths to stdout')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'a2kit;help;get' {
+            break
+        }
+        'a2kit;help;put' {
+            break
+        }
+        'a2kit;help;mget' {
+            break
+        }
+        'a2kit;help;mput' {
+            break
+        }
+        'a2kit;help;pack' {
+            break
+        }
+        'a2kit;help;unpack' {
             break
         }
         'a2kit;help;mkdsk' {
@@ -419,12 +501,6 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;help;renumber' {
             break
         }
-        'a2kit;help;get' {
-            break
-        }
-        'a2kit;help;put' {
-            break
-        }
         'a2kit;help;catalog' {
             break
         }
@@ -447,6 +523,9 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             break
         }
         'a2kit;help;dasm' {
+            break
+        }
+        'a2kit;help;glob' {
             break
         }
         'a2kit;help;help' {

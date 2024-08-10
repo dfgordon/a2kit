@@ -2,8 +2,7 @@
 use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::pascal::types::BLOCK_SIZE;
-use a2kit::fs::{Block,pascal,TextEncoder,DiskFS};
-use a2kit_macro::DiskStruct;
+use a2kit::fs::{Block,pascal,DiskFS};
 
 // Some sample programs to test
 // Indentation is important
@@ -12,7 +11,8 @@ const PROG1: &str =
 "PROGRAM TEST;
 BEGIN
   WRITE('HELLO FROM PASCAL')
-END.";
+END.
+";
 
 const PROG2: &str =
 "
@@ -20,7 +20,8 @@ PROGRAM TEST2
 
 BEGIN
         WRITE('ANOTHER SOURCE FILE')
-END.";
+END.
+";
 
 const PROG3: &str =
 "   (* FIRST LINE INDENT **)
@@ -30,7 +31,8 @@ const PROG3: &str =
  (* IS THIS SYNTAX OK? *)
     BEGIN
        WRITE('HELLO FROM TEST3')
-    END.";
+    END.
+";
 
 fn ignore_boot_blocks(ignore: &mut HashMap<Block,Vec<usize>>) {
     for block in 0..2 {
@@ -60,25 +62,16 @@ fn read_small() {
     let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
 
     // check source 1
-    let (_z,raw) = emulator_disk.read_text("hello.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = pascal::types::Encoder::new(vec![0x0d]);
-    assert_eq!(txt.text,encoder.encode(PROG1).unwrap());
-    assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG1)+"\n");
+    let txt = emulator_disk.read_text("hello.text").expect("error");
+    assert_eq!(txt,PROG1);
 
     // check source 2
-    let (_z,raw) = emulator_disk.read_text("test2.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = pascal::types::Encoder::new(vec![0x0d]);
-    assert_eq!(txt.text,encoder.encode(PROG2).unwrap());
-    assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG2)+"\n");
+    let txt = emulator_disk.read_text("test2.text").expect("error");
+    assert_eq!(txt,PROG2);
 
     // check source 3
-    let (_z,raw) = emulator_disk.read_text("test3.text").expect("error");
-    let txt = pascal::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = pascal::types::Encoder::new(vec![0x0d]);
-    assert_eq!(txt.text,encoder.encode(PROG3).unwrap());
-    assert_eq!(encoder.decode(&txt.text).unwrap(),String::from(PROG3)+"\n");
+    let txt = emulator_disk.read_text("test3.text").expect("error");
+    assert_eq!(txt,PROG3);
 }
 
 #[test]
@@ -90,12 +83,9 @@ fn write_small() {
     disk.format(&String::from("BLANK"),0,None).expect("failed to format");
 
     // save the text
-    let txt = disk.encode_text(PROG1).expect("could not encode text");
-    disk.write_text("hello.text",&txt).expect("error");
-    let txt = disk.encode_text(PROG2).expect("could not encode text");
-    disk.write_text("test2.text",&txt).expect("error");
-    let txt = disk.encode_text(PROG3).expect("could not encode text");
-    disk.write_text("test3.text",&txt).expect("error");
+    disk.write_text("hello.text",PROG1).expect("error");
+    disk.write_text("test2.text",PROG2).expect("error");
+    disk.write_text("test3.text",PROG3).expect("error");
 
     let mut ignore = disk.standardize(0);
     ignore_boot_blocks(&mut ignore);
@@ -108,11 +98,11 @@ fn out_of_space() {
     let mut disk = pascal::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.format(&String::from("TEST"),0,None).expect("could not format");
-    disk.bsave("f1",&big,0x800,None).expect("error");
-    disk.bsave("f2",&big,0x800,None).expect("error");
-    disk.bsave("f3",&big,0x800,None).expect("error");
-    disk.bsave("f4",&big,0x800,None).expect("error");
-    match disk.bsave("f5",&big,0x800,None) {
+    disk.bsave("f1",&big,None,None).expect("error");
+    disk.bsave("f2",&big,None,None).expect("error");
+    disk.bsave("f3",&big,None,None).expect("error");
+    disk.bsave("f4",&big,None,None).expect("error");
+    match disk.bsave("f5",&big,None,None) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
         Err(e) => match e.to_string().as_str() {
             "insufficient space" => assert!(true),

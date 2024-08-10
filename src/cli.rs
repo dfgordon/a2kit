@@ -1,4 +1,4 @@
-use clap::{arg, crate_version, Arg, ArgAction, ArgGroup, Command, ValueHint};
+use clap::{arg, value_parser, crate_version, Arg, ArgAction, ArgGroup, Command, ValueHint};
 
 const RNG_HELP: &str = "some types support ranges using `..` and `,,` separators,
 e.g., `1..4,,7..10` would mean 1,2,3,7,8,9";
@@ -68,10 +68,112 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "meta",
     ];
 
+    let pack_unpack_types = [
+        "auto",
+        "bin",
+        "txt",
+        "raw",
+        "rec",
+        "atok",
+        "itok",
+        "mtok"
+    ];
+
+    let indent_arg = Arg::new("indent").long("indent").help("JSON indentation, omit to minify")
+        .value_name("SPACES")
+        .value_parser(value_parser!(u16).range(0..16))
+        .required(false);
+
+    let dimg_arg_opt = Arg::new("dimg").short('d').long("dimg").help("path to disk image itself")
+        .value_name("PATH")
+        .value_hint(ValueHint::FilePath)
+        .required(false);
+
+    let dimg_arg_req = Arg::new("dimg").short('d').long("dimg").help("path to disk image itself")
+        .value_name("PATH")
+        .value_hint(ValueHint::FilePath)
+        .required(true);
+
     let mut main_cmd = Command::new("a2kit")
         .about("Manipulates retro files and disk images with emphasis on Apple II.")
         .after_long_help(long_help)
         .version(crate_version!());
+
+    main_cmd = main_cmd.subcommand(
+        Command::new("get")
+            .arg(Arg::new("file").long("file").short('f').help("path, key, or address, maybe inside disk image")
+                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
+            )
+            .arg(Arg::new("type").long("type").short('t').help("type of the item")
+                .value_name("TYPE").required(false).value_parser(get_put_types)
+            )
+            .arg(dimg_arg_opt.clone())
+            .arg(Arg::new("len").long("len").short('l').help("length of record in DOS 3.3 random access text file")
+                .value_name("LENGTH").required(false)
+            )
+            .arg(Arg::new("trunc").long("trunc").help("truncate raw at EOF if possible").action(ArgAction::SetTrue))
+            .about("read from stdin, local, or disk image, write to stdout")
+            .after_help(RNG_HELP.to_string() + "\n\n" + IN_HELP)
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("put")
+            .arg(Arg::new("file").long("file").short('f').help("path, key, or address, maybe inside disk image")
+                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
+            )
+            .arg(Arg::new("type").long("type").short('t').help("type of the item")
+                .value_name("TYPE").required(false).value_parser(get_put_types)
+            )
+            .arg(dimg_arg_opt.clone())
+            .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
+            .about("read from stdin, write to local or disk image")
+            .after_help(RNG_HELP)
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("mget")
+            .arg(dimg_arg_req.clone())
+            .about("read list of paths from stdin, get files from disk image, write file images to stdout")
+            .after_help("this can take `a2kit glob` as a piped input")
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("mput")
+            .arg(dimg_arg_req.clone())
+            .arg(Arg::new("file").long("file").short('f').help("override target paths")
+                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
+            )
+            .about("read list of file images from stdin, restore files to a disk image")
+            .after_help("for CP/M the user number can be overridden using `-f <num>:`")
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("pack")
+            .arg(Arg::new("file").long("file").short('f').help("target path for this file image")
+                .value_name("PATH").value_hint(ValueHint::FilePath).required(true)
+            )
+            .arg(Arg::new("type").long("type").short('t').help("type of the item")
+                .value_name("TYPE").required(true).value_parser(pack_unpack_types)
+            )
+            .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
+            .arg(Arg::new("block").long("block").short('b').help("size of block in bytes if needed")
+                .value_name("BYTES")
+                .value_parser(value_parser!(u16).range(128..=16384))
+                .required(false)
+            )
+            .arg(Arg::new("os").long("os").short('o').help("operating system format").value_name("OS")
+                    .required(true)
+                    .value_parser(os_names)
+            )
+            .about("pack data into a file image")
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("unpack")
+            .arg(Arg::new("type").long("type").short('t').help("type of the item")
+                .value_name("TYPE").required(true).value_parser(pack_unpack_types)
+            )
+            .arg(Arg::new("trunc").long("trunc").help("truncate raw at EOF if possible").action(ArgAction::SetTrue))
+            .arg(Arg::new("len").long("len").short('l').help("length of record in DOS 3.3 random access text file")
+                .value_name("LENGTH").required(false)
+            )
+            .about("unpack data from a file image")
+    );
     main_cmd = main_cmd.subcommand(
         Command::new("mkdsk")
             .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
@@ -102,26 +204,18 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .value_parser(wrap_types)
                     .required(false),
             )
-            .about("write a blank disk image to the given path"),
+            .about("write a blank disk image to the given path")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("mkdir")
             .arg(arg!(-f --file <PATH> "path inside disk image of new directory").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .about("create a new directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("delete")
             .arg(arg!(-f --file <PATH> "path inside disk image to delete").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .visible_alias("del")
             .visible_alias("era")
             .about("delete a file or directory inside a disk image"),
@@ -129,11 +223,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("protect")
             .arg(arg!(-f --file <PATH> "path inside disk image to protect").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .arg(arg!(-p --password <PASSWORD> "password to assign").required(true))
             .arg(arg!(--read "protect read").action(ArgAction::SetTrue))
             .arg(arg!(--write "protect read").action(ArgAction::SetTrue))
@@ -143,42 +233,26 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("unprotect")
             .arg(arg!(-f --file <PATH> "path inside disk image to unprotect").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .about("remove password protection from a disk or file"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("lock")
             .arg(arg!(-f --file <PATH> "path inside disk image to lock").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .about("write protect a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("unlock")
             .arg(arg!(-f --file <PATH> "path inside disk image to unlock").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .about("remove write protection from a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("rename")
             .arg(arg!(-f --file <PATH> "path inside disk image to rename").required(true))
             .arg(arg!(-n --name <NAME> "new name").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req.clone())
             .about("rename a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
@@ -186,11 +260,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(arg!(-f --file <PATH> "path inside disk image to retype").required(true))
             .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic").required(true))
             .arg(arg!(-a --aux <AUX> "file system auxiliary metadata").required(true))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image itself")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
+            .arg(dimg_arg_req)
             .about("change file type inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
@@ -212,7 +282,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 arg!(-w --workspace <PATH> "workspace directory")
                     .required(false)
             )
-            .about("read from stdin and error check"),
+            .about("read from stdin and perform language analysis"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("minify")
@@ -250,60 +320,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .about("renumber BASIC program lines"),
     );
     main_cmd = main_cmd.subcommand(
-        Command::new("get")
-            .arg(
-                arg!(-f --file <PATH> "path, key, or address, maybe inside disk image")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(
-                arg!(-t --type <TYPE> "type of the item")
-                    .required(false)
-                    .value_parser(get_put_types),
-            )
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(
-                arg!(-l --len <LENGTH> "length of record in DOS 3.3 random access text file")
-                    .required(false),
-            )
-            .arg(arg!(--trunc "truncate raw at EOF if possible").action(ArgAction::SetTrue))
-            .about("read from stdin, local, or disk image, write to stdout")
-            .after_help(RNG_HELP.to_string() + "\n\n" + IN_HELP),
-    );
-    main_cmd = main_cmd.subcommand(
-        Command::new("put")
-            .arg(
-                arg!(-f --file <PATH> "path, key, or address, maybe inside disk image")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(
-                arg!(-t --type <TYPE> "type of the item")
-                    .required(false)
-                    .value_parser(get_put_types),
-            )
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
-            .arg(arg!(-a --addr <ADDRESS> "address of binary file").required(false))
-            .about("read from stdin, write to local or disk image")
-            .after_help(RNG_HELP),
-    );
-    main_cmd = main_cmd.subcommand(
         Command::new("catalog")
             .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
             .arg(arg!(--generic "use generic output format").action(ArgAction::SetTrue))
-            .arg(
-                arg!(-d --dimg <PATH> "path to disk image")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
+            .arg(dimg_arg_opt.clone())
             .visible_alias("cat")
             .visible_alias("dir")
             .visible_alias("ls")
@@ -312,32 +332,23 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     );
     main_cmd = main_cmd.subcommand(
         Command::new("tree")
-            .arg(
-                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
+            .arg(dimg_arg_opt.clone())
             .arg(Arg::new("meta").long("meta").help("include metadata").action(ArgAction::SetTrue))
+            .arg(indent_arg.clone())
             .about("write directory tree as a JSON string to stdout")
             .after_help(IN_HELP),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("stat")
-            .arg(
-                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
+            .arg(dimg_arg_opt.clone())
+            .arg(indent_arg.clone())
             .about("write FS statistics as a JSON string to stdout")
             .after_help(IN_HELP),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("geometry")
-            .arg(
-                Arg::new("dimg").short('d').long("dimg").help("path to disk image").value_name("PATH")
-                    .value_hint(ValueHint::FilePath)
-                    .required(false),
-            )
+            .arg(dimg_arg_opt.clone())
+            .arg(indent_arg.clone())
             .about("write disk geometry as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -401,6 +412,17 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true)
             )
             .about("read from stdin, disassemble, write to stdout")
+    );
+    main_cmd = main_cmd.subcommand(
+        Command::new("glob")
+            .arg(dimg_arg_opt.clone())
+            .arg(
+                Arg::new("file").short('f').long("file").help("glob pattern to match against").value_name("PATTERN")
+                    .required(true),
+            )
+            .arg(indent_arg.clone())
+            .about("write JSON list of matching paths to stdout")
+            .after_help(IN_HELP)
     );
     return main_cmd;
 }

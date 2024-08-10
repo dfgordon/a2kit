@@ -22,6 +22,12 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --help 'Print help (see more with ''--help'')'
             cand -V 'Print version'
             cand --version 'Print version'
+            cand get 'read from stdin, local, or disk image, write to stdout'
+            cand put 'read from stdin, write to local or disk image'
+            cand mget 'read list of paths from stdin, get files from disk image, write file images to stdout'
+            cand mput 'read list of file images from stdin, restore files to a disk image'
+            cand pack 'pack data into a file image'
+            cand unpack 'unpack data from a file image'
             cand mkdsk 'write a blank disk image to the given path'
             cand mkdir 'create a new directory inside a disk image'
             cand delete 'delete a file or directory inside a disk image'
@@ -33,11 +39,9 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand unlock 'remove write protection from a file or directory inside a disk image'
             cand rename 'rename a file or directory inside a disk image'
             cand retype 'change file type inside a disk image'
-            cand verify 'read from stdin and error check'
+            cand verify 'read from stdin and perform language analysis'
             cand minify 'reduce program size'
             cand renumber 'renumber BASIC program lines'
-            cand get 'read from stdin, local, or disk image, write to stdout'
-            cand put 'read from stdin, write to local or disk image'
             cand catalog 'write disk image catalog to stdout'
             cand cat 'write disk image catalog to stdout'
             cand dir 'write disk image catalog to stdout'
@@ -51,7 +55,70 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand dtok 'read from stdin, detokenize, write to stdout'
             cand asm 'read from stdin, assemble, write to stdout'
             cand dasm 'read from stdin, disassemble, write to stdout'
+            cand glob 'write JSON list of matching paths to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'a2kit;get'= {
+            cand -f 'path, key, or address, maybe inside disk image'
+            cand --file 'path, key, or address, maybe inside disk image'
+            cand -t 'type of the item'
+            cand --type 'type of the item'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -l 'length of record in DOS 3.3 random access text file'
+            cand --len 'length of record in DOS 3.3 random access text file'
+            cand --trunc 'truncate raw at EOF if possible'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;put'= {
+            cand -f 'path, key, or address, maybe inside disk image'
+            cand --file 'path, key, or address, maybe inside disk image'
+            cand -t 'type of the item'
+            cand --type 'type of the item'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -a 'load-address if applicable'
+            cand --addr 'load-address if applicable'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;mget'= {
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;mput'= {
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -f 'override target paths'
+            cand --file 'override target paths'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;pack'= {
+            cand -f 'target path for this file image'
+            cand --file 'target path for this file image'
+            cand -t 'type of the item'
+            cand --type 'type of the item'
+            cand -a 'load-address if applicable'
+            cand --addr 'load-address if applicable'
+            cand -b 'size of block in bytes if needed'
+            cand --block 'size of block in bytes if needed'
+            cand -o 'operating system format'
+            cand --os 'operating system format'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
+        &'a2kit;unpack'= {
+            cand -t 'type of the item'
+            cand --type 'type of the item'
+            cand -l 'length of record in DOS 3.3 random access text file'
+            cand --len 'length of record in DOS 3.3 random access text file'
+            cand --trunc 'truncate raw at EOF if possible'
+            cand -h 'Print help'
+            cand --help 'Print help'
         }
         &'a2kit;mkdsk'= {
             cand -v 'volume name or number'
@@ -198,36 +265,11 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
-        &'a2kit;get'= {
-            cand -f 'path, key, or address, maybe inside disk image'
-            cand --file 'path, key, or address, maybe inside disk image'
-            cand -t 'type of the item'
-            cand --type 'type of the item'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
-            cand -l 'length of record in DOS 3.3 random access text file'
-            cand --len 'length of record in DOS 3.3 random access text file'
-            cand --trunc 'truncate raw at EOF if possible'
-            cand -h 'Print help'
-            cand --help 'Print help'
-        }
-        &'a2kit;put'= {
-            cand -f 'path, key, or address, maybe inside disk image'
-            cand --file 'path, key, or address, maybe inside disk image'
-            cand -t 'type of the item'
-            cand --type 'type of the item'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
-            cand -a 'address of binary file'
-            cand --addr 'address of binary file'
-            cand -h 'Print help'
-            cand --help 'Print help'
-        }
         &'a2kit;catalog'= {
             cand -f 'path of directory inside disk image'
             cand --file 'path of directory inside disk image'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
             cand --generic 'use generic output format'
             cand -h 'Print help'
             cand --help 'Print help'
@@ -235,8 +277,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;cat'= {
             cand -f 'path of directory inside disk image'
             cand --file 'path of directory inside disk image'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
             cand --generic 'use generic output format'
             cand -h 'Print help'
             cand --help 'Print help'
@@ -244,8 +286,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;dir'= {
             cand -f 'path of directory inside disk image'
             cand --file 'path of directory inside disk image'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
             cand --generic 'use generic output format'
             cand -h 'Print help'
             cand --help 'Print help'
@@ -253,28 +295,31 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;ls'= {
             cand -f 'path of directory inside disk image'
             cand --file 'path of directory inside disk image'
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
             cand --generic 'use generic output format'
             cand -h 'Print help'
             cand --help 'Print help'
         }
         &'a2kit;tree'= {
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand --indent 'JSON indentation, omit to minify'
             cand --meta 'include metadata'
             cand -h 'Print help'
             cand --help 'Print help'
         }
         &'a2kit;stat'= {
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand --indent 'JSON indentation, omit to minify'
             cand -h 'Print help'
             cand --help 'Print help'
         }
         &'a2kit;geometry'= {
-            cand -d 'path to disk image'
-            cand --dimg 'path to disk image'
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand --indent 'JSON indentation, omit to minify'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -324,7 +369,22 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'a2kit;glob'= {
+            cand -d 'path to disk image itself'
+            cand --dimg 'path to disk image itself'
+            cand -f 'glob pattern to match against'
+            cand --file 'glob pattern to match against'
+            cand --indent 'JSON indentation, omit to minify'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'a2kit;help'= {
+            cand get 'read from stdin, local, or disk image, write to stdout'
+            cand put 'read from stdin, write to local or disk image'
+            cand mget 'read list of paths from stdin, get files from disk image, write file images to stdout'
+            cand mput 'read list of file images from stdin, restore files to a disk image'
+            cand pack 'pack data into a file image'
+            cand unpack 'unpack data from a file image'
             cand mkdsk 'write a blank disk image to the given path'
             cand mkdir 'create a new directory inside a disk image'
             cand delete 'delete a file or directory inside a disk image'
@@ -334,11 +394,9 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand unlock 'remove write protection from a file or directory inside a disk image'
             cand rename 'rename a file or directory inside a disk image'
             cand retype 'change file type inside a disk image'
-            cand verify 'read from stdin and error check'
+            cand verify 'read from stdin and perform language analysis'
             cand minify 'reduce program size'
             cand renumber 'renumber BASIC program lines'
-            cand get 'read from stdin, local, or disk image, write to stdout'
-            cand put 'read from stdin, write to local or disk image'
             cand catalog 'write disk image catalog to stdout'
             cand tree 'write directory tree as a JSON string to stdout'
             cand stat 'write FS statistics as a JSON string to stdout'
@@ -347,7 +405,20 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand detokenize 'read from stdin, detokenize, write to stdout'
             cand asm 'read from stdin, assemble, write to stdout'
             cand dasm 'read from stdin, disassemble, write to stdout'
+            cand glob 'write JSON list of matching paths to stdout'
             cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'a2kit;help;get'= {
+        }
+        &'a2kit;help;put'= {
+        }
+        &'a2kit;help;mget'= {
+        }
+        &'a2kit;help;mput'= {
+        }
+        &'a2kit;help;pack'= {
+        }
+        &'a2kit;help;unpack'= {
         }
         &'a2kit;help;mkdsk'= {
         }
@@ -373,10 +444,6 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         }
         &'a2kit;help;renumber'= {
         }
-        &'a2kit;help;get'= {
-        }
-        &'a2kit;help;put'= {
-        }
         &'a2kit;help;catalog'= {
         }
         &'a2kit;help;tree'= {
@@ -392,6 +459,8 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;help;asm'= {
         }
         &'a2kit;help;dasm'= {
+        }
+        &'a2kit;help;glob'= {
         }
         &'a2kit;help;help'= {
         }

@@ -66,7 +66,7 @@ pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
         Ok(img) => {
             match maybe_selection {
                 None => {
-                    println!("{}",img.get_metadata(4));
+                    println!("{}",img.get_metadata(Some(4)));
                     Ok(())
                 }
                 Some(selection) => {
@@ -74,7 +74,7 @@ pub fn get_meta(cmd: &clap::ArgMatches) -> STDRESULT {
                         error!("selection string should start with `/`");
                         return Err(Box::new(CommandError::KeyNotFound));
                     }
-                    match json::parse(&img.get_metadata(0)) {
+                    match json::parse(&img.get_metadata(None)) {
                         Ok(parsed) => {
                             let mut keys = selection.split('/');
                             let mut obj = parsed;

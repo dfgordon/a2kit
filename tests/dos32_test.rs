@@ -1,11 +1,12 @@
 // test of DOS 3.2 support, which resides in the dos3x disk image module
 use std::path::Path;
 use std::collections::HashMap;
-use a2kit::fs::{Block,dos3x,TextEncoder,DiskFS};
+use a2kit::fs::{Block,dos3x,DiskFS};
 use a2kit::img::{dsk_d13,woz1,names};
 use a2kit::commands::ItemType;
 use a2kit::lang::integer;
-use a2kit_macro::DiskStruct;
+
+const RCH: &str = "unreachable was reached";
 
 pub const JSON_REC: &str = "
 {
@@ -43,10 +44,12 @@ fn out_of_space() {
     let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     let big: Vec<u8> = vec![0;0x7f00];
     disk.init32(254,true).expect("failed to INIT");
-    disk.bsave("f1",&big,0x800,None).expect("error");
-    disk.bsave("f2",&big,0x800,None).expect("error");
-    disk.bsave("f3",&big,0x800,None).expect("error");
-    match disk.bsave("f4",&big,0x800,None) {
+    let mut fimg = disk.new_fimg(None, false, "f1").expect(RCH);
+    fimg.pack_bin(&big,Some(0x800),None).expect(RCH);
+    disk.put_at("f1",&mut fimg).expect(RCH);
+    disk.put_at("f2",&mut fimg).expect(RCH);
+    disk.put_at("f3",&mut fimg).expect(RCH);
+    match disk.put_at("f4",&mut fimg) {
         Ok(l) => assert!(false,"wrote {} but should be disk full",l),
         Err(e) => match e.to_string().as_str() {
             "DISK FULL" => assert!(true),
@@ -60,22 +63,22 @@ fn read_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos32-smallfiles.woz")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("fs not found");
 
     // check the BASIC program
     let lib_tokens = get_tokens("disk_builder.ibas");
-    let disk_tokens = emulator_disk.load("hello").expect("error");
-    assert_eq!(disk_tokens,(0,lib_tokens));
+    let disk_tokens = emulator_disk.get("hello").expect(RCH).unpack_tok().expect(RCH);
+    assert_eq!(disk_tokens,lib_tokens);
 
     // check the binary
-    let binary_data = emulator_disk.bload("thechip").expect("error");
-    assert_eq!(binary_data,(768,vec![6,5,0,2]));
+    let fimg = emulator_disk.get("thechip").expect(RCH);
+    let binary_data = fimg.unpack_bin().expect(RCH);
+    assert_eq!(binary_data,vec![6,5,0,2]);
+    assert_eq!(fimg.get_load_address(),768);
 
     // check the sequential text file
-    let (_z,raw) = emulator_disk.read_text("thetext").expect("error");
-    let txt = dos3x::types::SequentialText::from_bytes(&raw).expect("bad setup");
-    let encoder = dos3x::types::Encoder::new(vec![0x8d]);
-    assert_eq!(txt.text,encoder.encode("HELLO FROM DOS 3.2").unwrap());
+    let txt = emulator_disk.get("thetext").expect(RCH).unpack_txt().expect(RCH);
+    assert_eq!(&txt,"HELLO FROM DOS 3.2\n");
 }
 
 #[test]
@@ -88,14 +91,17 @@ fn write_small() {
 
     // save the BASIC program
     let lib_tokens = get_tokens("disk_builder.ibas");
-    disk.save("hello",&lib_tokens,ItemType::IntegerTokens,Some(&vec![0x08])).expect("error");
+    let mut fimg = disk.new_fimg(None, false, "hello").expect(RCH);
+    fimg.pack_tok(&lib_tokens,ItemType::IntegerTokens,Some(&vec![0x08])).expect(RCH);
+    disk.put(&fimg).expect(RCH);
 
     // save the binary
-    disk.bsave("thechip",&[6,5,0,2].to_vec(),768,Some(&vec![0x0a])).expect("error");
+    fimg.pack_bin(&[6,5,0,2],Some(768),Some(&vec![0x0a])).expect(RCH);
+    disk.put_at("thechip",&mut fimg).expect(RCH);
 
     // save the text
-    let txt = disk.encode_text("HELLO FROM DOS 3.2").expect("could not encode text");
-    disk.write_text("thetext",&txt).expect("error");
+    fimg.pack_txt("HELLO FROM DOS 3.2\n").expect(RCH);
+    disk.put_at("thetext",&mut fimg).expect(RCH);
 
     let mut ignore = disk.standardize(0);
     ignore_boot_tracks(&mut ignore);
@@ -113,13 +119,14 @@ fn read_big() {
 
     // check the BASIC program
     let lib_tokens = get_tokens("disk_builder.ibas");
-    let disk_tokens = emulator_disk.load("hello").expect("error");
-    assert_eq!(disk_tokens,(0,lib_tokens));
+    let fimg = emulator_disk.get("hello").expect(RCH);
+    let disk_tokens = fimg.unpack_tok().expect(RCH);
+    assert_eq!(disk_tokens,lib_tokens);
 
     // check the text records
-    let recs = emulator_disk.read_records("tree1", 128).expect("failed to read tree1");
+    let recs = emulator_disk.get("tree1").expect(RCH).unpack_rec(Some(128)).expect(RCH);
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 1\n");
-    let recs = emulator_disk.read_records("tree2", 127).expect("failed to read tree2");
+    let recs = emulator_disk.get("tree2").expect(RCH).unpack_rec(Some(127)).expect(RCH);
     assert_eq!(recs.map.get(&2000).unwrap(),"HELLO FROM TREE 2\n");
     assert_eq!(recs.map.get(&4000).unwrap(),"HELLO FROM TREE 2\n");
 
@@ -128,8 +135,10 @@ fn read_big() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    let binary_data = emulator_disk.bload("sapling").expect("dimg error");
-    assert_eq!(binary_data,(16384,buf));
+    let fimg = emulator_disk.get("sapling").expect(RCH);
+    let binary_data = fimg.unpack_bin().expect(RCH);
+    assert_eq!(binary_data,buf);
+    assert_eq!(fimg.get_load_address(),16384);
 
 }
 
@@ -144,21 +153,26 @@ fn write_big() {
 
     // create and save the BASIC program
     let tokens = get_tokens("disk_builder.ibas");
-    disk.save("hello",&tokens,ItemType::IntegerTokens,Some(&vec![0x08])).expect("dimg error");
+    let mut fimg = disk.new_fimg(None,false,"hello").expect(RCH);
+    fimg.pack_tok(&tokens,ItemType::IntegerTokens,Some(&vec![0x08])).expect(RCH);
+    disk.put(&fimg).expect(RCH);
 
     // make tree files directly and from JSON
     let mut records = a2kit::fs::Records::new(128);
     records.add_record(2000, "HELLO FROM TREE 1");
-    disk.write_records("tree1", &records).expect("dimg error");
+    fimg.pack_rec(&records).expect(RCH);
+    disk.put_at("tree1",&mut fimg).expect(RCH);
     let records = a2kit::fs::Records::from_json(JSON_REC).expect("could not parse JSON");
-    disk.write_records("tree2", &records).expect("dimg error");
+    fimg.pack_rec(&records).expect(RCH);
+    disk.put_at("tree2",&mut fimg).expect(RCH);
 
     // write a large binary (sapling terminology is vestigial)
     buf = vec![0;16384];
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,Some(&vec![0x5e])).expect("dimg error");
+    fimg.pack_bin(&buf,Some(16384),Some(&vec![0x5e])).expect("dimg error");
+    disk.put_at("sapling",&mut fimg).expect(RCH);
 
     let mut ignore = disk.standardize(0);
     ignore_boot_tracks(&mut ignore);
@@ -192,7 +206,7 @@ fn rename_delete() {
     for i in 0..16384 {
         buf[i] = (i%256) as u8;
     }
-    disk.bsave("sapling",&buf,16384,Some(&vec![0x5e])).expect("dimg error");
+    disk.bsave("sapling",&buf,Some(16384),Some(&vec![0x5e])).expect("dimg error");
 
     // delete and rename
     disk.delete("tree2").expect("dimg error");
