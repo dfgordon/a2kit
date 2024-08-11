@@ -263,7 +263,11 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     change: Some(lsp::TextDocumentSyncKind::FULL), 
                     will_save: None,
                     will_save_wait_until: None,
-                    save: None
+                    save: Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(
+                        lsp::SaveOptions {
+                            include_text: Some(true)
+                        }
+                    ))
                 }
             )),
             definition_provider: Some(lsp::OneOf::Left(true)),

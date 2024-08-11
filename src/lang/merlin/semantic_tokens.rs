@@ -1,6 +1,5 @@
 use lsp_types as lsp;
 use tree_sitter;
-use tree_sitter_merlin6502;
 use std::sync::Arc;
 use crate::lang::merlin::Symbols;
 use crate::lang::server::{Tokens,SemanticTokensBuilder};
@@ -8,10 +7,9 @@ use crate::lang::{lsp_range, node_text, Navigate, Navigation};
 use crate::DYNERR;
 
 pub struct SemanticTokensProvider {
-    parser: tree_sitter::Parser,
+    parser: super::MerlinParser,
     row: isize,
 	col: isize,
-	line: String,
 	curr_macro: Option<String>,
 	builder: SemanticTokensBuilder,
 	symbols: Arc<Symbols>
@@ -19,13 +17,10 @@ pub struct SemanticTokensProvider {
 
 impl SemanticTokensProvider {
 	pub fn new() -> Self {
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_merlin6502::language()).expect("could not start parser");
 		Self {
-			parser,
+			parser: super::MerlinParser::new(),
 			row: 0,
 			col: 0,
-			line: String::new(),
 			curr_macro: None,
 			builder: SemanticTokensBuilder::new(),
 			symbols: Arc::new(Symbols::new())
@@ -41,15 +36,13 @@ impl Tokens for SemanticTokensProvider {
 		self.builder.reset();
 		self.row = 0;
 		for line in txt.lines() {
-			self.col = 0;
-			self.line = self.symbols.adjust_line(self.row, line, "\n");
-			if self.line.starts_with(super::CALL_TOK) {
-				// ASSUMPTION is col will be a byte offset and LSP position encoding is utf-16
-				self.col = -2*(super::CALL_TOK.len_utf16() as isize);
-			}
-			if let Some(tree) = self.parser.parse(&self.line,None) {
-				self.walk(&tree)?;
-			}
+            if line.trim_start().len()==0 {
+				self.row += 1;
+                continue;
+            }
+            let tree = self.parser.parse(line,&self.symbols)?;
+			self.col = self.parser.col_offset();
+            self.walk(&tree)?;
 			self.row += 1;
 		}
 		self.builder.clone_result()
@@ -61,7 +54,7 @@ impl Navigate for SemanticTokensProvider {
 		let mut rng = lsp_range(curs.node().range(),self.row,self.col);
         let knd = curs.node().kind();
 		if knd == "macro_def" {
-			self.curr_macro = Some(node_text(&curs.node(), &self.line));
+			self.curr_macro = Some(node_text(&curs.node(), self.parser.line()));
 			self.builder.push(rng,"macro");
 			return Ok(Navigation::GotoSibling);
 		}
@@ -76,7 +69,7 @@ impl Navigate for SemanticTokensProvider {
 		}
 		if knd == "global_label" && self.curr_macro.is_some() {
 			if let Some(mac) = self.symbols.macros.get(self.curr_macro.as_ref().unwrap()) {
-				if mac.children.contains_key(&node_text(&curs.node(), &self.line)) {
+				if mac.children.contains_key(&node_text(&curs.node(), self.parser.line())) {
 					self.builder.push(rng,"parameter");
 					return Ok(Navigation::GotoSibling);
 				}
