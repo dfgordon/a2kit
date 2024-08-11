@@ -6,8 +6,9 @@
 //! File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
 //! some disk image, which it uses as storage.  Files are represented by a `FileImage`
 //! object.  This is a low level representation of the file that works for any of the supported
-//! file systems.  File image data is processed through the `Packing` trait.  The trait object
-//! is returned by the `FileImage::packer` method.
+//! file systems.  File image data is processed through the `Packing` trait.  There are
+//! convenience functions in `DiskFS` such as `read_text`, which gets a file image and unpacks it
+//! as text, or `write_text`, which packs text into a file image and puts it.
 //! 
 //! This module also contains the `Block` enumeration, which specifies and locates allocation units.
 //! The enumeration names the file system's allocation system, and its value is a specific block.

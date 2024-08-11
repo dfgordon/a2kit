@@ -1,0 +1,2 @@
+completions/* linguist-vendored=true
+tests/** linguist-detectable=false

@@ -7,7 +7,7 @@ const IN_HELP: &str = "if disk image is piped, omit `--dimg` option";
 pub fn build_cli() -> Command {
     let long_help = "a2kit is always invoked with exactly one of several subcommands.
 The subcommands are generally designed to function as nodes in a pipeline.
-PowerShell users may need to wrap the pipeline in a native shell.
+PowerShell users should use version 7.4 or higher to avoid lots of trouble.
 Set RUST_LOG environment variable to control logging level.
   levels: trace,debug,info,warn,error
 
@@ -95,7 +95,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .required(true);
 
     let mut main_cmd = Command::new("a2kit")
-        .about("Manipulates retro files and disk images with emphasis on Apple II.")
+        .about("Retro languages and disk images with emphasis on Apple II.")
         .after_long_help(long_help)
         .version(crate_version!());
 

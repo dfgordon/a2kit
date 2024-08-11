@@ -1,11 +1,10 @@
 # a2kit
 
-Command line interface and library for manipulating retro disk images, file systems, and languages, with emphasis on Apple II.
+Command line interface and library for retro disk images, file systems, and languages, with emphasis on Apple II.
 
 * Designed to be scriptable
-* Languages - Applesoft, Integer BASIC, Merlin Assembly
-    - syntax comprehension, complete LSP support coming with v3
-    - tokenization, detokenization
+* Language Servers - Applesoft, Integer BASIC, Merlin Assembly
+    - deep analysis, tokenization, disassembly, follows LSP
 * File Systems - Apple DOS 3.x, ProDOS, CP/M, Pascal, FAT (such as MS-DOS)
     - full read and write access
     - high or low level manipulations
