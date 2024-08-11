@@ -24,11 +24,11 @@ fn output_get(result: UnpackedData, load_addr: usize) -> STDRESULT {
     Ok(())
 }
 
-fn unpack_primitive(fimg: &FileImage,typ: ItemType,rec_len: Option<usize>,trunc: bool) -> Result<UnpackedData,DYNERR> {
+fn unpack_primitive(fimg: &FileImage,typ: ItemType,rec_len: Option<usize>,trunc: bool,indent: Option<u16>) -> Result<UnpackedData,DYNERR> {
     match typ {
         ItemType::Automatic => fimg.unpack(),
-        ItemType::FileImage => Ok(UnpackedData::Text(fimg.to_json(Some(2)))),
-        ItemType::Records => Ok(UnpackedData::Text(fimg.unpack_rec_str(rec_len,Some(2))?)),
+        ItemType::FileImage => Ok(UnpackedData::Text(fimg.to_json(indent))),
+        ItemType::Records => Ok(UnpackedData::Text(fimg.unpack_rec_str(rec_len,indent)?)),
         ItemType::ApplesoftTokens => Ok(UnpackedData::Binary(fimg.unpack_tok()?)),
         ItemType::IntegerTokens => Ok(UnpackedData::Binary(fimg.unpack_tok()?)),
         ItemType::MerlinTokens => Ok(UnpackedData::Binary(fimg.unpack_raw(true)?)),
@@ -58,7 +58,7 @@ pub fn unpack(cmd: &clap::ArgMatches) -> STDRESULT {
     };
     let json_str = String::from_utf8(dat)?;
     let fimg = FileImage::from_json(&json_str)?;
-    let result = unpack_primitive(&fimg, typ, rec_len, trunc)?;
+    let result = unpack_primitive(&fimg, typ, rec_len, trunc, cmd.get_one::<u16>("indent").copied())?;
     output_get(result, fimg.get_load_address() as usize)
 }
 
@@ -103,7 +103,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                 return output_get(UnpackedData::Binary(cum),0);
             }
             let fimg = disk.get(&src_path)?;
-            let result = unpack_primitive(&fimg, typ, rec_len, trunc)?;
+            let result = unpack_primitive(&fimg, typ, rec_len, trunc, cmd.get_one::<u16>("indent").copied())?;
             return output_get(result,fimg.get_load_address() as usize);
         },
 
@@ -161,6 +161,10 @@ pub fn mget(cmd: &clap::ArgMatches) -> STDRESULT {
         let fimg = disk.get(path.as_str().unwrap())?;
         ans.push(json::parse(&fimg.to_json(None))?)?;
     }
-    println!("{}",ans.to_string());
+    if let Some(spaces) = cmd.get_one::<u16>("indent") {
+        println!("{}",json::stringify_pretty(ans,*spaces));
+    } else {
+        println!("{}",json::stringify(ans))
+    }
     return Ok(());
 }

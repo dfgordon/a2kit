@@ -69,6 +69,7 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--type', 'type', [CompletionResultType]::ParameterName, 'type of the item')
             [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('-l', 'l', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
             [CompletionResult]::new('--len', 'len', [CompletionResultType]::ParameterName, 'length of record in DOS 3.3 random access text file')
             [CompletionResult]::new('--trunc', 'trunc', [CompletionResultType]::ParameterName, 'truncate raw at EOF if possible')
@@ -92,6 +93,7 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
         'a2kit;mget' {
             [CompletionResult]::new('-d', 'd', [CompletionResultType]::ParameterName, 'path to disk image itself')
             [CompletionResult]::new('--dimg', 'dimg', [CompletionResultType]::ParameterName, 'path to disk image itself')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break
@@ -116,6 +118,7 @@ Register-ArgumentCompleter -Native -CommandName 'a2kit' -ScriptBlock {
             [CompletionResult]::new('--block', 'block', [CompletionResultType]::ParameterName, 'size of block in bytes if needed')
             [CompletionResult]::new('-o', 'o', [CompletionResultType]::ParameterName, 'operating system format')
             [CompletionResult]::new('--os', 'os', [CompletionResultType]::ParameterName, 'operating system format')
+            [CompletionResult]::new('--indent', 'indent', [CompletionResultType]::ParameterName, 'JSON indentation, omit to minify')
             [CompletionResult]::new('-h', 'h', [CompletionResultType]::ParameterName, 'Print help')
             [CompletionResult]::new('--help', 'help', [CompletionResultType]::ParameterName, 'Print help')
             break

@@ -10,8 +10,9 @@ use std::io;
 use std::io::Read;
 use std::fmt::Write;
 use std::borrow::BorrowMut;
-use lsp_types as lsp;
+use lsp_types::{self as lsp, DiagnosticSeverity};
 use crate::lang::{Document,lsp_range, node_text, node_integer, extended_range};
+use crate::lang::server::basic_diag;
 use super::{Variable,Line,Symbols};
 use super::settings::Settings;
 use crate::{DYNERR, STDRESULT};
@@ -21,6 +22,60 @@ use crate::lang::{Navigate,Navigation};
 use crate::lang::server::Analysis;
 
 use super::name_range;
+
+struct FlowState {
+    ip_branch_stack: Vec<lsp::Range>,
+    curr_line_num: Option<u16>,
+    row: isize,
+    col: isize,
+    line: String
+}
+
+impl FlowState {
+    fn new() -> Self {
+        Self {
+            ip_branch_stack: Vec::new(),
+            curr_line_num: None,
+            row: 0,
+            col: 0,
+            line: String::new()
+        }
+    }
+    fn new_line(&mut self,txt: &str,row: isize) {
+        self.ip_branch_stack = Vec::new();
+        self.curr_line_num = None;
+        self.line = txt.to_string();
+        self.row = row;
+        self.col = 0;
+    }
+    /// use address node (presumed to follow POKE) to start an interprogram branch, if detected
+    fn eval_ip_start(&mut self,addr: &tree_sitter::Node) {
+        if let Some(val) = node_integer::<u8>(&addr,&self.line) {
+            if val == 103 || val == 104 {
+                self.ip_branch_stack.push(lsp_range(addr.range(), self.row, self.col));
+            }
+        }
+    }
+    /// use linenum reference to pop the interprogram branch if any, and check if line number condition
+    /// is satisfied, return a diagnostic if needed.
+    fn eval_ip_branch(&mut self,linenum: &tree_sitter::Node) -> Option<lsp::Diagnostic> {
+        if self.ip_branch_stack.len() == 0 {
+            return None;
+        }
+        self.ip_branch_stack = Vec::new(); // clear completely
+        let end_rng = lsp_range(linenum.range(),self.row,self.col);
+        if let Some(new) = node_integer::<u16>(&linenum,&self.line) {
+            if let Some(curr) = self.curr_line_num {
+                if curr/256 >= new/256 {
+                    return Some(basic_diag(end_rng, "interprogram branch", lsp::DiagnosticSeverity::INFORMATION));
+                } else {
+                    return Some(basic_diag(end_rng,"interprogram branch violates search condition",lsp::DiagnosticSeverity::ERROR));
+                }
+            }
+        }
+        None
+    }
+}
 
 pub struct Analyzer {
     row: isize,
@@ -33,6 +88,7 @@ pub struct Analyzer {
     vcollisions: HashMap<String,HashSet<String>>,
     symbols: Symbols,
     last_good_line_number: i64,
+    flow: FlowState,
     depth_of_def: u32,
     dummy_var_key: String,
     end_name: regex::Regex
@@ -50,6 +106,7 @@ impl Navigate for Analyzer {
 
 impl Analysis for Analyzer {
     fn analyze(&mut self,doc: &Document) -> Result<(),DYNERR> {
+        self.flow = FlowState::new();
         self.diagnostics = Vec::new();
         self.symbols = Symbols::new();
         self.fcollisions = HashMap::new();
@@ -68,10 +125,15 @@ impl Analysis for Analyzer {
                     continue;
                 }
                 self.line = String::from(line) + "\n";
+                self.flow.new_line(&self.line, self.row);
                 match parser.parse(&self.line,None) {
                     Some(tree) => self.walk(&tree)?,
                     None => return Err(Box::new(crate::lang::Error::ParsingError))
                 };
+                if self.flow.ip_branch_stack.len() > 0 {
+                    let rng = self.flow.ip_branch_stack.pop().unwrap();
+                    self.diagnostics.push(basic_diag(rng, "interprogram branch is not taken on this line", DiagnosticSeverity::ERROR));
+                }
                 self.row += 1;
             }    
         }
@@ -132,6 +194,7 @@ impl Analyzer {
             vcollisions: HashMap::new(),
             symbols: Symbols::new(),
             last_good_line_number: -1,
+            flow: FlowState::new(),
             depth_of_def: 0,
             dummy_var_key: "".to_string(),
             end_name: regex::Regex::new(r"\W").expect("regex failure")
@@ -144,7 +207,7 @@ impl Analyzer {
         self.symbols.clone()
     }
     fn create(&self,rng: tree_sitter::Range,mess: &str,severity: lsp::DiagnosticSeverity) -> lsp::Diagnostic {
-        crate::lang::server::basic_diag(lsp_range(rng,self.row,self.col),mess,severity)
+        basic_diag(lsp_range(rng,self.row,self.col),mess,severity)
     }
     fn push(&mut self,rng: tree_sitter::Range,mess: &str,severity: lsp::DiagnosticSeverity) {
         self.diagnostics.push(self.create(rng,mess,severity));
@@ -358,7 +421,10 @@ impl Analyzer {
                 Some(x) => self.symbols.lines.get_mut(&x),
                 _ => None
             };
-			if line.is_some() {
+            let ip_branch = self.flow.eval_ip_branch(&node);
+            if ip_branch.is_some() {
+                self.diagnostics.push(ip_branch.unwrap());
+            } else if line.is_some() {
                 if is_sub {
                     line.unwrap().gosubs.push(rng);
                 } else {
@@ -440,6 +506,10 @@ impl Analyzer {
             self.push(curs.node().range(), &("syntax error: ".to_string() + &curs.node().to_sexp()), lsp::DiagnosticSeverity::ERROR);
             return Ok(Navigation::GotoSibling);
         }
+		if curs.node().kind() == "linenum" && parent.is_some() && parent.unwrap().kind() == "line" {
+            self.flow.curr_line_num = node_integer::<u16>(&curs.node(),&self.line);
+			return Ok(Navigation::GotoSibling);
+		}
 		if curs.node().kind().starts_with("tok_") {
 			self.check_case(curs.node(), rng);
         }
@@ -499,6 +569,7 @@ impl Analyzer {
 		else if curs.node().kind()=="tok_poke"
 		{
 			if let Some(addr) = curs.node().next_named_sibling() {
+                self.flow.eval_ip_start(&addr);
 				self.value_range(addr,-32767.,65535.,true);
 				if let Some(byte) = addr.next_named_sibling() {
 					self.value_range(byte,0.,255.,true);

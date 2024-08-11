@@ -108,6 +108,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 .value_name("TYPE").required(false).value_parser(get_put_types)
             )
             .arg(dimg_arg_opt.clone())
+            .arg(indent_arg.clone())
             .arg(Arg::new("len").long("len").short('l').help("length of record in DOS 3.3 random access text file")
                 .value_name("LENGTH").required(false)
             )
@@ -131,6 +132,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     main_cmd = main_cmd.subcommand(
         Command::new("mget")
             .arg(dimg_arg_req.clone())
+            .arg(indent_arg.clone())
             .about("read list of paths from stdin, get files from disk image, write file images to stdout")
             .after_help("this can take `a2kit glob` as a piped input")
     );
@@ -161,6 +163,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true)
                     .value_parser(os_names)
             )
+            .arg(indent_arg.clone())
             .about("pack data into a file image")
     );
     main_cmd = main_cmd.subcommand(
@@ -422,7 +425,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             )
             .arg(indent_arg.clone())
             .about("write JSON list of matching paths to stdout")
-            .after_help(IN_HELP)
+            .after_help("the pattern may need to be quoted depending on shell\n\n".to_string() + IN_HELP)
     );
     return main_cmd;
 }

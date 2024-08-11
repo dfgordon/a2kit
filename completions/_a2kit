@@ -36,6 +36,7 @@ _arguments "${_arguments_options[@]}" : \
 '--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
+'--indent+[JSON indentation, omit to minify]:SPACES: ' \
 '-l+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
 '--len+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
 '--trunc[truncate raw at EOF if possible]' \
@@ -61,6 +62,7 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
+'--indent+[JSON indentation, omit to minify]:SPACES: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -87,6 +89,7 @@ _arguments "${_arguments_options[@]}" : \
 '--block+[size of block in bytes if needed]:BYTES: ' \
 '-o+[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
 '--os+[operating system format]:OS:(cpm2 cpm3 dos32 dos33 prodos pascal fat)' \
+'--indent+[JSON indentation, omit to minify]:SPACES: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

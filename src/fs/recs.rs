@@ -21,7 +21,7 @@ impl Records {
     /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
     /// This routine assumes ASCII null terminates any record.
     pub fn from_fimg(fimg: &FileImage,record_length: usize,converter: impl TextConversion) -> Result<Records,DYNERR> {
-        if record_length==0 {
+        if record_length < 2 {
             return Err(Box::new(Error::FileFormat));
         }
         let mut ans = Records::new(record_length);
@@ -72,6 +72,10 @@ impl Records {
     /// Update a file image's data using the records, this is usually done before writing to a disk image.
     /// This will set the file image's eof, but no other metadata.
     pub fn update_fimg(&self,ans: &mut FileImage,require_first: bool,converter: impl TextConversion,clear: bool) -> STDRESULT {
+        if self.record_len < 2 || self.record_len > 0xffff {
+            log::error!("refusing record length {}",self.record_len);
+            return Err(Box::new(Error::FileFormat));
+        }
         if clear {
             ans.chunks = HashMap::new();
         }
@@ -81,36 +85,45 @@ impl Records {
         if require_first {
             ans.chunks.insert(0,vec![0;chunk_len]);
         }
+        let mut next_buf = |old_chunk: usize,old_buf: Option<Vec<u8>>| -> Vec<u8> {
+            let mut chunk = old_chunk;
+            if let Some(old) = old_buf {
+                ans.chunks.insert(chunk,old);
+                chunk += 1;
+            }
+            match ans.chunks.get_mut(&chunk) {
+                Some(v) => v.clone(),
+                None => Vec::new()
+            }
+        };
         // now insert the actual records, first chunk can always be overwritten
         for (rec_num,fields) in &self.map {
             match converter.from_utf8(fields) {
                 Some(data_bytes) => {
-                    let logical_chunk = self.record_len * rec_num / chunk_len;
-                    let end_logical_chunk = 1 + (self.record_len * (rec_num+1) - 1) / chunk_len;
-                    let fwd_offset = self.record_len * rec_num % chunk_len;
-                    for lb in logical_chunk..end_logical_chunk {
-                        let start_byte = match lb {
-                            l if l==logical_chunk => fwd_offset,
-                            _ => 0
-                        };
-                        let end_byte = match lb {
-                            l if l==end_logical_chunk-1 => fwd_offset + data_bytes.len() - chunk_len*(end_logical_chunk-logical_chunk-1),
-                            _ => chunk_len
-                        };
-                        let mut buf = match ans.chunks.contains_key(&lb) {
-                            true => ans.chunks.get(&lb).unwrap().clone(),
-                            false => Vec::new()
-                        };
-                        // extend only to the end of data
-                        for _i in buf.len()..end_byte as usize {
-                            buf.push(0);
+                    if data_bytes.len() > self.record_len {
+                        log::warn!("record {} is too long and will corrupt other records",rec_num);
+                        //log::warn!("truncating record {} to maximum {}",rec_num,self.record_len);
+                        //data_bytes = data_bytes[0..self.record_len].to_vec();
+                    }
+                    let mut chunk = self.record_len * rec_num / chunk_len;
+                    let mut offset = self.record_len * rec_num % chunk_len;
+                    let mut buf = next_buf(chunk,None);
+                    for i in 0..data_bytes.len() {
+                        if offset >= buf.len() {
+                            for _j in buf.len()..offset {
+                                buf.push(0);
+                            }
+                            buf.push(data_bytes[i]);
+                        } else {
+                            buf[offset] = data_bytes[i];
                         }
-                        // load the part of the chunk with the data
-                        for i in start_byte..end_byte {
-                            buf[i as usize] = data_bytes[chunk_len*(lb-logical_chunk) + i - fwd_offset];
+                        offset += 1;
+                        if offset >= chunk_len || i+1 == data_bytes.len() {
+                            eof = usize::max(chunk*chunk_len + buf.len(),eof);
+                            buf = next_buf(chunk,Some(buf));
+                            chunk += 1;
+                            offset = 0;
                         }
-                        eof = usize::max(lb*512 + buf.len(),eof);
-                        ans.chunks.insert(lb as usize,buf);
                     }
                 },
                 None => return Err(Box::new(std::fmt::Error))

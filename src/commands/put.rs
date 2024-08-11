@@ -65,7 +65,7 @@ pub fn pack(cmd: &clap::ArgMatches) -> STDRESULT {
         _ => return Err(Box::new(CommandError::UnknownItemType))
     };
     pack_primitive(&mut fimg, &dat, load_addr, typ)?;
-    println!("{}",fimg.to_json(Some(2)));
+    println!("{}",fimg.to_json(cmd.get_one::<u16>("indent").copied()));
     Ok(())
 }
 

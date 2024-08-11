@@ -742,7 +742,7 @@ _a2kit() {
             return 0
             ;;
         a2kit__get)
-            opts="-f -t -d -l -h --file --type --dimg --len --trunc --help"
+            opts="-f -t -d -l -h --file --type --dimg --indent --len --trunc --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -814,6 +814,10 @@ _a2kit() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o filenames
                     fi
+                    return 0
+                    ;;
+                --indent)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --len)
@@ -1346,7 +1350,7 @@ _a2kit() {
             return 0
             ;;
         a2kit__mget)
-            opts="-d -h --dimg --help"
+            opts="-d -h --dimg --indent --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1380,6 +1384,10 @@ _a2kit() {
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
                         compopt -o filenames
                     fi
+                    return 0
+                    ;;
+                --indent)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -1630,7 +1638,7 @@ _a2kit() {
             return 0
             ;;
         a2kit__pack)
-            opts="-f -t -a -b -o -h --file --type --addr --block --os --help"
+            opts="-f -t -a -b -o -h --file --type --addr --block --os --indent --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1696,6 +1704,10 @@ _a2kit() {
                     ;;
                 -o)
                     COMPREPLY=($(compgen -W "cpm2 cpm3 dos32 dos33 prodos pascal fat" -- "${cur}"))
+                    return 0
+                    ;;
+                --indent)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)

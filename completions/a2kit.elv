@@ -65,6 +65,7 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --type 'type of the item'
             cand -d 'path to disk image itself'
             cand --dimg 'path to disk image itself'
+            cand --indent 'JSON indentation, omit to minify'
             cand -l 'length of record in DOS 3.3 random access text file'
             cand --len 'length of record in DOS 3.3 random access text file'
             cand --trunc 'truncate raw at EOF if possible'
@@ -86,6 +87,7 @@ set edit:completion:arg-completer[a2kit] = {|@words|
         &'a2kit;mget'= {
             cand -d 'path to disk image itself'
             cand --dimg 'path to disk image itself'
+            cand --indent 'JSON indentation, omit to minify'
             cand -h 'Print help'
             cand --help 'Print help'
         }
@@ -108,6 +110,7 @@ set edit:completion:arg-completer[a2kit] = {|@words|
             cand --block 'size of block in bytes if needed'
             cand -o 'operating system format'
             cand --os 'operating system format'
+            cand --indent 'JSON indentation, omit to minify'
             cand -h 'Print help'
             cand --help 'Print help'
         }
