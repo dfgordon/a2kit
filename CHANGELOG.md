@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixes
+
+* More complete handling of Merlin folding ranges
+* ProDOS and FAT glob patterns are automatically prefixed when necessary
+* CP/M generic catalog includes user numbers when there are users other than user 0
+* Disk server write operations will actually write
+* Fix an issue with the head map in IMD and TD0 images
+
 ## [3.0.0] - 2024-08-11
 
 ### New Features

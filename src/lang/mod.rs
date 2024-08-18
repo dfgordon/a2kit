@@ -494,6 +494,13 @@ pub fn line_entry(lang: tree_sitter::Language,prompt: &str) -> String
 
 pub fn eprint_diagnostic(diag: &lsp::Diagnostic, program: &str) {
     // line search not very efficient, perhaps it will do...
+    if let Some(sev) = diag.severity {
+        if sev == lsp::DiagnosticSeverity::HINT {
+            // at present this is used to dim conditional assembly,
+            // and we don't want to flag it.
+            return;
+        }
+    }
     let mut lines = program.lines();
     let mut maybe_line = None;
     for _i in 0..diag.range.start.line+1 {

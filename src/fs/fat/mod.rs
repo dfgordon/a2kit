@@ -1063,7 +1063,11 @@ impl super::DiskFS for Disk {
     fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
         let (_,dir) = self.get_root_dir()?;
         self.curr_path = vec!["/".to_string()];
-        self.glob_node(pattern, &dir,case_sensitive)
+        if pattern.starts_with("/") {
+            self.glob_node(pattern, &dir,case_sensitive)
+        } else {
+            self.glob_node(&["/",pattern].concat(), &dir, case_sensitive)
+        }
     }
     fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let (vol,dir) = self.get_root_dir()?;

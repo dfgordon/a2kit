@@ -20,9 +20,7 @@ use log::{info,trace};
 
 pub mod macros;
 mod labels;
-mod syntax;
-mod addressing;
-mod pseudo;
+mod asm;
 pub mod workspace;
 
 fn node_path(node: &tree_sitter::Node, source: &str) -> Vec<String> {
@@ -73,8 +71,7 @@ pub struct Analyzer {
     ctx: Context,
     scanner: WorkspaceScanner,
     workspace_folders: Vec<lsp_types::Url>,
-    addr_mode_visitor: addressing::AddressModeSentry,
-    pseudo_op_visitor: pseudo::PseudoOpSentry,
+    asm: asm::Asm,
     pass: usize,
     /// Map from document uri to its diagnostics.
     /// Scope of this set is a master and its includes.
@@ -96,14 +93,13 @@ pub struct Analyzer {
 impl Analyzer {
     pub fn new() -> Self {
         let ctx = Context::new();
-        let addr_mode_visitor = addressing::AddressModeSentry::new(&ctx);
+        let asm = asm::Asm::new(&ctx);
         Self {
             parser: super::MerlinParser::new(),
             ctx,
             scanner: WorkspaceScanner::new(),
             workspace_folders: Vec::new(),
-            addr_mode_visitor,
-            pseudo_op_visitor: pseudo::PseudoOpSentry::new(),
+            asm,
             pass: 0,
             diagnostic_set: HashMap::new(),
             diagnostics: Vec::new(),
@@ -121,13 +117,14 @@ impl Analyzer {
     }
     fn reset_results(&mut self) {
         self.diagnostic_set = HashMap::new();
+        self.folding_set = HashMap::new();
         self.diagnostics = Vec::new();
         self.symbols = super::Symbols::new();
+        self.folding = Vec::new();
     }
     fn reset_for_pass(&mut self) {
         self.ctx.reset_for_pass();
-        self.pseudo_op_visitor = pseudo::PseudoOpSentry::new();
-        self.addr_mode_visitor = addressing::AddressModeSentry::new(&self.ctx);
+        self.asm = asm::Asm::new(&self.ctx);
     }
     pub fn get_symbols(&self) -> super::Symbols {
         self.symbols.clone()
@@ -199,6 +196,9 @@ impl Analyzer {
             self.ctx.set_col(self.parser.col_offset());
             self.symbols.update_row_data(&doc,self.ctx.row(), self.ctx.col());
             self.walk(&tree)?;
+            if self.pass == 3 {
+                self.ctx.annotate_fold(&mut self.diagnostics);
+            }
             self.ctx.next_row();
         }
         // save diagnostics for this scope
@@ -225,12 +225,7 @@ impl Navigate for Analyzer {
         match self.pass {
             1 => labels::visit_gather(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
             2 => labels::visit_verify(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
-            3 => {
-                syntax::visit(curs, &self.ctx, &mut self.diagnostics);
-                self.addr_mode_visitor.visit(curs, &mut self.ctx, &mut self.diagnostics);
-                self.pseudo_op_visitor.visit(curs, &mut self.ctx, &mut self.diagnostics, &mut self.folding);
-                Ok(Navigation::GotoChild)
-            }
+            3 => self.asm.visit(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics, &mut self.folding),
             _ => panic!("unexpected number of visit passes")
         }
     }
@@ -268,6 +263,7 @@ impl Analysis for Analyzer {
             // clean up any residual scope (this is a must for global scopes)
             self.ctx.exit_scope(&mut self.symbols);
         }
+        self.ctx.close_all_folds(Arc::clone(&master), &mut self.diagnostic_set, &mut self.folding_set);
         info!("Assembler: {}",self.symbols.assembler);
         info!("Processor: {}",self.symbols.processor);
         info!("Globals: {}",self.symbols.globals.len());

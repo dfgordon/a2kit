@@ -124,14 +124,10 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
         ctx.enter_scope(&txt,symbols);
         return Ok(Navigation::GotoSibling);
     } else if node.kind()=="psop_eom" {
-        match in_macro {
-            true => {
-                ctx.exit_scope(symbols);
-            },
-            false => {
-                push(rng,"unmatched end of macro (EOM terminates all preceding MAC pseudo-ops)",lsp::DiagnosticSeverity::ERROR);
-            }
+        if in_macro {
+            ctx.exit_scope(symbols);
         }
+        // if not, fold checks will catch the error
         return Ok(Navigation::GotoSibling);
     } else if child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();

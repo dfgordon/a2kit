@@ -32,10 +32,6 @@
 //! These functions have to be able to take a `Block` and transform it into whatever disk
 //! addressing the image uses.  The tables in `bios::skew` are accessible to any image.
 
-// TODO: the DiskStruct trait, defined in separate derive_macro crates, should be revised
-// to return a Result, so we can error out instead of panicking if the image is bad.
-// Also revise it to accept slices.
-
 pub mod disk35;
 pub mod disk525;
 pub mod dsk_d13;

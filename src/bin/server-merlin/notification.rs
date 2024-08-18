@@ -94,12 +94,12 @@ pub fn handle_notification(
             if let Ok(_params) = serde_json::from_value::<lsp::SetTraceParams>(note.params) {
                 logger(&connection,"ignoring the SetTrace notification");
             }
-        }
+        },
         lsp::notification::DidChangeWatchedFiles::METHOD => {
             if let Ok(_params) = serde_json::from_value::<lsp::DidChangeWatchedFilesParams>(note.params) {
                 logger(&connection,"ignoring the DidChangeWatchedFiles notification");
             }
-        }
+        },
         lsp::notification::Cancel::METHOD => {
             // TODO: figure out when this needs to be handled specially
             if let Ok(params) = serde_json::from_value::<lsp::CancelParams>(note.params) {

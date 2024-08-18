@@ -1015,8 +1015,13 @@ impl super::DiskFS for Disk {
     fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
         let vhdr = self.get_vol_header()?;
         let dir_block = self.find_dir_key_block("/")?;
-        self.curr_path = vec![["/",&vhdr.name(),"/"].concat()];
-        self.glob_node(pattern, dir_block, case_sensitive)
+        let vol_path = ["/",&vhdr.name(),"/"].concat();
+        self.curr_path = vec![vol_path.clone()];
+        if pattern.starts_with("/") {
+            self.glob_node(pattern, dir_block, case_sensitive)
+        } else {
+            self.glob_node(&(vol_path + pattern), dir_block, case_sensitive)
+        }
     }
     fn tree(&mut self,include_meta: bool,indent: Option<u16>) -> Result<String,DYNERR> {
         let vhdr = self.get_vol_header()?;

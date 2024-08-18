@@ -625,8 +625,17 @@ impl super::DiskFS for Disk {
         match dir.build_files(&self.dpb, [3,0,0]) {
             Ok(files) => {
                 let mut ans = Vec::new();
-                for (_,info) in files {
-                    ans.push(super::universal_row(&info.typ,info.blocks_allocated,&info.name));
+                let mut multi_user = false;
+                for (_,info) in &files {
+                    if info.user != 0 {
+                        multi_user = true;
+                    }
+                }
+                for (name,info) in files {
+                    match multi_user {
+                        true => ans.push(super::universal_row(&info.typ,info.blocks_allocated,&name)),
+                        false => ans.push(super::universal_row(&info.typ, info.blocks_allocated, &info.name))
+                    }
                 }
                 Ok(ans)
             },
@@ -641,7 +650,7 @@ impl super::DiskFS for Disk {
         };
         let dir = self.get_directory();
         let files = dir.build_files(&self.dpb, self.cpm_vers)?;
-        for (name,info) in files {
+        for (name,_info) in files {
             let name = match case_sensitive {
                 true => name.clone(),
                 false => name.to_uppercase()

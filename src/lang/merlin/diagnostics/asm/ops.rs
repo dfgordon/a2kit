@@ -2,21 +2,21 @@
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use crate::lang::merlin::context::Context;
-use super::super::ProcessorType;
+use crate::lang::merlin::{MerlinVersion,ProcessorType};
 
-pub struct AddressModeSentry {
+pub struct OpSentry {
     program_line: usize,
     xc_count: usize,
     xc_appearances: usize
 }
 
-impl AddressModeSentry
+impl OpSentry
 {
     pub fn new(ctx: &Context) -> Self {
         Self {
             program_line: 0,
             xc_count: match ctx.merlin_version() {
-                super::super::MerlinVersion::Merlin8 => 0,
+                MerlinVersion::Merlin8 => 0,
                 _ => 2
             },
             xc_appearances: 0

@@ -556,6 +556,10 @@ impl Td0 {
     fn check_user_area_up_to_cyl(&self,cyl: usize,off: u16) -> STDRESULT {
         let sector_count = self.tracks[off as usize].sectors.len();
         let mut sector_shift: Option<u8> = None;
+        if cyl*self.heads >= self.tracks.len() {
+            log::error!("track {} was requested, max is {}",cyl*self.heads,self.tracks.len()-1);
+            return Err(Box::new(super::Error::TrackCountMismatch));
+        }
         for i in off as usize..cyl*self.heads+1 {
             let trk = &self.tracks[i];
             if trk.sectors.len()!=sector_count {
@@ -606,11 +610,11 @@ impl img::DiskImage for Td0 {
         self.heads
     }
     fn track_2_ch(&self,track: usize) -> [usize;2] {
-        [self.tracks[track].header.cylinder as usize,self.tracks[track].header.head as usize]
+        [self.tracks[track].header.cylinder as usize,(self.tracks[track].header.head & HEAD_MASK) as usize]
     }
     fn ch_2_track(&self,ch: [usize;2]) -> usize {
         for i in 0..self.tracks.len() {
-            if self.tracks[i].header.cylinder as usize==ch[0] && self.tracks[i].header.head as usize==ch[1] {
+            if self.tracks[i].header.cylinder as usize==ch[0] && (self.tracks[i].header.head & HEAD_MASK) as usize==ch[1] {
                 return i
             }
         }
@@ -809,14 +813,14 @@ impl img::DiskImage for Td0 {
             // We will not stop for bad track CRC, but do warn
             let expected_track_crc = crc16(0,&header.to_bytes()[0..3]);
             if header.crc != (expected_track_crc & 0xff) as u8{
-                warn!("track header CRC mismatch at cyl {} head {}",header.cylinder,header.head);
+                warn!("track header CRC mismatch at cyl {} head {}",header.cylinder,header.head & HEAD_MASK);
             }
             let mut trk = Track {
                 header,
                 sectors: Vec::new(),
                 head_pos: 0
             };
-            trace!("found cyl {} head {} with {} sectors",trk.header.cylinder,trk.header.head,trk.header.sectors);
+            trace!("found cyl {} head {} with {} sectors",trk.header.cylinder,trk.header.head & HEAD_MASK,trk.header.sectors);
             for i in 0..trk.header.sectors {
                 let mut sec = Sector::new();
                 sec.header = SectorHeader::from_bytes(&optional_get_slice!(expanded,ptr,6,"sector header").to_vec()).expect("unreachable");
@@ -940,7 +944,7 @@ impl img::DiskImage for Td0 {
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.header.cylinder as usize,
-            head: trk_obj.header.head as usize,
+            head: (trk_obj.header.head & HEAD_MASK) as usize,
             flux_code,
             nib_code: img::NibbleCode::None,
             chss_map

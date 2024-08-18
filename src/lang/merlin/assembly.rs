@@ -35,7 +35,7 @@
 
 use std::sync::Arc;
 use super::settings::Settings;
-use super::Symbols;
+use super::{Symbol,Symbols};
 use super::handbook::operations::OperationHandbook;
 use super::MerlinVersion;
 use thiserror::Error;
@@ -102,6 +102,102 @@ pub enum Error {
     UnresolvedValue,
     #[error("unsupported (pseudo) operations or arguments")]
     CannotAssemble
+}
+
+/// Evaluate any expression starting on an arg node (assuming it wraps an expression), or an expression node.
+pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>) -> Result<i64,DYNERR> {
+    let node = match start_node.kind().starts_with("arg_") {
+        true => match start_node.named_child(0) {
+            Some(child) => child,
+            None => return Err(Box::new(Error::Syntax))
+        },
+        false => *start_node
+    };
+    match node.kind() {
+        "num" => {
+            match node_radix(&node, source, "$", "%") {
+                Some(v) => Ok(v),
+                None => Err(Box::new(Error::ExpressionEvaluation))
+            }
+        },
+        "pchar" => {
+            let txt = node.utf8_text(source.as_bytes())?;
+            Ok(txt.as_bytes()[1] as i64)
+        },
+        "nchar" => {
+            let txt = node.utf8_text(source.as_bytes())?;
+            Ok(txt.as_bytes()[1] as i64 + 0x80)
+        },
+        "current_addr" => {
+            match pc {
+                Some(pc) => Ok(pc as i64),
+                None => Err(Box::new(Error::UnresolvedProgramCounter))
+            }
+        },
+        "label_ref" => {
+            let txt = node_text(&node, source);
+            if let Some(scope) = scope {
+                if let Some(child) = scope.children.get(&txt) {
+                    if let Some(val) = child.value {
+                        return Ok(val);
+                    }
+                }
+            }
+            if let Some(sym) = symbols.globals.get(&txt) {
+                if let Some(val) = sym.value {
+                    return Ok(val);
+                }
+            }
+            if let Some(sym) = symbols.vars.get(&txt) {
+                if let Some(val) = sym.value {
+                    return Ok(val);
+                }
+            }
+            Err(Box::new(Error::UnresolvedValue))
+        },
+        "unary_aexpr" => {
+            if node.child_count() != 2 {
+                Err(Box::new(Error::Syntax))
+            } else {
+                let raw = eval_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope)?;
+                if node.named_child(1).unwrap().kind() == "eop_minus" {
+                    Ok(-raw)
+                } else {
+                    Ok(raw)
+                }
+            }
+        },
+        "binary_aexpr" => {
+            if node.child_count() != 3 {
+                Err(Box::new(Error::Syntax))
+            } else {
+                let val1 = eval_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope)?;
+                let val2 = eval_expr(&node.named_child(2).unwrap(), source, pc, symbols, scope)?;
+                match node.named_child(1).unwrap().kind() {
+                    "eop_plus" => Ok(val1 + val2),
+                    "eop_minus" => Ok(val1 - val2),
+                    "eop_times" => Ok(val1 * val2),
+                    "eop_div" => Ok(val1 / val2),
+                    "eop_or" => Ok(val1 | val2),
+                    "eop_and" => Ok(val1 & val2),
+                    "eop_xor" => Ok(val1 ^ val2),
+                    "cop_less" => Ok(match val1 < val2 { true => 1, false => 0}),
+                    "cop_gtr" => Ok(match val1 > val2 { true => 1, false => 0}),
+                    "cop_eq" => Ok(match val1 == val2 { true => 1, false => 0}),
+                    "cop_neq" => Ok(match val1 != val2 { true => 1, false => 0}),
+                    _ => Err(Box::new(Error::ExpressionEvaluation))
+                }
+            }
+        },
+        "braced_aexpr" => {
+            if let Some(child) = node.named_child(0) {
+                eval_expr(&child, source, pc, symbols, scope)
+            } else {
+                Err(Box::new(Error::Syntax))
+            }
+        },
+        _ => Err(Box::new(Error::ExpressionEvaluation))
+    }
 }
 
 pub struct Assembler
@@ -336,84 +432,7 @@ impl Assembler {
         Ok(())
 	}
 	fn eval_expr(&self, node: &tree_sitter::Node, source: &str) -> Result<i64,DYNERR> {
-        match node.kind() {
-            "num" => {
-                match node_radix(node, source, "$", "%") {
-                    Some(v) => Ok(v),
-                    None => Err(Box::new(Error::ExpressionEvaluation))
-                }
-            },
-            "pchar" => {
-                let txt = node.utf8_text(source.as_bytes())?;
-                Ok(txt.as_bytes()[1] as i64)
-            },
-            "nchar" => {
-                let txt = node.utf8_text(source.as_bytes())?;
-                Ok(txt.as_bytes()[1] as i64 + 0x80)
-            },
-            "current_addr" => {
-                match self.pc {
-                    Some(pc) => Ok(pc as i64),
-                    None => Err(Box::new(Error::UnresolvedProgramCounter))
-                }
-            },
-            "label_ref" => {
-                let txt = node_text(node, source);
-                if let Some(sym) = self.symbols.globals.get(&txt) {
-                    if let Some(val) = sym.value {
-                        return Ok(val);
-                    }
-                }
-                if let Some(sym) = self.symbols.vars.get(&txt) {
-                    if let Some(val) = sym.value {
-                        return Ok(val);
-                    }
-                }
-                Err(Box::new(Error::UnresolvedValue))
-            },
-            "unary_aexpr" => {
-                if node.child_count() != 2 {
-                    Err(Box::new(Error::Syntax))
-                } else {
-                    let raw = self.eval_expr(&node.named_child(0).unwrap(), source)?;
-                    if node.named_child(1).unwrap().kind() == "eop_minus" {
-                        Ok(-raw)
-                    } else {
-                        Ok(raw)
-                    }
-                }
-            },
-            "binary_aexpr" => {
-                if node.child_count() != 3 {
-                    Err(Box::new(Error::Syntax))
-                } else {
-                    let val1 = self.eval_expr(&node.named_child(0).unwrap(), source)?;
-                    let val2 = self.eval_expr(&node.named_child(2).unwrap(), source)?;
-                    match node.named_child(1).unwrap().kind() {
-                        "eop_plus" => Ok(val1 + val2),
-                        "eop_minus" => Ok(val1 - val2),
-                        "eop_times" => Ok(val1 * val2),
-                        "eop_div" => Ok(val1 / val2),
-                        "eop_or" => Ok(val1 | val2),
-                        "eop_and" => Ok(val1 & val2),
-                        "eop_xor" => Ok(val1 ^ val2),
-                        "cop_less" => Ok(match val1 < val2 { true => 1, false => 0}),
-                        "cop_gtr" => Ok(match val1 > val2 { true => 1, false => 0}),
-                        "cop_eq" => Ok(match val1 == val2 { true => 1, false => 0}),
-                        "cop_neq" => Ok(match val1 != val2 { true => 1, false => 0}),
-                        _ => Err(Box::new(Error::ExpressionEvaluation))
-                    }
-                }
-            },
-            "braced_aexpr" => {
-                if let Some(child) = node.named_child(0) {
-                    self.eval_expr(&child, source)
-                } else {
-                    Err(Box::new(Error::Syntax))
-                }
-            },
-            _ => Err(Box::new(Error::ExpressionEvaluation))
-        }
+        eval_expr(node, source, self.pc, &self.symbols, None)
 	}
     /// Used to evaluate the several string-like pseudo-ops.  Within the dstring segments,
     /// the bytes are subjected to 4 transformations in order: clos, signed, dci, reverse.

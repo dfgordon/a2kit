@@ -10,7 +10,8 @@ use lsp_types::DiagnosticSeverity;
 
 #[derive(Clone)]
 pub struct Flag {
-    pub case_sensitive: Option<DiagnosticSeverity>
+    pub case_sensitive: Option<DiagnosticSeverity>,
+    pub unclosed_folds: Option<DiagnosticSeverity>
 }
 #[derive(Clone)]
 pub struct Columns {
@@ -60,6 +61,7 @@ impl Settings {
             version: super::MerlinVersion::Merlin8,
             flag : Flag {
                 case_sensitive: None,
+                unclosed_folds: Some(DiagnosticSeverity::ERROR)
             },
             columns : Columns {
                 c1: 9,
@@ -106,6 +108,7 @@ pub fn parse(json: &str) -> Result<Settings,DYNERR> {
                     }
                     "flag" => {
                         update_json_severity(val,"caseSensitive",&mut ans.flag.case_sensitive);
+                        update_json_severity(val,"unclosedFolds",&mut ans.flag.unclosed_folds);
                     },
                     "columns" => {
                         update_json_i64(val,"c1",&mut ans.columns.c1);

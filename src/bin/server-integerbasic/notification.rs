@@ -81,6 +81,16 @@ pub fn handle_notification(
                 //connection.sender.send(resp.into())?;
             }
         },
+        lsp::notification::SetTrace::METHOD => {
+            if let Ok(_params) = serde_json::from_value::<lsp::SetTraceParams>(note.params) {
+                logger(&connection,"ignoring the SetTrace notification");
+            }
+        },
+        lsp::notification::DidChangeWatchedFiles::METHOD => {
+            if let Ok(_params) = serde_json::from_value::<lsp::DidChangeWatchedFilesParams>(note.params) {
+                logger(&connection,"ignoring the DidChangeWatchedFiles notification");
+            }
+        },
         which_method => {
             logger(&connection,&format!("unhandled notification {}",which_method))
         }

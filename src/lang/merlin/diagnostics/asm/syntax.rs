@@ -1,8 +1,8 @@
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use lsp::{DiagnosticSeverity,Diagnostic};
-use super::super::MerlinVersion;
-use super::super::context::Context;
+use crate::lang::merlin::MerlinVersion;
+use crate::lang::merlin::context::Context;
 use crate::lang::{node_text,lsp_range,extended_range};
 
 pub fn visit(curs: &TreeCursor, ctx: &Context, diagnostics: &mut Vec<Diagnostic>) {

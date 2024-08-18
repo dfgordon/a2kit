@@ -377,6 +377,10 @@ impl Imd {
     fn check_user_area_up_to_cyl(&self,cyl: usize,off: u16) -> STDRESULT {
         let sectors = self.tracks[off as usize].sectors;
         let sector_shift = self.tracks[off as usize].sector_shift;
+        if cyl*self.heads >= self.tracks.len() {
+            log::error!("track {} was requested, max is {}",cyl*self.heads,self.tracks.len()-1);
+            return Err(Box::new(super::Error::TrackCountMismatch));
+        }
         for i in off as usize..cyl*self.heads+1 {
             let trk = &self.tracks[i];
             if trk.sectors!=sectors || trk.sector_shift!=sector_shift {
@@ -414,11 +418,11 @@ impl img::DiskImage for Imd {
         self.heads
     }
     fn track_2_ch(&self,track: usize) -> [usize;2] {
-        [self.tracks[track].cylinder as usize,self.tracks[track].head as usize]
+        [self.tracks[track].cylinder as usize,(self.tracks[track].head & HEAD_MASK) as usize]
     }
     fn ch_2_track(&self,ch: [usize;2]) -> usize {
         for i in 0..self.tracks.len() {
-            if self.tracks[i].cylinder as usize==ch[0] && self.tracks[i].head as usize==ch[1] {
+            if self.tracks[i].cylinder as usize==ch[0] && (self.tracks[i].head & HEAD_MASK) as usize==ch[1] {
                 return i
             }
         }
@@ -689,15 +693,16 @@ impl img::DiskImage for Imd {
             Some(Mode::Mfm250Kbps) | Some(Mode::Mfm300Kbps) | Some(Mode::Mfm500Kbps) => img::FluxCode::MFM,
             None => img::FluxCode::None
         };
+        let phys_head = (trk_obj.head & HEAD_MASK) as usize;
         let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..trk_obj.sectors as usize {
             let c = match trk_obj.cylinder_map.len()>i { true=>trk_obj.cylinder_map[i] as usize, false=>trk_obj.cylinder as usize };
-            let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>trk_obj.head as usize };
+            let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>phys_head };
             chss_map.push([c,h,trk_obj.sector_map[i] as usize,SECTOR_SIZE_BASE << trk_obj.sector_shift]);
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.cylinder as usize,
-            head: trk_obj.head as usize,
+            head: phys_head,
             flux_code,
             nib_code: img::NibbleCode::None,
             chss_map

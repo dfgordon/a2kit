@@ -61,7 +61,9 @@ mod macros {
     fn matches_instruction() {
         super::test_diagnostics("test-matches-instruction.S", None, &[
             "macro name matches a mnemonic",
-            "macro name matches a mnemonic"
+            "macro name matches a mnemonic",
+            "folding range is never closed",
+            "folding range is never closed"
         ]);
     }
     #[test]
@@ -105,7 +107,8 @@ mod macros {
             "macro substitution variable cannot label a line",
             "macro substitution variable referenced outside macro",
             "macro substitution variable referenced outside macro",
-            "macro substitution variable referenced outside macro"
+            "macro substitution variable referenced outside macro",
+            "extension cannot evaluate"
         ]);
     }
     #[test]
@@ -210,7 +213,8 @@ mod forward {
     fn psop_fwd() {
         super::test_diagnostics("test-ill-fwd.S", None, &[
             "illegal forward reference",
-            "illegal forward reference"
+            "illegal forward reference",
+            "extension cannot evaluate"
         ])
     }
 }

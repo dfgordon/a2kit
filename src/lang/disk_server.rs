@@ -121,9 +121,11 @@ impl DiskServer {
             let mut fimg = disk.new_fimg(None, true, path)?;
             match typ {
                 ItemType::IntegerTokens | ItemType::ApplesoftTokens => fimg.pack_tok(dat,typ,None)?,
+                ItemType::MerlinTokens => fimg.pack_raw(dat)?,
                 ItemType::Text => fimg.pack_raw(dat)?,
                 _ => return Err(Box::new(CommandError::UnsupportedFormat))
             };
+            disk.put(&fimg)?;
             crate::save_img(disk, &self.path_to_img)?;
             Ok(())
         } else {

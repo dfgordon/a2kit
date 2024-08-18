@@ -209,8 +209,8 @@ impl BPBFoundation {
         u16::from_be_bytes(self.root_ent_cnt) as u64
     }
     pub fn sec_per_clus(&self) -> u8 {
-        // TODO: why is this often/always erroneously set to 2 for 160K and 180K disks?
-        // for now we override it in the FS layer when such disks are detected.
+        // Early DOS had a bug that erroneously set this to 2 for 160K and 180K disks.
+        // Therefore we override it in the FS layer when such disks are detected.
         self.sec_per_clus
     }
 }
