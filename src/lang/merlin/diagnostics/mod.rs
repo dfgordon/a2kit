@@ -139,10 +139,20 @@ impl Analyzer {
     }
     /// Scan the last set of workspace folders that were supplied by the client.
     /// If `gather` is false, use only previously checkpointed documents.
+    /// N.b. if `gather` is true, checkpointed documents are rolled back to previously saved version.
     pub fn rescan_workspace(&mut self,gather: bool) -> STDRESULT {
         if gather {
             log::debug!("GATHER WORKSPACE DOCUMENTS");
             self.scanner.gather_docs(&self.workspace_folders, 1000)?;
+        }
+        log::debug!("SCAN WORKSPACE DOCUMENTS");
+        self.scanner.scan()
+    }
+    pub fn rescan_workspace_and_update(&mut self,checkpoints: Vec<Document>) -> STDRESULT {
+        log::debug!("GATHER WORKSPACE DOCUMENTS");
+        self.scanner.gather_docs(&self.workspace_folders, 1000)?;
+        for doc in checkpoints {
+            self.scanner.update_doc(&doc);
         }
         log::debug!("SCAN WORKSPACE DOCUMENTS");
         self.scanner.scan()
@@ -196,7 +206,7 @@ impl Analyzer {
             self.ctx.set_col(self.parser.col_offset());
             self.symbols.update_row_data(&doc,self.ctx.row(), self.ctx.col());
             self.walk(&tree)?;
-            if self.pass == 3 {
+            if self.pass == 1 {
                 self.ctx.annotate_fold(&mut self.diagnostics);
             }
             self.ctx.next_row();
@@ -223,9 +233,9 @@ impl Navigate for Analyzer {
 	}
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
         match self.pass {
-            1 => labels::visit_gather(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
+            1 => labels::visit_gather(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics, &mut self.folding),
             2 => labels::visit_verify(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
-            3 => self.asm.visit(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics, &mut self.folding),
+            3 => self.asm.visit(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
             _ => panic!("unexpected number of visit passes")
         }
     }
@@ -260,10 +270,12 @@ impl Analysis for Analyzer {
             self.pass = pass;
             self.reset_for_pass();
             self.analyze_recursively(super::SourceType::Master,Arc::clone(&master))?;
+            if pass==1 {
+                self.ctx.close_all_folds(Arc::clone(&master), &mut self.diagnostic_set, &mut self.folding_set);
+            }
             // clean up any residual scope (this is a must for global scopes)
             self.ctx.exit_scope(&mut self.symbols);
         }
-        self.ctx.close_all_folds(Arc::clone(&master), &mut self.diagnostic_set, &mut self.folding_set);
         info!("Assembler: {}",self.symbols.assembler);
         info!("Processor: {}",self.symbols.processor);
         info!("Globals: {}",self.symbols.globals.len());

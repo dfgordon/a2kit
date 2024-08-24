@@ -123,7 +123,14 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         let typ = fimg.fs_type[0];
         match FileType::from_u8(typ) {
-            Some(FileType::Text) => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
+            Some(FileType::Text) => {
+                let maybe = self.unpack_txt(fimg)?;
+                if super::super::null_fraction(&maybe) < 0.01 {
+                    Ok(UnpackedData::Text(maybe))
+                } else {
+                    Ok(UnpackedData::Binary(self.unpack_raw(fimg,true)?))
+                }
+            },
             _ => Ok(UnpackedData::Binary(self.unpack_bin(fimg)?))
         }
     }

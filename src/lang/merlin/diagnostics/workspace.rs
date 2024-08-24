@@ -135,7 +135,9 @@ impl WorkspaceScanner {
         }
     }
     /// Workspace scanner has its own copies that are not always up to date.
-    /// This is needed especially when an include is being handed to the analyzer.
+    /// This should be called when there is a document change notification.
+    /// When there is a full rescan, call this with all checkpoints
+    /// right after the gather.
     pub fn update_doc(&mut self,doc: &Document) {
         for old in &mut self.ws.docs {
             if old.uri == doc.uri {

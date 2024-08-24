@@ -127,13 +127,35 @@ pub fn combine_ignorable_offsets(map: &mut HashMap<Block,Vec<usize>>,other: Hash
     }
 }
 
+/// Unpacking data as text in a2kit almost always "succeeds", because unknown codes are simply
+/// replaced with ASCII NULL.  This function judges the quality of the string by forming the
+/// ratio of NULL occurrences to total length (0 is good, 1 is bad).
+pub fn null_fraction(candidate: &str) -> f64 {
+    let mut null_count = 0;
+    for c in candidate.chars() {
+        if c == '\u{0000}' {
+            null_count += 1;
+        }
+    }
+    if null_count > 0 {
+        log::warn!("string had {} NULL (there may have been a lossy conversion)",null_count);
+    }
+    null_count as f64 / candidate.len() as f64
+}
+
 fn universal_row(typ: &str, blocks: usize, name: &str) -> String {
     format!("{:4} {:5}  {}",typ,blocks,name)
 }
 
 pub trait TextConversion {
     fn new(line_terminator: Vec<u8>) -> Self;
+    /// Typical implementations will return Some(Vec) only if
+    /// the string slice is pure ASCII.
     fn from_utf8(&self,txt: &str) -> Option<Vec<u8>>;
+    /// Typical implementations will return Some(String) always.
+    /// If `src` has something out of bounds, it
+    /// will be replaced with ASCII NULL.  Consumers can then judge
+    /// the result by calling `null_fraction`.
     fn to_utf8(&self,src: &[u8]) -> Option<String>;
     /// Does a given slice end with another slice
     fn is_terminated(bytes: &[u8],term: &[u8]) -> bool {
@@ -217,9 +239,11 @@ pub trait Packing {
     fn pack_bin(&self,fimg: &mut FileImage,dat: &[u8],load_addr: Option<usize>,trailing: Option<&[u8]>) -> STDRESULT;
     /// get bytes from file image, if file system uses a header it is stripped
     fn unpack_bin(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR>;
-    /// convert UTF8 with either LF or CRLF to the file system's text format, if possible
+    /// Convert UTF8 with either LF or CRLF to the file system's text format.  This returns an error
+    /// if the conversion would result in any loss of data.
     fn pack_txt(&self, fimg: &mut FileImage, txt: &str) -> STDRESULT;
-    /// convert the file system's text format to UTF8 with LF, if possible
+    /// Convert the file system's text format to UTF8 with LF.  This always succeeds because the underlying
+    /// text converters will replace unknown characters with ASCII NULL.
     fn unpack_txt(&self,fimg: &FileImage) -> Result<String,DYNERR>;
     /// pack language tokens into file image, if file system uses a header it is added
     fn pack_tok(&self,fimg: &mut FileImage,tok: &[u8],lang: ItemType,trailing: Option<&[u8]>) -> STDRESULT;

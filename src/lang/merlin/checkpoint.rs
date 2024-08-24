@@ -39,6 +39,12 @@ fn goto_refs(map: &HashMap<String,Symbol>, sel_loc: &lsp::Location) -> Option<Ve
 			ans.push(ref_loc.clone());
 			clicked = clicked || (ref_loc.uri == sel_loc.uri && range_contains_pos(&ref_loc.range, &sel_loc.range.start));
 		}
+        for def_loc in &sym.defs {
+			clicked = clicked || (def_loc.uri == sel_loc.uri && range_contains_pos(&def_loc.range, &sel_loc.range.start));
+        }
+        for dec_loc in &sym.decs {
+			clicked = clicked || (dec_loc.uri == sel_loc.uri && range_contains_pos(&dec_loc.range, &sel_loc.range.start));
+        }
 		if clicked {
 			return Some(ans);
         }

@@ -340,6 +340,13 @@ impl Disassembler {
                         false => addr as i64 + operand_bytes as i64 + val as i64 - 0x10000
                     }
                 };
+                if ival < 0 || ival > 0xffff {
+                    // if out of range interpret as data
+                    log::debug!("branch out of bounds: {} -> {}",addr,ival);
+                    self.push_data_pattern(addr-1,img,operand_bytes+1,1);
+                    addr += operand_bytes;
+                    return Ok(addr);
+                }
                 val = usize::try_from(ival)?;
             }
             if !op.operand_snippet.starts_with("#") {

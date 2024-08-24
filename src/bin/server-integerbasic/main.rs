@@ -242,7 +242,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 
     // Main loop
-    while let Ok(msg) = connection.receiver.recv() {
+    loop {
 
         // Gather data from analysis threads
         if let Some(oldest) = tools.thread_handles.front() {
@@ -260,17 +260,19 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         }
 
         // Handle messages from the client
-        match msg {
-            lsp_server::Message::Notification(note) => {
-                notification::handle_notification(&connection,note,&mut tools);
-            }
-            lsp_server::Message::Request(req) => {
-                if request::handle_request(&connection, req, &mut tools) {
-                    break;
+        if let Ok(msg) = connection.receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+            match msg {
+                lsp_server::Message::Notification(note) => {
+                    notification::handle_notification(&connection,note,&mut tools);
                 }
-            },
-            lsp_server::Message::Response(resp) => {
-                response::handle_response(&connection, resp, &mut tools);
+                lsp_server::Message::Request(req) => {
+                    if request::handle_request(&connection, req, &mut tools) {
+                        break;
+                    }
+                },
+                lsp_server::Message::Response(resp) => {
+                    response::handle_response(&connection, resp, &mut tools);
+                }
             }
         }
     }

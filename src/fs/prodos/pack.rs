@@ -136,7 +136,14 @@ impl Packing for Packer {
         match FileType::from_u8(typ) {
             Some(FileType::Text) => {
                 match fimg.get_aux() {
-                    0 => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
+                    0 => {
+                        let maybe = self.unpack_txt(fimg)?;
+                        if super::super::null_fraction(&maybe) < 0.01 {
+                            Ok(UnpackedData::Text(maybe))
+                        } else {
+                            Ok(UnpackedData::Binary(self.unpack_raw(fimg,true)?))
+                        }
+                    },
                     _ => Ok(UnpackedData::Records(self.unpack_rec(fimg,None)?))
                 }
             },

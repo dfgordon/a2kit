@@ -96,7 +96,19 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         let typ = fimg.fs_type[0] & 0x7f;
         match FileType::from_u8(typ) {
-            Some(FileType::Text) => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
+            Some(FileType::Text) => {
+                let maybe = self.unpack_txt(fimg)?;
+                if super::super::null_fraction(&maybe) < 0.01 {
+                    Ok(UnpackedData::Text(maybe))
+                } else {
+                    let raw = self.unpack_raw(fimg,false)?;
+                    if let Some(slice) = raw.split(|x| *x==0).next() {
+                        Ok(UnpackedData::Binary(slice.to_vec()))
+                    } else {
+                        Ok(UnpackedData::Binary(raw))
+                    }
+                }
+            },
             Some(FileType::Binary) => Ok(UnpackedData::Binary(self.unpack_bin(fimg)?)),
             Some(FileType::Applesoft) | Some(FileType::Integer) => Ok(UnpackedData::Binary(self.unpack_tok(fimg)?)),
             _ => Err(Box::new(Error::FileTypeMismatch))

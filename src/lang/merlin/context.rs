@@ -7,9 +7,21 @@
 //! 2. Source stack - stack of `Source` structures, such as (Master (Use) (Put) (Put))
 //! 3. Folding stack - stack of `Fold` structures, such as (DO (IF (ELSE (LUP))))
 //! 
-//! In Merlin these are allowed to overlap, e.g., a fold could start in a PUT file
-//! and end in the master file.  The LSP does not allow this, so in such cases we
-//! have to decline to report the fold to the client, but we can push a diagnostic warning.
+//! In Merlin these are allowed to interleave, e.g., a fold could start in a PUT file
+//! and end in the master file.  The LSP rightly forbids this (display would be confusing),
+//! so such folds are not reported to the client, even though they are calculated by the server.
+//! 
+//! The server puts macros on both the scope stack and the fold stack.  As a result, interleaving
+//! macro definitions and conditional assembly will be flagged as an error:
+//! 
+//! ```asm
+//! MYMAC   MAC
+//!         DO 0
+//!         EOM ; fold error
+//!         FIN
+//! ```
+//! 
+//! In contrast, Merlin will accept this and process it literally.
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -28,10 +40,10 @@ pub struct Fold {
     pub kind: String,
     /// value of pseudo-op argument that started the fold
     pub arg: i64,
-    /// whether or not to assemble inside this fold
+    /// whether to assemble inside this fold
     pub asm: bool,
-    /// is this either a dummy section or enclosed in a dummy section
-    pub dum: bool,
+    /// whether to generate symbols inside this fold
+    pub gen: bool,
     /// is this an `END` fold
     pub is_end: bool,
     /// start of the fold
@@ -60,8 +72,18 @@ pub struct Context {
     fold_stack: Vec<Fold>,
     /// built and consumed/cleared as lines are processed
     pub running_docstring: String,
+    /// helps continue analysis of fold arguments
+    pub fold_just_started: bool,
     /// helps prevent dimming an end of fold
     pub fold_just_ended: bool
+}
+
+impl Fold {
+    fn new(kind: String,arg: i64,asm: bool,gen: bool,is_end: bool,start: lsp::Location) -> Self {
+        Self {
+            kind,arg,asm,gen,is_end,start
+        }
+    }
 }
 
 impl Source {
@@ -88,6 +110,7 @@ impl Context {
             source_stack: Vec::new(),
             fold_stack: Vec::new(),
             running_docstring: String::new(),
+            fold_just_started: false,
             fold_just_ended: false
         }
     }
@@ -101,6 +124,8 @@ impl Context {
         self.symbol_stack = Vec::new();
         self.source_stack = Vec::new();
         self.fold_stack = Vec::new();
+        self.fold_just_started = false;
+        self.fold_just_ended = false;
     }
     pub fn set_config(&mut self,config: Settings) {
         self.config = config;
@@ -111,11 +136,11 @@ impl Context {
     pub fn set_xc(&mut self,xc_count: usize) {
         self.xc_count = xc_count;
     }
-    /// returns conditional assembly booleans (asm,dum,is_end)
+    /// returns conditional assembly booleans (asm,gen,is_end)
     pub fn cond_asm(&self) -> (bool,bool,bool) {
         match self.fold_stack.last() {
-            Some(fold) => (fold.asm,fold.dum,fold.is_end),
-            None => (true,false,false)
+            Some(fold) => (fold.asm || self.fold_just_started,fold.gen || self.fold_just_started,fold.is_end),
+            None => (true,true,false)
         }
     }
     /// borrow the processor oepration handbook
@@ -173,148 +198,156 @@ impl Context {
     pub fn exit_source(&mut self) -> Option<Source> {
         self.source_stack.pop()
     }
-    /// Push a folding range onto the source stack, kind is the syntax tree node kind.
-    /// Panics if the kind is unknown.  Errors are detected by examining the returned
-    /// diagnostic, if any.  N.b. END actually *starts* a fold that runs to end of source.
-    pub fn enter_folding_range(&mut self,kind: &str,rng: lsp::Range,loc: lsp::Location,arg: i64) -> Option<lsp::Diagnostic> {
-        let mut ans: Option<lsp::Diagnostic> = None;
-        let (curr_asm,curr_dum,curr_end) = match self.fold_stack.last() {
-            Some(fold) => (fold.asm,fold.dum,fold.is_end),
-            None => (true,false,false)
+    /// Enter or exit a folding range, kind is the syntax tree node kind.
+    /// Panics if the kind is not a folding kind.
+    /// Fold starters are END, DUM, DO, IF, ELSE, LUP, MAC
+    /// Fold enders are ELSE, FIN, --^, DEND, EOM.
+    /// N.b. ELSE both starts and ends, END actually starts, and EOM can produce multiple folding ranges.
+    pub fn folding_range(&mut self, kind: &str, rng: lsp::Range, loc: lsp::Location, arg: i64, diagnostics: Option<&mut Vec<lsp::Diagnostic>>) -> Vec<lsp::FoldingRange> {
+        let mut ans = Vec::new();
+        let mut start_locs = Vec::new();
+        let mut diag = Vec::new();
+        let (curr_asm,curr_gen,curr_end) = match self.fold_stack.last() {
+            Some(fold) => (fold.asm,fold.gen,fold.is_end),
+            None => (true,true,false)
         };
         if curr_end {
-            return None;
+            return ans;
         }
-        let (asm,dum,is_end) = match kind {
-            "psop_end" => (false,curr_dum,true),
-            "psop_dum" => (false,true,false),
-            "psop_do" => (arg != 0 && !curr_dum,curr_dum,false),
-            "psop_if" => (arg != 0 && !curr_dum,curr_dum,false),
+        let curr_rng = loc.range.clone();
+        let curr_uri = loc.uri.clone();
+        let fold_depth = self.fold_stack.len();
+        match kind {
+            "psop_end" => self.fold_stack.push(Fold::new(kind.to_string(),arg,false,false,true,loc)),
+            "psop_dum" => self.fold_stack.push(Fold::new(kind.to_string(),arg,false,true,false,loc)),
+            "psop_do" => self.fold_stack.push(Fold::new(kind.to_string(),arg,arg!=0,arg!=0,false,loc)),
+            "psop_if" => self.fold_stack.push(Fold::new(kind.to_string(),arg,arg!=0,arg!=0,false,loc)),
             "psop_else" => {
                 let d1 = basic_diag(rng,"unmatched ELSE",lsp::DiagnosticSeverity::ERROR);
-                let d2 = basic_diag(rng, "multiple ELSE sections",lsp::DiagnosticSeverity::WARNING);
-                if let Some(parent) = self.fold_stack.last() {
-                    if parent.kind=="psop_do" || parent.kind=="psop_if" {
-                        (!curr_asm && !curr_dum,curr_dum,false)
-                    } else if parent.kind=="psop_else" {
-                        ans = Some(d2);
-                        (!curr_asm && !curr_dum,curr_dum,false)
+                if let Some(prev) = self.fold_stack.last() {
+                    if ["psop_do","psop_if","psop_else"].contains(&prev.kind.as_str()) {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
+                        self.fold_stack.push(Fold::new(kind.to_string(),arg,!curr_asm,!curr_gen,false,loc));
                     } else {
-                        ans = Some(d1);
-                        (!curr_dum,curr_dum,false)
+                        diag.push(d1);
                     }
                 } else {
-                    ans = Some(d1);
-                    (!curr_dum,curr_dum,false)
+                    diag.push(d1);
                 }
             },
-            "psop_lup" => (curr_asm,curr_dum,false),
-            "psop_mac" => (curr_asm,curr_dum,false),
-            _ => panic!("unexpected folding range kind")
-        };
-        if let Some(diag) = &ans {
-            if let Some(sev) = diag.severity {
-                if sev == lsp::DiagnosticSeverity::ERROR {
-                    return ans;
+            "psop_lup" => self.fold_stack.push(Fold::new(kind.to_string(),arg,curr_asm,curr_gen,false,loc)),
+            "psop_mac" => {
+                let mut hole = false;
+                let mut some_mac = false;
+                for fold in &self.fold_stack {
+                    some_mac = some_mac || fold.kind=="psop_mac";
+                    hole = some_mac && fold.kind!="psop_mac";
                 }
-            }
-        }
-        self.fold_stack.push(Fold {
-            kind: kind.to_string(),
-            arg,
-            asm,
-            dum,
-            is_end,
-            start: loc
-        });
-        ans
-    }
-    /// Exit the folding range, kind is the syntax tree node kind.
-    /// Panics if the kind is unknown.  If there is an error a String is returned with the
-    /// diagnostic message.  Handles FIN, --^, DEND, EOM.  This should not be called with ELSE.
-    pub fn exit_folding_range(&mut self, kind: &str, rng: lsp::Range, loc: lsp::Location) -> Result<Option<lsp::FoldingRange>,lsp::Diagnostic> {
-        if let Some(fold) = self.fold_stack.last() {
-            if fold.is_end {
-                return Ok(None);
-            }
-        }
-        let start_loc = match kind {
+                if hole {
+                    diag.push(basic_diag(rng,"starting MAC is interrupted by another fold",lsp::DiagnosticSeverity::WARNING));
+                }
+                self.fold_stack.push(Fold::new(kind.to_string(),arg,curr_asm,curr_gen,false,loc))
+            },
             "psop_fin" => {
                 let d1 = basic_diag(rng, "unmatched FIN",lsp::DiagnosticSeverity::ERROR);
-                let mut strip_else = true;
-                while strip_else {
-                    if let Some(parent) = self.fold_stack.last() {
-                        if parent.kind=="psop_else" {
-                            self.fold_stack.pop();
-                        } else {
-                            strip_else = false;
-                        }
+                if let Some(prev) = self.fold_stack.last() {
+                    if ["psop_do","psop_if","psop_else"].contains(&prev.kind.as_str()) {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
                     } else {
-                        strip_else = false;
-                    }
-                }
-                if let Some(parent) = self.fold_stack.last() {
-                    if parent.kind == "psop_do" || parent.kind == "psop_if" {
-                        parent.start.clone()
-                    } else {
-                        return Err(d1)
+                        diag.push(d1);
                     }
                 } else {
-                    return Err(d1)
+                    diag.push(d1);
                 }
             },
             "psop_end_lup" => {
                 let d1 = basic_diag(rng, "unmatched end of loop",lsp::DiagnosticSeverity::ERROR);
-                if let Some(parent) = self.fold_stack.last() {
-                    if parent.kind == "psop_lup" {
-                        parent.start.clone()
+                if let Some(prev) = self.fold_stack.last() {
+                    if prev.kind == "psop_lup" {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
                     } else {
-                        return Err(d1)
+                        diag.push(d1);
                     }
                 } else {
-                    return Err(d1)
+                    diag.push(d1);
                 }
             },
             "psop_eom" => {
-                let d1 = basic_diag(rng, "unmatched end of macro (EOM terminates all preceding MAC pseudo-ops)",lsp::DiagnosticSeverity::ERROR);
-                if let Some(parent) = self.fold_stack.last() {
-                    if parent.kind == "psop_mac" {
-                        parent.start.clone()
+                let d1 = basic_diag(rng, "unmatched end of macro (EOM terminates all preceding MAC)",lsp::DiagnosticSeverity::ERROR);
+                if let Some(prev) = self.fold_stack.last() {
+                    if prev.kind == "psop_mac" {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
                     } else {
-                        return Err(d1)
+                        diag.push(d1);
                     }
                 } else {
-                    return Err(d1)
+                    diag.push(d1);
+                }
+                while let Some(prev) = self.fold_stack.last() {
+                    if prev.kind == "psop_mac" {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
+                    } else {
+                        break;
+                    }
+                }
+                for fold in &self.fold_stack {
+                    if fold.kind == "psop_mac" {
+                        diag.push(basic_diag(rng,"could not reach starting MAC due to another fold",lsp::DiagnosticSeverity::WARNING));
+                    }
                 }
             }
             "psop_dend" => {
                 let d1 = basic_diag(rng, "unmatched DEND",lsp::DiagnosticSeverity::ERROR);
-                if let Some(parent) = self.fold_stack.last() {
-                    if parent.kind == "psop_dum" {
-                        parent.start.clone()
+                if let Some(prev) = self.fold_stack.last() {
+                    if prev.kind == "psop_dum" {
+                        start_locs.push(prev.start.clone());
+                        self.fold_stack.pop();
+                        self.fold_just_ended = true;
                     } else {
-                        return Err(d1)
+                        diag.push(d1);
                     }
                 } else {
-                    return Err(d1)
+                    diag.push(d1);
                 }
             }
-            _ => panic!("unexpected folding range terminator")
+            _ => panic!("unexpected folding range kind")
         };
-        self.fold_stack.pop();
-        self.fold_just_ended = true;
-        if start_loc.uri != loc.uri {
-            let d1 = basic_diag(rng, "start of fold was in another document",lsp::DiagnosticSeverity::WARNING);
-            return Err(d1);
+
+        self.fold_just_started = self.fold_stack.len() > fold_depth;
+        for start_loc in start_locs {
+            if start_loc.uri != curr_uri {
+                let info = vec![lsp::DiagnosticRelatedInformation {
+                    location: start_loc,
+                    message: "fold starts here".to_string()
+                }];
+                let d1 = lsp::Diagnostic::new(curr_rng,Some(lsp::DiagnosticSeverity::WARNING),None,None,
+                    "fold starts in another document".to_string(),Some(info),None);
+                diag.push(d1);
+            } else if curr_rng.start.line > start_loc.range.start.line && curr_rng.start.line > 0 {
+                ans.push(lsp::FoldingRange {
+                    start_line: start_loc.range.start.line,
+                    end_line: curr_rng.start.line - 1,
+                    start_character: None,
+                    end_character: None,
+                    kind: None,
+                    collapsed_text: None
+                });
+            }
         }
-        Ok(Some(lsp::FoldingRange {
-            start_line: start_loc.range.start.line,
-            end_line: loc.range.start.line,
-            start_character: None,
-            end_character: None,
-            kind: None,
-            collapsed_text: None
-        }))
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.append(&mut diag);
+        }
+        ans
     }
     /// fill diagnostics and possibly the END fold upon reaching end of document
     pub fn close_all_folds(&mut self, doc: Arc<Document>,
@@ -358,11 +391,14 @@ impl Context {
     }
     /// apply dimming effect, call this after each line is processed during the appropriate pass
     pub fn annotate_fold(&mut self, diagnostics: &mut Vec<lsp::Diagnostic>) {
+        if self.line().starts_with("*") {
+            return;
+        }
         if let Some(fold) = self.fold_stack.last() {
             let rng = lsp::Range::new(lsp::Position::new(self.row() as u32,0),
             lsp::Position::new(self.row() as u32,(self.line().len() as isize + self.col()) as u32));
-            if !fold.asm && fold.start.range.start.line != rng.start.line && !self.fold_just_ended {
-                let message = match (fold.dum,fold.is_end) {
+            if fold.kind!="psop_mac" && !fold.asm && fold.start.range.start.line != rng.start.line && !self.fold_just_ended {
+                let message = match (fold.gen,fold.is_end) {
                     (false,false) => "assembly disabled by DO or IF",
                     (true,false) => "assembly disabled by DUM",
                     (_,true) => "assembly disabled by END",
@@ -378,6 +414,7 @@ impl Context {
     pub fn next_row(&mut self) {
         if let Some(src) = self.source_stack.last_mut() {
             src.row += 1;
+            self.fold_just_started = false;
             self.fold_just_ended = false;
         }
     }
@@ -388,7 +425,14 @@ impl Context {
         }
     }
     /// borrow symbol defining current scope
-    pub fn curr_scope(&mut self) -> Option<&mut Symbol> {
+    pub fn curr_scope(&self) -> Option<&Symbol> {
+        match self.symbol_stack.last() {
+            Some(sym) => Some(sym),
+            None => None
+        }
+    }
+    /// borrow symbol defining current scope
+    pub fn curr_scope_mut(&mut self) -> Option<&mut Symbol> {
         match self.symbol_stack.last_mut() {
             Some(sym) => Some(sym),
             None => None

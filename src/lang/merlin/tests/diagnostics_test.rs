@@ -105,10 +105,10 @@ mod macros {
         super::test_diagnostics("test-mac-vars.S", None, &[
             "macro substitution variable cannot label a line",
             "macro substitution variable cannot label a line",
+            "assembly disabled",
             "macro substitution variable referenced outside macro",
             "macro substitution variable referenced outside macro",
             "macro substitution variable referenced outside macro",
-            "extension cannot evaluate"
         ]);
     }
     #[test]
@@ -212,9 +212,9 @@ mod forward {
     #[test]
     fn psop_fwd() {
         super::test_diagnostics("test-ill-fwd.S", None, &[
+            "evaluation was deferred",
             "illegal forward reference",
-            "illegal forward reference",
-            "extension cannot evaluate"
+            "illegal forward reference"
         ])
     }
 }

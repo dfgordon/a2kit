@@ -149,7 +149,8 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
 				return Ok(Navigation::Exit);
 			}
 			if curs.node().kind() == "macro_ref" {
-                if let Some(expansion) = super::diagnostics::macros::expand_macro(&curs.node(), &self.parser.line(), &mut self.symbols, 1) {
+                if let Some(mut expansion) = super::diagnostics::macros::expand_macro(&curs.node(), &self.parser.line(), &mut self.symbols, 1) {
+                    expansion = expansion.replace("\u{0100}","");
                     new_section(&mut self.markup.value, &&["```\n",&expansion,"```"].concat());
                 } else {
                     self.markup.value += "unable to expand macro";
@@ -167,8 +168,9 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                         self.markup.value += &self.addresses.get(num).or(Some("".to_string())).unwrap();
                     }
                     if sym.defs.len()>0 {
-                        if let Some(code) = &sym.defining_code {
-                            new_section(&mut self.markup.value, &["```\n",code,"```\n"].concat());
+                        if let Some(hinted_code) = &sym.defining_code {
+                            let code = hinted_code.to_string().replace("\u{0100}","");
+                            new_section(&mut self.markup.value, &["```\n",&code,"```\n"].concat());
                         }
                         new_section(&mut self.markup.value, &sym.docstring);
                         if sym.defs[0].uri.to_string()!=self.symbols.display_doc_uri {

@@ -233,8 +233,22 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         let typ = String::from_utf8(fimg.fs_type.clone())?;
         match typ.as_str() {
-            "TXT" | "ASM" | "SUB" => Ok(UnpackedData::Text(self.unpack_txt(fimg)?)),
-            _ => Ok(UnpackedData::Binary(self.unpack_bin(fimg)?))
+            "TXT" | "ASM" | "SUB" => {
+                let maybe = self.unpack_txt(fimg)?;
+                if super::super::null_fraction(&maybe) < 0.01 {
+                    Ok(UnpackedData::Text(maybe))
+                } else {
+                    Ok(UnpackedData::Binary(self.unpack_raw(fimg,true)?))
+                }
+            },
+            _ => {
+                let maybe = self.unpack_txt(fimg)?;
+                if super::super::null_fraction(&maybe) == 0.0 {
+                    Ok(UnpackedData::Text(maybe))
+                } else {
+                    Ok(UnpackedData::Binary(self.unpack_bin(fimg)?))
+                }
+            }
         }
     }
 

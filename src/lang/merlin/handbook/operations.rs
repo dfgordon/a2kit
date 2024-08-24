@@ -115,8 +115,11 @@ fn update_json_proc(maybe_obj: &serde_json::Value, key: &str, curr: &mut Vec<Pro
                     match v.as_str() {
                         Some("6502") => ans.push(ProcessorType::_6502),
                         Some("65c02") => ans.push(ProcessorType::_65c02),
-                        Some("65802") => ans.push(ProcessorType::_65802),
-                        Some("65c816") => ans.push(ProcessorType::_65c816),
+                        Some("65802") => ans.push(ProcessorType::_65802), // not in the JSON
+                        Some("65c816") => {
+                            ans.push(ProcessorType::_65802); // for the present conflate the two
+                            ans.push(ProcessorType::_65c816)
+                        },
                         _ => return
                     }
                 }

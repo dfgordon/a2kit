@@ -247,7 +247,7 @@ impl CodeCompletionProvider {
 							label: self.modify(&mode.mnemonic,0),
 							detail: Some(self.modify(op_str,0) + " args"),
 							kind: Some(lsp::CompletionItemKind::VALUE),
-							insert_text: Some(self.modify(&snip,0)),
+							insert_text: Some(self.modify(&snip[1..],0)),
 							insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
 							..Default::default()
 						});				
@@ -369,8 +369,8 @@ impl CodeCompletionProvider {
 		}
 		if self.c3_arg_regex.is_match(line_prefix) {
 			// suggest pseudo-op arguments based on what is in column 2
-			if let Some(mtch) = self.c2_capture.find(line_prefix) {
-				psop_args = self.add_psop_args(&mut ans, mtch.as_str());
+			if let Some(caps) = self.c2_capture.captures(line_prefix) {
+				psop_args = self.add_psop_args(&mut ans, caps.get(1).unwrap().as_str());
 			}
 		}
 		if psop_args==0 && self.c3_lab_regex.is_match(line_prefix) {
@@ -386,15 +386,15 @@ impl CodeCompletionProvider {
 			}
 		}
 		if self.iaddr_regex.is_match(line_prefix) {
-			if let Some(mtch) = self.c2_capture.find(line_prefix) {
+			if let Some(caps) = self.c2_capture.captures(line_prefix) {
 				if let Some(trig_char) = trig {
-					self.add_indirect_arg(&mut ans, mtch.as_str(), trig_char, &self.symbols.processor);
+					self.add_indirect_arg(&mut ans, caps.get(1).unwrap().as_str(), trig_char, &self.symbols.processor);
 				}
 			}
 		}
 		if self.daddr_regex.is_match(line_prefix) {
-			if let Some(mtch) = self.c2_capture.find(line_prefix) {
-				self.add_direct_index(&mut ans, mtch.as_str(), &self.symbols.processor);
+			if let Some(caps) = self.c2_capture.captures(line_prefix) {
+				self.add_direct_index(&mut ans, caps.get(1).unwrap().as_str(), &self.symbols.processor);
 			}
 		}
 		self.add_simple(&mut ans,&simple);
@@ -432,9 +432,7 @@ impl Completions for CompletionProvider {
 		let mut ans = Vec::new();
 
 		if let Some(curr) = lines.nth(pos.line as usize) {
-			if ctx.trigger_kind==lsp::CompletionTriggerKind::INVOKED {
-				ans.append(&mut self.code_tool.get(curr, pos, &ctx.trigger_character));
-			}
+			ans.append(&mut self.code_tool.get(curr, pos, &ctx.trigger_character));
 			if let Some(trig) = &ctx.trigger_character {
 				if trig.as_str() == "$" {
 					ans.append(&mut self.address_tool.get(curr,pos.character as usize));

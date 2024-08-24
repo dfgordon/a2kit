@@ -200,6 +200,25 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
     }
 }
 
+/// Evaluate IF argument which could parse as (arg_if (if_char (...))) or (arg_if (if_mx (...))).
+/// If it is the MX variety, the expression will need to be reparsed with MX inserted.
+/// N.b. it is not correct precedence-wise to multiply MX by the already-parsed expression.
+pub fn eval_if(start_node: &tree_sitter::Node, source: &str) -> Result<i64,DYNERR> {
+    let txt = start_node.utf8_text(source.as_bytes())?;
+    let chars = txt.chars().collect::<Vec<char>>();
+    if txt.starts_with("MX") {
+        Err(Box::new(Error::ExpressionEvaluation))
+    } else {
+        if chars.len() < 3 {
+            return Err(Box::new(Error::Syntax));
+        }
+        match chars[0]==chars[2] {
+            true => Ok(1),
+            false => Ok(0)
+        }
+    }
+}
+
 pub struct Assembler
 {
     parser: tree_sitter::Parser,

@@ -36,7 +36,8 @@ pub fn handle_notification(
                         version: Some(params.text_document.version),
                         text: params.text_document.text
                     },
-                    crate::WorkspaceScanMethod::FullUpdate
+                    crate::WorkspaceScanMethod::FullUpdate,
+                    &tools.doc_chkpts
                 );
                 tools.thread_handles.push_back(handle);
             }
@@ -52,7 +53,8 @@ pub fn handle_notification(
                             version: None,
                             text
                         },
-                        crate::WorkspaceScanMethod::FullUpdate
+                        crate::WorkspaceScanMethod::FullUpdate,
+                        &tools.doc_chkpts
                     );
                     tools.thread_handles.push_back(handle);
                 }
@@ -83,7 +85,8 @@ pub fn handle_notification(
                                 version: Some(params.text_document.version),
                                 text: change.text
                             },
-                            crate::WorkspaceScanMethod::UseCheckpoints
+                            crate::WorkspaceScanMethod::UseCheckpoints,
+                            &tools.doc_chkpts
                         );
                         tools.thread_handles.push_back(handle);
                     }

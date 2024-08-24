@@ -12,6 +12,10 @@ use std::sync::Arc;
 
 use crate::{STDRESULT,DYNERR};
 
+pub const TOKEN_TYPES: [&str;21] = ["comment", "string", "keyword", "number", "regexp", "operator", "namespace",
+"type", "struct", "class", "interface", "enum", "typeParameter", "function",
+"method", "decorator", "macro", "variable", "parameter", "property", "label"];
+
 // JSON-RPC error codes; are they defined somewhere else?
 // -32768 through -32000 are reserved
 mod rpc_error {
@@ -239,10 +243,7 @@ impl SemanticTokensBuilder {
         }
     }
     pub fn get_token_types() ->Vec<String> {
-        let tok_array = ["comment", "string", "keyword", "number", "regexp", "operator", "namespace",
-	        "type", "struct", "class", "interface", "enum", "typeParameter", "function",
-	        "method", "decorator", "macro", "variable", "parameter", "property", "label"];
-        tok_array.iter().map(|x| x.to_string()).collect()
+        TOKEN_TYPES.iter().map(|x| x.to_string()).collect()
     }
     pub fn reset(&mut self) {
         self.tokens = Vec::new();

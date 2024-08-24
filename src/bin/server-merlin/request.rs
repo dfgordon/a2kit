@@ -6,7 +6,8 @@ use lsp_server::{Connection,RequestId,Response};
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use a2kit::lang::server::{Checkpoint, Tokens};
+use a2kit::lang::server::Checkpoint;
+// use a2kit::lang::server::Tokens; // used if we register tokens on client side
 use a2kit::lang::{disk_server, merlin, normalize_client_uri, normalize_client_uri_str};
 use a2kit::lang::merlin::formatter;
 use a2kit::lang::merlin::disassembly::DasmRange;
@@ -41,6 +42,7 @@ pub fn handle_request(
         lsp::request::HoverRequest::METHOD => Checkpoint::hover_response(chkpts, &mut tools.hover_provider, req.clone(), &mut resp),
         lsp::request::Completion::METHOD => Checkpoint::completion_response(chkpts, &mut tools.completion_provider, req.clone(), &mut resp),
         lsp::request::FoldingRangeRequest::METHOD => Checkpoint::folding_range_response(chkpts, req.clone(), &mut resp),
+        lsp::request::SemanticTokensFullRequest::METHOD => Checkpoint::sem_tok_response(chkpts, &mut tools.highlighter, req.clone(), &mut resp),
 
         lsp::request::Shutdown::METHOD => {
             logger(&connection,"shutdown request");
@@ -101,7 +103,8 @@ pub fn handle_request(
                                     let handle = launch_analysis_thread(
                                         Arc::clone(&tools.analyzer),
                                         chk.get_doc(),
-                                        crate::WorkspaceScanMethod::FullUpdate
+                                        crate::WorkspaceScanMethod::FullUpdate,
+                                        &tools.doc_chkpts
                                     );
                                     tools.thread_handles.push_back(handle);
                                 }
@@ -118,7 +121,8 @@ pub fn handle_request(
                                     let handle = launch_analysis_thread(
                                         Arc::clone(&tools.analyzer),
                                         chk.get_doc(),
-                                        crate::WorkspaceScanMethod::FullUpdate
+                                        crate::WorkspaceScanMethod::FullUpdate,
+                                        &tools.doc_chkpts
                                     );
                                     tools.thread_handles.push_back(handle);
                                 }
@@ -135,7 +139,8 @@ pub fn handle_request(
                                     let handle = launch_analysis_thread(
                                         Arc::clone(&tools.analyzer),
                                         chk.get_doc(),
-                                        crate::WorkspaceScanMethod::UseCheckpoints
+                                        crate::WorkspaceScanMethod::UseCheckpoints,
+                                        &tools.doc_chkpts
                                     );
                                     tools.thread_handles.push_back(handle);
                                 }
@@ -143,28 +148,28 @@ pub fn handle_request(
                             }
                         }
                     },
-                    "merlin6502.semantic.tokens" => {
-                        if params.arguments.len()==2 {
-                            let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
-                            let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
-                            if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
-                                let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
-                                    tools.highlighter.use_shared_symbols(chk.shared_symbols());
-                                } else {
-                                    // need to clear symbols if there is no checkpoint
-                                    tools.highlighter.use_shared_symbols(Arc::new(a2kit::lang::merlin::Symbols::new()));
-                                }
-                                // decision here is to highlight even if no symbols found
-                                resp = match tools.highlighter.get(&program) {
-                                    Ok(result) => {
-                                        lsp_server::Response::new_ok(req.id,result)
-                                    },
-                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"semantic tokens failed".to_string())
-                                };
-                            }
-                        }
-                    },
+                    // "merlin6502.semantic.tokens" => {
+                    //     if params.arguments.len()==2 {
+                    //         let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
+                    //         let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
+                    //         if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
+                    //             let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
+                    //             if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                    //                 tools.highlighter.use_shared_symbols(chk.shared_symbols());
+                    //             } else {
+                    //                 // need to clear symbols if there is no checkpoint
+                    //                 tools.highlighter.use_shared_symbols(Arc::new(a2kit::lang::merlin::Symbols::new()));
+                    //             }
+                    //             // decision here is to highlight even if no symbols found
+                    //             resp = match tools.highlighter.get(&program) {
+                    //                 Ok(result) => {
+                    //                     lsp_server::Response::new_ok(req.id,result)
+                    //                 },
+                    //                 Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"semantic tokens failed".to_string())
+                    //             };
+                    //         }
+                    //     }
+                    // },
                     "merlin6502.pasteFormat" => {
                         if params.arguments.len()==2 {
                             let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());

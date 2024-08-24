@@ -35,6 +35,7 @@ impl Tokens for SemanticTokensProvider {
 	fn get(&mut self, txt: &str) -> Result<lsp::SemanticTokens,DYNERR> {
 		self.builder.reset();
 		self.row = 0;
+		self.curr_macro = None;
 		for line in txt.lines() {
             if line.trim_start().len()==0 {
 				self.row += 1;

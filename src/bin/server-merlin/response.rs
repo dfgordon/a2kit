@@ -40,7 +40,8 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
                         let handle = super::launch_analysis_thread(
                             Arc::new(Mutex::new(loc_analyzer)),
                             doc,
-                            crate::WorkspaceScanMethod::None
+                            crate::WorkspaceScanMethod::None,
+                            &tools.doc_chkpts
                         );
                         tools.thread_handles.push_back(handle);
                     }
@@ -50,7 +51,10 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
         },
         "\"merlin6502-reg-config\"" => {
             logger(&connection,"registration response was received");
-        }
+        },
+        "\"merlin6502-refresh-tokens\"" => {
+            logger(&connection,"refresh tokens response was received");
+        },
         s => {
             logger(&connection,&format!("unhandled response: {}",s))
         }

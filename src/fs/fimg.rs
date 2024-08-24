@@ -290,11 +290,13 @@ impl FileImage {
     pub fn unpack_bin(&self) -> Result<Vec<u8>,DYNERR> {
         self.packer().unpack_bin(self)
     }
-    /// convert UTF8 to the file system's text format, if possible
+    /// Convert UTF8 with either LF or CRLF to the file system's text format.  This returns an error
+    /// if the conversion would result in any loss of data.
     pub fn pack_txt(&mut self, txt: &str) -> STDRESULT {
         self.packer().pack_txt(self,txt)
     }
-    /// convert the file system's text format to UTF8, if possible
+    /// Convert the file system's text format to UTF8 with LF.  This always succeeds because the underlying
+    /// text converters will replace unknown characters with ASCII NULL.
     pub fn unpack_txt(&self) -> Result<String,DYNERR> {
         self.packer().unpack_txt(self)
     }

@@ -304,17 +304,6 @@ impl Symbol {
             self.flags |= symbol_flags::ARG | symbol_flags::VAR;
             return;
         }
-        if let Some(c2) = node.next_named_sibling() {
-           if c2.kind() == "psop_equ" {
-                if let Some(c3) = c2.next_named_sibling() {
-                    if let Some(val) = c3.named_child(0) {
-                        if val.kind() == "num" {
-                            self.value = super::node_radix::<i64>(&val,source,"$","%");
-                        }
-                    }
-                }
-            }
-        }
         if let Some(parent) = node.parent() {
             if let Some(grandparent) = parent.parent() {
                 if grandparent.kind() == "arg_jsr" {
