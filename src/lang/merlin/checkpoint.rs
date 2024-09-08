@@ -200,8 +200,10 @@ impl Checkpoint for CheckpointManager {
         }
         vec![]
     }
-    fn get_renamables(&self,sel_loc: &lsp_types::Location) -> Vec<lsp_types::Location> {
-        self.get_refs(sel_loc)
+    fn get_renamables(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
+        let mut ans = self.get_refs(sel_loc);
+        ans.append(&mut self.get_defs(sel_loc));
+        ans
     }
 }
 

@@ -210,17 +210,31 @@ impl Disk {
         block >= fat::FIRST_DATA_CLUSTER as usize && block < fat::FIRST_DATA_CLUSTER as usize + self.boot_sector.cluster_count_usable() as usize
     }
     /// Open buffer if not already present.  Will usually be called indirectly.
-    /// The backup FAT will be written when the buffer is written back.
+    /// Uses backup FAT(s) to try and improve the first FAT.
+    /// The backup FAT(s) will be written when the buffer is written back.
     fn open_fat_buffer(&mut self) -> STDRESULT {
         if self.maybe_fat==None {
             trace!("buffering first FAT");
+            let num_fats = self.boot_sector.num_fats() as usize;
             let fat_secs = self.boot_sector.fat_secs();
+            let mut sec1 = self.boot_sector.res_secs() as u64;
             let mut ans = Vec::new();
-            let sec1 = self.boot_sector.res_secs() as u64;
             for isec in sec1..sec1+fat_secs {
                 let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
                 let mut buf = self.img.read_sector(cyl,head,sec)?;
                 ans.append(&mut buf);
+            }
+            for fat in 1..num_fats {
+                sec1 += fat_secs;
+                trace!("verify and repair against backup FAT {}",fat);
+                let mut bak = Vec::new();
+                for isec in sec1..sec1+fat_secs {
+                    let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
+                    let mut buf = self.img.read_sector(cyl,head,sec)?;
+                    bak.append(&mut buf);
+                }
+                let cluster_end = fat::FIRST_DATA_CLUSTER as u32 + self.boot_sector.cluster_count_usable() as u32;
+                fat::repair(self.typ,&mut ans,&bak,cluster_end);
             }
             self.maybe_fat = Some(ans);
         }
@@ -465,6 +479,7 @@ impl Disk {
             0 => return Ok(ans), // empty chain
             c => {
                 if !self.clus_in_rng(c) {
+                    log::error!("invalid cluster {} while getting data",c);
                     return Err(Box::new(Error::FirstClusterInvalid));
                 }
             }
@@ -489,6 +504,7 @@ impl Disk {
             0 => return Ok(ans), // empty chain
             c => {
                 if !self.clus_in_rng(c as usize) {
+                    log::error!("invalid cluster {} while getting length",c);
                     return Err(Box::new(Error::FirstClusterInvalid));
                 }
             }
@@ -723,7 +739,7 @@ impl Disk {
             return Ok((parent_info,root_info));
         }
         // walk the tree
-        let mut files = root.build_files()?;
+        let mut files = root.build_files(self.typ)?;
         parent_info = Some(root_info);
         for level in 0..n {
             debug!("searching level {}: {}",level,parent_info.clone().unwrap().name);
@@ -742,7 +758,7 @@ impl Disk {
                 return Ok((parent_info,curr));
             }
             let new_dir = self.get_directory(&curr.cluster1)?;
-            files = new_dir.build_files()?;
+            files = new_dir.build_files(self.typ)?;
             parent_info = Some(curr);
         }
         return Err(Box::new(Error::FileNotFound));
@@ -768,7 +784,7 @@ impl Disk {
         if let Ok((maybe_parent,file_info)) = self.goto_path(old_path) {
             if let Some(parent) = maybe_parent {
                 let search_dir = self.get_directory(&parent.cluster1)?;
-                let files = search_dir.build_files()?;
+                let files = search_dir.build_files(self.typ)?;
                 return match directory::get_file(new_name, &files) {
                     Some(_) => Err(Box::new(Error::DuplicateFile)),
                     None => Ok(EntryLocation { cluster1: parent.cluster1, entry: Ptr::Entry(file_info.idx), dir: search_dir })
@@ -791,7 +807,7 @@ impl Disk {
         debug!("write {} to {}",new_name,parent_path);
         if let Ok((_maybe_grandparent,parent)) = self.goto_path(&parent_path) {
             let mut search_dir = self.get_directory(&parent.cluster1)?;
-            let files = search_dir.build_files()?;
+            let files = search_dir.build_files(self.typ)?;
             return match directory::get_file(&new_name, &files) {
                 Some(_) => Err(Box::new(Error::DuplicateFile)),
                 None => match self.get_available_entry(&mut search_dir, &parent.cluster1) {
@@ -861,7 +877,7 @@ impl Disk {
             true => globset::GlobBuilder::new(&pattern).literal_separator(true).build()?.compile_matcher(),
             false => globset::GlobBuilder::new(&pattern.to_uppercase()).literal_separator(true).build()?.compile_matcher()
         };
-        if let Ok(sorted) = dir.build_files() {
+        if let Ok(sorted) = dir.build_files(self.typ) {
             for finfo in sorted.values() {
                 if finfo.volume_id {
                     continue;
@@ -900,7 +916,7 @@ impl Disk {
         const DATE_FMT: &str = "%Y/%m/%d";
         const TIME_FMT: &str = "%H:%M";
         let mut files = json::JsonValue::new_object();
-        if let Ok(sorted) = dir.build_files() {
+        if let Ok(sorted) = dir.build_files(self.typ) {
             for finfo in sorted.values() {
                 if finfo.volume_id {
                     continue;
@@ -921,6 +937,7 @@ impl Disk {
                     }
                 }
                 if include_meta {
+                    log::trace!("get metadata for {}",key);
                     files[&key]["meta"] = json::JsonValue::new_object();
                     let meta = &mut files[&key]["meta"];
                     if finfo.directory {
@@ -1019,8 +1036,8 @@ impl super::DiskFS for Disk {
         let (vol_lab,_) = self.get_root_dir()?;
         let free = self.num_free_blocks()? as u64 * self.boot_sector.sec_size() * self.boot_sector.secs_per_clus() as u64;
         match opt.to_lowercase().as_str() {
-            "" => display::dir(&path,&vol_lab,&dir,&pattern,false,free),
-            "/w" => display::dir(&path,&vol_lab,&dir,&pattern,true,free),
+            "" => display::dir(&path,&vol_lab,&dir,&pattern,false,free,self.typ),
+            "/w" => display::dir(&path,&vol_lab,&dir,&pattern,true,free,self.typ),
             _ => Err(Box::new(Error::InvalidSwitch))
         }
     }
@@ -1110,7 +1127,7 @@ impl super::DiskFS for Disk {
                 return Err(Box::new(Error::WriteProtect));
             }
             let dir = self.get_directory(&finfo.cluster1)?;
-            let files = dir.build_files()?;
+            let files = dir.build_files(self.typ)?;
             if files.len() > 2 {
                 error!("cannot delete directory with {} files",files.len()-2);
                 return Err(Box::new(Error::DirectoryNotEmpty));
@@ -1302,7 +1319,7 @@ impl super::DiskFS for Disk {
             _ => Some(Ptr::Cluster(ref_con as usize))
         };
         let dir = self.get_directory(&cluster1).expect("disk error");
-        let files = dir.build_files().expect("could not build files");
+        let files = dir.build_files(self.typ).expect("could not build files");
         for finfo in files.values() {
             // recursion into subdirectory
             if finfo.directory && finfo.name!="." && finfo.name!=".." {

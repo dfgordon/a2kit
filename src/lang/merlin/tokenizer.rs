@@ -154,11 +154,15 @@ impl Tokenizer
 		}
 		Ok(self.tokenized_program.clone())
 	}
-	/// Detokenize from byte array into a UTF8 string
+	/// Detokenize from byte array into a UTF8 string, returned string will always
+	/// be terminated with `self.line_sep`
 	pub fn detokenize(&self,img: &Vec<u8>) -> Result<String,DYNERR> {
 		let mut addr = 0;
 		let mut line = String::new();
 		let mut code = String::new();
+		if img.len() == 0 {
+			return Ok(self.line_sep.clone());
+		}
 		while addr < img.len() {
 			if img[addr] == 0x8d {
 				line = super::formatter::format_tokens(&line, &self.style, self.widths);

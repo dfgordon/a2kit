@@ -62,7 +62,7 @@ impl AddressHovers {
             };
             for offset in 0..bytes {
                 let hov_str = create_hover(*addr, offset, info);
-                hov.amap.insert(*addr,hov_str);
+                hov.amap.insert(*addr + offset,hov_str);
             }
         }
         hov

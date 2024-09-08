@@ -32,6 +32,29 @@ const BAD_CLUSTER32: u32 = 0xffffff7;
 const FREE_CLUSTER: u32 = 0;
 pub const FIRST_DATA_CLUSTER: u32 = 2;
 
+/// Use a backup FAT to improve the working FAT.
+/// A possible pattern is to call this once for each backup FAT
+/// upon mounting a disk in hopes of repairing any issues with
+/// the first FAT, which will then become the working FAT.
+/// This only makes local checks in the data cluster area at present.
+pub fn repair(typ: usize, working: &mut Vec<u8>, bak: &Vec<u8>, cluster_end: u32) {
+    for n in FIRST_DATA_CLUSTER as usize..cluster_end as usize {
+        let v1 = get_cluster(n,typ,working);
+        let v2 = get_cluster(n,typ,bak);
+        let dmg1 = is_damaged(n,typ,working);
+        let dmg2 = is_damaged(n,typ,bak);
+        if v1 != v2 {
+            log::trace!("cluster {}: working FAT has {}, backup has {}",n,v1,v2);
+        }
+        let v = match (v1 >= FIRST_DATA_CLUSTER && v1 < cluster_end && !dmg1, v2 >= FIRST_DATA_CLUSTER && v2 < cluster_end && !dmg2) {
+            (true,false) => v1,
+            (false,true) => v2,
+            _ => v1
+        };
+        set_cluster(n,v,typ,working);
+    }
+}
+
 /// get the value of cluster `n`.
 /// `typ` = bits per FAT entry (12,16,32)
 /// `buf` = buffer containing the entire FAT

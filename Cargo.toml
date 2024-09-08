@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "3.0.2"
+version = "3.1.0"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -46,4 +46,4 @@ num-traits = "0.2.14"
 num-derive = "0.3.3"
 a2kit_macro = "1.0.0"
 a2kit_macro_derive = "1.0.0"
-retrocompressor = "0.1.1"
+retrocompressor = "1.0.0"

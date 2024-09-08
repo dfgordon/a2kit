@@ -298,6 +298,9 @@ impl Symbol {
     /// Add a node to the symbol.
     /// The node can be `label_def`, `label_ref`, `macro_def`, `macro_ref`, or `var_mac`.
     /// The latter can occur without a wrapper in some pseudo-ops such as `ASC`.
+    /// This will not create any overlaps between `refs` and `defs`, but there can be
+    /// overlap between `decs` and `defs`, namely EXT/EXD will always be `def` and `dec`.
+    /// An ENT is either `def` (column 1) or `ref` (column 3).
     pub fn add_node(&mut self, loc: lsp::Location, node: &tree_sitter::Node, source: &str) {
         if node.kind() == "var_mac" {
             self.refs.push(loc);

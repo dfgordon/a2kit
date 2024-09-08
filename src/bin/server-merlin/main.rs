@@ -308,6 +308,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 ..lsp::CompletionOptions::default()
             }),
             document_symbol_provider: Some(lsp::OneOf::Left(true)),
+            workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
             rename_provider: Some(lsp::OneOf::Left(true)),
             document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
             document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {

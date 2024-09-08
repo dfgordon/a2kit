@@ -420,8 +420,47 @@ impl Directory {
         }
         None
     }
+    fn add_file(&self,ans: &mut BTreeMap<String,FileInfo>,fat_typ: usize,entry_idx: usize) -> Result<bool,DYNERR> {
+        let entry = self.get_entry(&Ptr::Entry(entry_idx));    
+        let (name,typ) = super::pack::file_name_to_split_string(entry.name, entry.ext);
+        let key = [name.clone(),".".to_string(),typ.clone()].concat();
+        trace!("entry in use: {}",key);
+        if ans.contains_key(&key) {
+            debug!("duplicate file {} in directory",key);
+            return Err(Box::new(Error::DuplicateFile));
+        }
+        let mut cluster1 = u16::from_le_bytes(entry.cluster1_low) as usize;
+        if fat_typ == 32 {
+            // Don't add for FAT12/16 in case we have wrongly set bits here
+            cluster1 += (u16::MAX as usize) * (u16::from_le_bytes(entry.cluster1_high) as usize);
+        }
+        let finfo: FileInfo = FileInfo {
+            is_root: false,
+            wildcard: String::new(),
+            idx: entry_idx,
+            name,
+            typ,
+            read_only: (entry.attr & READ_ONLY) > 0,
+            hidden: (entry.attr & HIDDEN) > 0,
+            system: (entry.attr & SYSTEM) > 0,
+            volume_id: (entry.attr & VOLUME_ID) > 0,
+            directory: (entry.attr & DIRECTORY) > 0,
+            archived: (entry.attr & ARCHIVE) > 0,
+            long_name: (entry.attr & LONG_NAME) > 0,
+            long_name_sub: (entry.attr & LONG_NAME_SUB) > 0,
+            write_date: super::pack::unpack_date(entry.write_date),
+            write_time: super::pack::unpack_time(entry.write_time,0),
+            create_date: super::pack::unpack_date(entry.creation_date),
+            create_time: super::pack::unpack_time(entry.creation_time,entry.creation_tenth),
+            access_date: super::pack::unpack_date(entry.access_date),
+            eof: u32::from_le_bytes(entry.file_size) as usize,
+            cluster1: Some(Ptr::Cluster(cluster1))
+        };
+        ans.insert(key.clone(),finfo);
+        Ok(super::pack::is_name_valid(&key))
+    }
     /// Build an alphabetized map of file names to file info.
-    pub fn build_files(&self) -> Result<BTreeMap<String,FileInfo>,DYNERR> {
+    pub fn build_files(&self,fat_typ: usize) -> Result<BTreeMap<String,FileInfo>,DYNERR> {
         let mut bad_names = 0;
         let mut ans = BTreeMap::new();
         // first pass collects everything except passwords
@@ -433,46 +472,13 @@ impl Directory {
             if etyp==EntryType::FreeAndNoMore {
                 break;
             }
-            let entry = self.get_entry(&Ptr::Entry(i));    
-            let (name,typ) = super::pack::file_name_to_split_string(entry.name, entry.ext);
-            let key = [name.clone(),".".to_string(),typ.clone()].concat();
-            if !super::pack::is_name_valid(&key) {
-                bad_names += 1;
-            }
             if bad_names > 2 {
                 debug!("after {} bad file names rejecting disk",bad_names);
                 return Err(Box::new(Error::Syntax));
             }
-            trace!("entry in use: {}",key);
-            if ans.contains_key(&key) {
-                debug!("duplicate file {} in directory",key);
-                return Err(Box::new(Error::DuplicateFile));
+            if !self.add_file(&mut ans,fat_typ,i)? {
+                bad_names += 1;
             }
-            let cluster1 = Ptr::Cluster(u16::from_le_bytes(entry.cluster1_low) as usize + 
-                (u16::MAX as usize) * (u16::from_le_bytes(entry.cluster1_high) as usize));
-            let finfo: FileInfo = FileInfo {
-                is_root: false,
-                wildcard: String::new(),
-                idx: i,
-                name,
-                typ,
-                read_only: (entry.attr & READ_ONLY) > 0,
-                hidden: (entry.attr & HIDDEN) > 0,
-                system: (entry.attr & SYSTEM) > 0,
-                volume_id: (entry.attr & VOLUME_ID) > 0,
-                directory: (entry.attr & DIRECTORY) > 0,
-                archived: (entry.attr & ARCHIVE) > 0,
-                long_name: (entry.attr & LONG_NAME) > 0,
-                long_name_sub: (entry.attr & LONG_NAME_SUB) > 0,
-                write_date: super::pack::unpack_date(entry.write_date),
-                write_time: super::pack::unpack_time(entry.write_time,0),
-                create_date: super::pack::unpack_date(entry.creation_date),
-                create_time: super::pack::unpack_time(entry.creation_time,entry.creation_tenth),
-                access_date: super::pack::unpack_date(entry.access_date),
-                eof: u32::from_le_bytes(entry.file_size) as usize,
-                cluster1: Some(cluster1)
-            };
-            ans.insert(key.clone(),finfo);
         }
         Ok(ans)
     }

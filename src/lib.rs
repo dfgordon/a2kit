@@ -39,10 +39,11 @@
 //! 
 //! A simple example follows:
 //! ```rs
-//! let img = std::fs::read(&Path::new("disk.woz"))?;
+//! let img_bytes = std::fs::read(&Path::new("disk.woz"))?;
 //! // DiskFS is always mutable because the underlying image can be stateful.
-//! // N.b. the underlying image in this case is cloned within the DiskFS.
-//! let mut disk = a2kit::create_fs_from_bytestream(&img,Some("woz"))?;
+//! // Here the underlying image is owned by the DiskFS, but can be borrowed.
+//! let mut disk = a2kit::create_fs_from_bytestream(&img_bytes,Some("woz"))?;
+//! // Get a text file from the disk image as a String.
 //! let text = disk.read_text("README")?;
 //! ```
 //! 

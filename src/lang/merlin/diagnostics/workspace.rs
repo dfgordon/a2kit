@@ -20,6 +20,29 @@ impl Workspace {
             rel_modules: HashSet::new()
         }
     }
+    pub fn get_ws_symbols(&self) -> Vec<lsp::WorkspaceSymbol> {
+        let mut ans = Vec::new();
+        for (name,sym) in &self.entries {
+            let mut locs = Vec::new();
+            for loc in &sym.defs {
+                locs.push(loc.clone());
+            }
+            for loc in &sym.refs {
+                locs.push(loc.clone());
+            }
+            for loc in locs {
+                ans.push(lsp::WorkspaceSymbol {
+                    name: name.to_owned(),
+                    kind: lsp::SymbolKind::CONSTANT,
+                    tags: None,
+                    container_name: None,
+                    location: lsp::OneOf::Left(loc),
+                    data: None
+                });
+            }
+        }
+        ans
+    }
     /// Get all masters of this URI
 	pub fn get_masters(&self, uri: &lsp::Url) -> HashSet<String> {
         let mut ans = HashSet::new();

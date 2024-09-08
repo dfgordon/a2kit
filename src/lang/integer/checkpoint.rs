@@ -163,11 +163,19 @@ impl Checkpoint for CheckpointManager {
         vec![]
     }
     fn get_renamables(&self,loc: &lsp_types::Location) -> Vec<lsp_types::Location> {
-        let sym = &self.symbols;
-        if let Some(ans) = goto_refs(&sym.vars, loc) {
-            return ans;
+        for line in self.symbols.lines.values() {
+            let combined = [line.gotos.clone(),line.gosubs.clone(),vec![line.primary]].concat();
+            for rng in &combined {
+                if range_contains_pos(rng, &loc.range.start) {
+                    return vec![];
+                }
+            }
         }
-        vec![]
+        let mut ans = Vec::new();
+        ans.append(&mut self.get_refs(loc));
+        ans.append(&mut self.get_defs(loc));
+        ans.append(&mut self.get_decs(loc));
+        ans
     }
 }
 

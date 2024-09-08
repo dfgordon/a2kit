@@ -43,6 +43,12 @@ pub fn handle_request(
         lsp::request::Completion::METHOD => Checkpoint::completion_response(chkpts, &mut tools.completion_provider, req.clone(), &mut resp),
         lsp::request::FoldingRangeRequest::METHOD => Checkpoint::folding_range_response(chkpts, req.clone(), &mut resp),
         lsp::request::SemanticTokensFullRequest::METHOD => Checkpoint::sem_tok_response(chkpts, &mut tools.highlighter, req.clone(), &mut resp),
+        lsp::request::WorkspaceSymbolRequest::METHOD => {
+            if let Ok(_params) = serde_json::from_value::<lsp::WorkspaceSymbolParams>(req.params) {
+                let ws_syms = tools.workspace.get_ws_symbols();
+                resp = lsp_server::Response::new_ok(req.id,ws_syms);
+            }
+        }
 
         lsp::request::Shutdown::METHOD => {
             logger(&connection,"shutdown request");

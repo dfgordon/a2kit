@@ -114,14 +114,20 @@ pub trait Checkpoint {
         if let Ok(params) = serde_json::from_value::<lsp::RenameParams>(req.params) {
             let uri = super::normalize_client_uri(params.text_document_position.text_document.uri);
             let pos = params.text_document_position.position;
+            let sel_loc = lsp::Location::new(uri.clone(),lsp::Range::new(pos,pos));
             if let Some(chkpt) = chkpts.get(&uri.to_string()) {
-                let locs = chkpt.get_renamables(&lsp::Location { uri: uri.clone(), range: lsp::Range {start: pos,end: pos}});
-                let mut edits = Vec::new();
+                let mut changes: HashMap<lsp::Url,Vec<lsp::TextEdit>> = HashMap::new();
+                let locs = chkpt.get_renamables(&sel_loc);
                 for loc in locs {
-                    edits.push(lsp::TextEdit::new(loc.range, params.new_name.clone()));
+                    let new_edit = lsp::TextEdit::new(loc.range, params.new_name.clone());
+                    match changes.get_mut(&loc.uri) {
+                        Some(edits) => edits.push(new_edit),
+                        None => {
+                            let edits = vec![new_edit];
+                            changes.insert(loc.uri,edits);
+                        }
+                    };
                 }
-                let mut changes = HashMap::new();
-                changes.insert(uri,edits);
                 *resp = match serde_json::to_value::<lsp::WorkspaceEdit>(lsp::WorkspaceEdit::new(changes)) {
                     Ok(result) => lsp_server::Response::new_ok(req.id,result),
                     Err(_) => lsp_server::Response::new_err(req.id,rpc_error::PARSE_ERROR,"rename request failed while parsing".to_string())

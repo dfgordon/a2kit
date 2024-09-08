@@ -131,7 +131,7 @@ fn is_displayed(finfo: &directory::FileInfo,pattern: &str) -> bool {
 
 /// Display FAT directory, either in normal or `wide` mode.
 /// This will behave like MS-DOS 3.3, except for color highlights.
-pub fn dir(path: &str,vol_lab: &str, dir: &directory::Directory,pattern: &str,wide: bool,free: u64) -> STDRESULT {
+pub fn dir(path: &str,vol_lab: &str, dir: &directory::Directory,pattern: &str,wide: bool,free: u64,fat_typ: usize) -> STDRESULT {
     if vol_lab!="NO NAME" {
         println!();
         println!(" Volume in drive A is {}",vol_lab.blue().bold());
@@ -145,7 +145,7 @@ pub fn dir(path: &str,vol_lab: &str, dir: &directory::Directory,pattern: &str,wi
         path.to_string()
     }.replace("/","\\").to_uppercase();
     println!(" Directory of A:{}",&displ_path);
-    if let Ok(sorted) = dir.build_files() {
+    if let Ok(sorted) = dir.build_files(fat_typ) {
         // `build_files` sorts on the name automatically, so we have to "re-sort" in order
         // to get the "unsorted" list.
         let unsorted = dir.sort_on_entry_index(&sorted);
