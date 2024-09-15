@@ -254,6 +254,11 @@ impl Analyzer {
             self.push(rng,&mess[0..mess.len()-1],self.config.flag.collisions.unwrap());
         }
     }
+    fn linenum_range(&self,node: &tree_sitter::Node,source: &str) -> lsp_types::Range {
+        let len = node_text(node,source).trim_end().len() as u32;
+        let rng = lsp_range(node.range(),self.row,self.col);
+        lsp_types::Range::new(rng.start,lsp_types::Position::new(rng.start.line,rng.start.character + len))
+    }
 	fn process_variable_def(&mut self,maybe_node: Option<tree_sitter::Node>, dim: bool, recall: bool) {
 		if let Some(node) = maybe_node {
             let [keyname,cased] = super::var_to_key(node,recall,&self.line);
@@ -308,7 +313,7 @@ impl Analyzer {
                 } else {
                     self.symbols.lines.insert(num, Line {
                         rem: remark,
-                        primary: lsp_range(rng,self.row,self.col),
+                        primary: self.linenum_range(&curs.node(),&self.line),
                         gosubs: Vec::new(),
                         gotos: Vec::new()
                     });
