@@ -7,7 +7,7 @@ use std::sync::Arc;
 use lsp_types as lsp;
 use crate::lang::range_contains_pos;
 use crate::lang::Document;
-use super::{Variable,Symbols};
+use super::{Variable,Line,Symbols};
 use crate::lang::server::Checkpoint;
 
 pub struct CheckpointManager {
@@ -15,37 +15,57 @@ pub struct CheckpointManager {
     symbols: Arc<Symbols>
 }
 
-fn goto_defs(ans: &mut Vec<lsp::Location>,loc: &lsp::Location,refs: &Vec<lsp::Range>,defs: &Vec<lsp::Range>) -> bool {
-    for rng in refs {
-        if range_contains_pos(rng, &loc.range.start) {
-            for def_rng in defs {
-                ans.push(lsp::Location::new(loc.uri.clone(),def_rng.clone()));
+/// Simple linear search of map values
+fn find_clicked_in_map(map: &HashMap<String,Variable>,sel_loc: &lsp::Location) -> Option<Variable> {
+    for v in map.values() {
+        for rng in &v.decs {
+            if range_contains_pos(rng, &sel_loc.range.start) {
+                return Some(v.clone());
             }
-            return true; // found it
+        }
+        for rng in &v.defs {
+            if range_contains_pos(rng, &sel_loc.range.start) {
+                return Some(v.clone());
+            }
+        }
+        for rng in &v.refs {
+            if range_contains_pos(rng, &sel_loc.range.start) {
+                return Some(v.clone());
+            }
         }
     }
-    false
+    None
 }
 
-fn goto_refs(map: &HashMap<String,Variable>, loc: &lsp::Location) -> Option<Vec<lsp::Location>> {
-	for vars in map.values() {
-		let mut ans = Vec::new();
-		let mut clicked = false;
-        // information can be built uselessly many times, but here it isn't too important
-        for rng in &vars.refs {
-			ans.push(lsp::Location::new(loc.uri.clone(), rng.clone()));
-			clicked = clicked || range_contains_pos(rng, &loc.range.start);
-		}
-        for rng in &vars.defs {
-			clicked = clicked || range_contains_pos(rng, &loc.range.start);
+fn find_clicked(symbols: &Arc<Symbols>,sel_loc: &lsp::Location) -> Option<Variable> {
+    if let Some(sym) = find_clicked_in_map(&symbols.scalars, sel_loc) {
+        return Some(sym);
+    }
+    if let Some(sym) = find_clicked_in_map(&symbols.arrays, sel_loc) {
+        return Some(sym);
+    }
+    if let Some(sym) = find_clicked_in_map(&symbols.functions, sel_loc) {
+        return Some(sym);
+    }
+    None
+}
+
+fn find_clicked_linenum(map: &HashMap<i64,Line>,sel_loc: &lsp::Location) -> Option<Line> {
+    for v in map.values() {
+        if range_contains_pos(&v.primary,&sel_loc.range.start) {
+            return Some(v.clone());
         }
-        for rng in &vars.decs {
-			clicked = clicked || range_contains_pos(rng, &loc.range.start);
+        for rng in &v.gosubs {
+            if range_contains_pos(rng,&sel_loc.range.start) {
+                return Some(v.clone());
+            }
         }
-		if clicked {
-			return Some(ans);
+        for rng in &v.gotos {
+            if range_contains_pos(rng,&sel_loc.range.start) {
+                return Some(v.clone());
+            }
         }
-	}
+    }
     None
 }
 
@@ -116,83 +136,35 @@ impl Checkpoint for CheckpointManager {
         ans
     }
     fn get_decs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
-        let mut ans = Vec::new();
-        let sym = &self.symbols;
-        for vars in sym.arrays.values() {
-            if goto_defs(&mut ans, loc, &vars.refs, &vars.decs) {
-                return ans;
-            }
-        }
-        ans
-    }
-    fn get_defs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
-        let mut ans = Vec::new();
-        let sym = &self.symbols;
-        for line in sym.lines.values() {
-            let combined = [line.gotos.clone(),line.gosubs.clone()].concat();
-            for rng in &combined {
-                if range_contains_pos(rng, &loc.range.start) {
-                    return vec![lsp::Location::new(loc.uri.clone(),line.primary.clone())];
-                }
-            }
-        }
-        for vars in sym.scalars.values() {
-            if goto_defs(&mut ans, loc, &vars.refs, &vars.defs) {
-                return ans;
-            }
-        }
-        for vars in sym.arrays.values() {
-            if goto_defs(&mut ans, loc, &vars.refs, &vars.defs) {
-                return ans;
-            }
-        }
-        for vars in sym.functions.values() {
-            if goto_defs(&mut ans, loc, &vars.refs, &vars.defs) {
-                return ans;
-            }
-        }
-        ans
-    }
-    fn get_refs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
-        let sym = &self.symbols;
-        for line in sym.lines.values() {
-            let mut ans = Vec::new();
-            let mut clicked = false;
-            let combined = [line.gotos.clone(),line.gosubs.clone(),vec![line.primary]].concat();
-            // information can be built uselessly many times, but here it isn't too important
-            for rng in &combined {
-                ans.push(lsp::Location::new(loc.uri.clone(),rng.clone()));
-                clicked = clicked || range_contains_pos(rng, &loc.range.start);
-            }
-            if clicked {
-                return ans;
-            }
-        }
-        if let Some(ans) = goto_refs(&sym.scalars, loc) {
-            return ans;
-        }
-        if let Some(ans) = goto_refs(&sym.arrays, loc) {
-            return ans;
-        }
-        if let Some(ans) = goto_refs(&sym.functions, loc) {
-            return ans;
+        if let Some(var) = find_clicked(&self.symbols, loc) {
+            return var.decs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
         }
         vec![]
     }
-    fn get_renamables(&self,loc: &lsp_types::Location) -> Vec<lsp_types::Location> {
-        for line in self.symbols.lines.values() {
-            let combined = [line.gotos.clone(),line.gosubs.clone(),vec![line.primary]].concat();
-            for rng in &combined {
-                if range_contains_pos(rng, &loc.range.start) {
-                    return vec![];
-                }
-            }
+    fn get_defs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
+        if let Some(line) = find_clicked_linenum(&self.symbols.lines, loc) {
+            return vec![lsp::Location::new(loc.uri.clone(),line.primary.clone())];
         }
-        let mut ans = Vec::new();
-        ans.append(&mut self.get_refs(loc));
-        ans.append(&mut self.get_defs(loc));
-        ans.append(&mut self.get_decs(loc));
-        ans
+        if let Some(var) = find_clicked(&self.symbols, loc) {
+            return var.defs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+        }
+        vec![]
+    }
+    fn get_refs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
+        if let Some(line) = find_clicked_linenum(&self.symbols.lines, loc) {
+            return [line.gotos.clone(),line.gosubs.clone()].concat().iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+        }
+        if let Some(var) = find_clicked(&self.symbols, loc) {
+            return var.refs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+        }
+        vec![]
+    }
+    fn get_renamables(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
+        if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
+            let rngs = [sym.decs.clone(),sym.defs.clone(),sym.refs.clone()].concat();
+            return rngs.iter().map(|r| lsp::Location::new(sel_loc.uri.clone(),r.clone())).collect();
+        }
+        Vec::new()
     }
 }
 

@@ -140,6 +140,11 @@ impl Analyzer {
     fn push(&mut self,rng: tree_sitter::Range,mess: &str,severity: DiagnosticSeverity) {
         self.diagnostics.push(self.create(rng,mess,severity));
     }
+    fn linenum_range(&self,node: &tree_sitter::Node,source: &str) -> lsp_types::Range {
+        let len = node_text(node,source).trim_end().len() as u32;
+        let rng = lsp_range(node.range(),self.row,self.col);
+        lsp_types::Range::new(rng.start,lsp_types::Position::new(rng.start.line,rng.start.character + len))
+    }
 	fn process_variable_defs(&mut self,maybe_node: Option<tree_sitter::Node>, nmax: usize) {
 		if let Some(node) = maybe_node {
             let mut maybe_next = Some(node);
@@ -208,7 +213,7 @@ impl Analyzer {
                 else {
                     self.symbols.lines.insert(num, super::Line {
                         rem: remark,
-                        primary: lsp_range(rng,self.row,self.col),
+                        primary: self.linenum_range(&curs.node(),&self.line),
                         gosubs: Vec::new(),
                         gotos: Vec::new()
                     });
@@ -294,7 +299,7 @@ impl Analyzer {
         let var_info = self.symbols.vars.get_mut(&keyname).unwrap();
         var_info.is_array = is_array;
         var_info.is_string = is_string;
-        var_info.refs.push(name_range);
+        var_info.push_ref_selectively(name_range);
         var_info.case.insert(cased);
         let is_declared = var_info.decs.len() > 0;
         let is_defined = var_info.defs.len() > 0;

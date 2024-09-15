@@ -16,39 +16,41 @@ pub struct CheckpointManager {
     folding_ranges: Vec<lsp::FoldingRange>
 }
 
-fn goto_defs(ans: &mut Vec<lsp::Location>,sel_loc: &lsp::Location,refs: &Vec<lsp::Location>,defs: &Vec<lsp::Location>) -> bool {
-    for ref_loc in refs {
-        if ref_loc.uri == sel_loc.uri {
-            if range_contains_pos(&ref_loc.range, &sel_loc.range.start) {
-                for def_loc in defs {
-                    ans.push(def_loc.clone());
-                }
-                return true; // found it
+/// Simple linear search of map values, may recursively call itself
+fn find_clicked_in_map(map: &HashMap<String,Symbol>,sel_loc: &lsp::Location) -> Option<Symbol> {
+    for v in map.values() {
+        for loc in &v.decs {
+            if loc.uri == sel_loc.uri && range_contains_pos(&loc.range, &sel_loc.range.start) {
+                return Some(v.clone());
             }
         }
+        for loc in &v.defs {
+            if loc.uri == sel_loc.uri && range_contains_pos(&loc.range, &sel_loc.range.start) {
+                return Some(v.clone());
+            }
+        }
+        for loc in &v.refs {
+            if loc.uri == sel_loc.uri && range_contains_pos(&loc.range, &sel_loc.range.start) {
+                return Some(v.clone());
+            }
+        }
+        if let Some(sym) = find_clicked_in_map(&v.children, sel_loc) {
+            return Some(sym)
+        }
     }
-    false
+    None
 }
 
-fn goto_refs(map: &HashMap<String,Symbol>, sel_loc: &lsp::Location) -> Option<Vec<lsp::Location>> {
-	for sym in map.values() {
-		let mut ans = Vec::new();
-		let mut clicked = false;
-        // information can be built uselessly many times, but here it isn't too important
-        for ref_loc in &sym.refs {
-			ans.push(ref_loc.clone());
-			clicked = clicked || (ref_loc.uri == sel_loc.uri && range_contains_pos(&ref_loc.range, &sel_loc.range.start));
-		}
-        for def_loc in &sym.defs {
-			clicked = clicked || (def_loc.uri == sel_loc.uri && range_contains_pos(&def_loc.range, &sel_loc.range.start));
-        }
-        for dec_loc in &sym.decs {
-			clicked = clicked || (dec_loc.uri == sel_loc.uri && range_contains_pos(&dec_loc.range, &sel_loc.range.start));
-        }
-		if clicked {
-			return Some(ans);
-        }
-	}
+fn find_clicked(symbols: &Arc<Symbols>,sel_loc: &lsp::Location) -> Option<Symbol> {
+    if let Some(sym) = find_clicked_in_map(&symbols.globals, sel_loc) {
+        return Some(sym);
+    }
+    if let Some(sym) = find_clicked_in_map(&symbols.macros, sel_loc) {
+        return Some(sym);
+    }
+    if let Some(sym) = find_clicked_in_map(&symbols.vars, sel_loc) {
+        return Some(sym);
+    }
     None
 }
 
@@ -138,72 +140,28 @@ impl Checkpoint for CheckpointManager {
         ans
     }
     fn get_decs(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
-        let mut ans = Vec::new();
-        let syms = &self.symbols;
-        for sym in syms.globals.values() {
-            if goto_defs(&mut ans, sel_loc, &sym.refs, &sym.decs) {
-                return ans;
-            }
+        if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
+            return sym.decs.clone();
         }
-        ans
+        Vec::new()
     }
     fn get_defs(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
-        let mut ans = Vec::new();
-        let sym = &self.symbols;
-        for globals in sym.globals.values() {
-            if goto_defs(&mut ans, sel_loc, &globals.refs, &globals.defs) {
-                return ans;
-            }
-            for children in globals.children.values() {
-                if goto_defs(&mut ans, sel_loc, &children.refs, &children.defs) {
-                    return ans;
-                }
-            }
+        if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
+            return sym.defs.clone();
         }
-        for macros in sym.macros.values() {
-            if goto_defs(&mut ans, sel_loc, &macros.refs, &macros.defs) {
-                return ans;
-            }
-            for children in macros.children.values() {
-                if goto_defs(&mut ans, sel_loc, &children.refs, &children.defs) {
-                    return ans;
-                }
-            }
-        }
-        for vars in sym.vars.values() {
-            if goto_defs(&mut ans, sel_loc, &vars.refs, &vars.defs) {
-                return ans;
-            }
-        }
-        ans
+        Vec::new()
     }
     fn get_refs(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
-        let syms = &self.symbols;
-        if let Some(ans) = goto_refs(&syms.globals, sel_loc) {
-            return ans;
+        if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
+            return sym.refs.clone();
         }
-        if let Some(ans) = goto_refs(&syms.macros, sel_loc) {
-            return ans;
-        }
-        if let Some(ans) = goto_refs(&syms.vars, sel_loc) {
-            return ans;
-        }
-        for sym in syms.globals.values() {
-            if let Some(ans) = goto_refs(&sym.children, sel_loc) {
-                return ans;
-            }
-        }
-        for sym in syms.macros.values() {
-            if let Some(ans) = goto_refs(&sym.children, sel_loc) {
-                return ans;
-            }
-        }
-        vec![]
+        Vec::new()
     }
     fn get_renamables(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
-        let mut ans = self.get_refs(sel_loc);
-        ans.append(&mut self.get_defs(sel_loc));
-        ans
+        if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
+            return [sym.decs.clone(),sym.defs.clone(),sym.refs.clone()].concat();
+        }
+        Vec::new()
     }
 }
 

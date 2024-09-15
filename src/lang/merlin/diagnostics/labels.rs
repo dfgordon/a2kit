@@ -4,7 +4,7 @@ use crate::lang::merlin::context::Context;
 use super::super::{Symbol,Symbols,Workspace,SourceType,LabelType};
 use super::super::symbol_flags as flg;
 use crate::lang::merlin::{self, MerlinVersion, assembly};
-use crate::lang::server::{path_in_workspace,basic_diag};
+use crate::lang::server::basic_diag;
 use crate::lang::{Navigation,node_text,lsp_range};
 use crate::DYNERR;
 
@@ -157,7 +157,7 @@ fn visit_gather_macro_def(node: &tree_sitter::Node, loc: lsp::Location, ctx: &mu
             if symbols.mac_defined(&txt) {
                 push(rng,"redefinition of a macro",lsp::DiagnosticSeverity::ERROR);
             }
-            if symbols.global_defined(&txt) {
+            if symbols.global_declared_or_defined(&txt) {
                 push(rng,"macro name is used previously as a label",lsp::DiagnosticSeverity::ERROR);
             }
         } else {
@@ -180,7 +180,7 @@ fn visit_gather_macro_def(node: &tree_sitter::Node, loc: lsp::Location, ctx: &mu
     } else if child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();
         if ck == "global_label" {
-            if symbols.global_defined(&txt) {
+            if symbols.global_declared_or_defined(&txt) {
                 push(rng, "macro local shadows global", lsp::DiagnosticSeverity::WARNING);
             }
             if symbols.child_defined(&txt,&ctx.curr_scope().unwrap()) {
@@ -215,7 +215,7 @@ fn visit_gather_macro_def(node: &tree_sitter::Node, loc: lsp::Location, ctx: &mu
             register(&txt,loc,&node,symbols,None,ctx,fwd);
         } else if child.unwrap().kind()=="global_label" {
             // Tentatively register as a child (macro local), will be resolved on second pass
-            if no_fwd && !symbols.global_defined(&txt) {
+            if no_fwd && !symbols.global_declared_or_defined(&txt) {
                 log::trace!("{}: push `{}` onto fwd list",ctx.row(),&txt);
                 fwd.push(LabelType::Global);
             }
@@ -274,7 +274,7 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     } else if curs.depth()>1 && node.kind() != "label_def" {
         ctx.running_docstring = String::new();
     }
-    if child.is_some() && node.kind()=="label_def" && gen {
+    if gen && child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();
         if ck == "global_label" {
             if symbols.global_defined(&txt) {
@@ -289,16 +289,30 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
                     Some(ent) => {
                         if let Some(ext) = symbols.globals.get_mut(&txt) {
                             if ent.defs.len() > 0 {
-                                ext.docstring = format!("imported from {}",path_in_workspace(&ent.defs[0].uri, &ws.ws_folders));
-                            } else if ent.refs.len() > 0 {
-                                ext.docstring = format!("referenced in {}, but definition not found",path_in_workspace(&ent.refs[0].uri, &ws.ws_folders));
+                                ext.defs = ent.defs.clone();
+                                ext.defining_code = ent.defining_code.clone();
+                                ext.docstring = ent.docstring.clone();
+                            } else if ent.decs.len() > 0 {
+                                ext.defining_code = None;
+                                ext.docstring = format!("entry exists in operand form");
                             } else {
+                                ext.defining_code = None;
                                 ext.docstring = format!("entry exists but there was an internal error");
                             }
                         }
                     },
                     None => push(rng,"entry was not found in workspace",lsp::DiagnosticSeverity::ERROR)
                 };
+            }
+            if f & merlin::symbol_flags::EXT > 0 || f & merlin::symbol_flags::ENT > 0 {
+                if let Some(declarable) = symbols.globals.get(&txt) {
+                    if declarable.decs.len() > 1 {
+                        push(rng,"redeclaration of a workspace symbol",lsp::DiagnosticSeverity::ERROR);
+                    }
+                }
+            }
+            if f & merlin::symbol_flags::EXT > 0 && f & merlin::symbol_flags::ENT > 0 {
+                push(rng,"label is both EXT and ENT in the same module",lsp::DiagnosticSeverity::ERROR);
             }
             ctx.running_docstring = String::new();
             ctx.enter_scope(&txt,symbols);
@@ -336,7 +350,12 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             register(&txt,loc,&node,symbols,None,ctx,fwd);
         }
         return Ok(Navigation::GotoSibling);
-    } else if child.is_some() && node.kind() == "label_ref" && asm {
+    } else if gen && node.kind() == "label_ref" && node.parent().unwrap().kind() == "arg_ent" {
+        let f = register(&txt,loc,&node,symbols,None,ctx,vec![]);
+        if f & merlin::symbol_flags::EXT > 0 && f & merlin::symbol_flags::ENT > 0 {
+            push(rng,"label is both EXT and ENT in the same module",lsp::DiagnosticSeverity::ERROR);
+        }
+    } else if asm && child.is_some() && node.kind() == "label_ref" {
         let mut fwd = Vec::new();
         let no_fwd = match super::find_arg_node(&node) {
             Some(psop) => FWD_REF_AVERSE.contains(&psop.as_str()),
@@ -418,7 +437,7 @@ fn visit_verify_macro_def(node: &tree_sitter::Node, loc: lsp::Location, ctx: &mu
         if ck=="global_label" && symbols.mac_defined(&txt) {
             push(rng,"macro cannot be used here",lsp::DiagnosticSeverity::ERROR);
         } else if ck == "global_label" {
-            let is_glob = symbols.global_defined(&txt);
+            let is_glob = symbols.global_declared_or_defined(&txt);
             let is_mac_loc = symbols.child_defined(&txt, ctx.curr_scope().as_ref().unwrap());
             if is_glob && is_mac_loc {
                 push(rng,"macro local shadows global",lsp::DiagnosticSeverity::WARNING);
@@ -504,12 +523,16 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
         // have to keep looking for folds
         return Ok(Navigation::GotoChild);
     }
-    if child.is_some() && node.kind()=="label_ref" {
+    if node.kind() == "label_ref" && node.parent().unwrap().kind() == "arg_ent" {
+        if !symbols.global_defined(&txt) {
+            push(rng,"entry label declared, but never defined",lsp::DiagnosticSeverity::WARNING);
+        }
+    } else if child.is_some() && node.kind()=="label_ref" {
         let ck = child.unwrap().kind();
         if ck=="global_label" && symbols.mac_defined(&txt) {
             push(rng,"macro cannot be used here",lsp::DiagnosticSeverity::ERROR);
         } else if ck == "global_label" {
-            let is_glob = symbols.global_defined(&txt);
+            let is_glob = symbols.global_declared_or_defined(&txt);
             if !is_glob {
                 push(rng, "global label is undefined", lsp::DiagnosticSeverity::ERROR);
             } else if is_glob && symbols.global_forward(&txt,&loc) {
@@ -552,7 +575,7 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
         }
         return Ok(Navigation::GotoSibling)
     } else if node.kind()=="macro_ref" {
-        if !symbols.mac_defined(&txt) && symbols.global_defined(&txt) {
+        if !symbols.mac_defined(&txt) && symbols.global_declared_or_defined(&txt) {
             push(rng,"expected macro, this is a label",lsp::DiagnosticSeverity::ERROR);
         } else if !symbols.mac_defined(&txt) {
             push(rng,"macro is undefined",lsp::DiagnosticSeverity::ERROR);

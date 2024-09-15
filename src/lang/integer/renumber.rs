@@ -5,7 +5,8 @@ use tree_sitter_integerbasic;
 use lsp_types::{Range,Position,TextEdit};
 use crate::lang;
 use crate::lang::Navigate;
-use crate::lang::linenum::{LabelInformation,LineNumberTool};
+#[allow(deprecated)]
+use crate::lang::linenum::{LabelInformation,Renumber,LineNumberTool};
 use std::collections::BTreeMap;
 use log::{error,debug};
 use crate::{STDRESULT,DYNERR};
@@ -20,7 +21,7 @@ pub struct Renumberer {
     parser: tree_sitter::Parser,
     row: isize,
     line: String,
-    info: BTreeMap<usize,LabelInformation>,
+    info: BTreeMap<usize,Vec<LabelInformation>>,
     primaries: bool,
     secondaries: bool
 }
@@ -53,10 +54,37 @@ impl Navigate for Renumberer {
     }
 }
 
+// only here to prevent breaking dependent's builds, do not use
+#[allow(deprecated)]
 impl LineNumberTool for Renumberer {
-    fn gather(&mut self,source: &str, row: isize, primaries: bool, secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR> {
-        self.primaries = primaries;
-        self.secondaries = secondaries;
+    fn gather(&mut self,_source: &str, _row: isize, _primaries: bool, _secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR> {
+        Err(Box::new(crate::lang::Error::LineNumber))
+    }
+}
+
+impl Renumber for Renumberer {
+    fn gather_defs(&mut self,source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR> {
+        self.primaries = true;
+        self.secondaries = false;
+        self.info = BTreeMap::new();
+        self.row = row;
+        for line in source.lines() {
+            if line.len()==0 {
+                self.row += 1;
+                continue;
+            }
+            self.line = line.to_string() + "\n";
+            match self.parser.parse(&self.line,None) {
+                Some(tree) => self.walk(&tree)?,
+                None => return Err(Box::new(lang::Error::ParsingError))
+            }
+            self.row += 1;
+        }
+        Ok(self.info.clone())
+    }
+    fn gather_refs(&mut self,source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR> {
+        self.primaries = false;
+        self.secondaries = true;
         self.info = BTreeMap::new();
         self.row = row;
         for line in source.lines() {
@@ -90,9 +118,15 @@ impl Renumberer {
         }
     }
     fn push_linenum(&mut self,curs: &tree_sitter::TreeCursor) -> STDRESULT {
-        match Self::get_info(curs,&self.line,self.row) {
-            Ok((num,info)) => {
-                self.info.insert(num,info);
+        match Self::get_one(curs,&self.line,self.row) {
+            Ok((num,new_info)) => {
+                if !self.info.contains_key(&num) {
+                    self.info.insert(num,vec![new_info]);
+                } else {
+                    if let Some(val) = self.info.get_mut(&num) {
+                        val.push(new_info);
+                    }
+                }
                 Ok(())
             },
             Err(e) => Err(e)
@@ -104,7 +138,7 @@ impl Renumberer {
     /// Get edits for LSP, this simply wraps the trait default
     pub fn get_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str)
     -> Result<Vec<TextEdit>,String> {
-        self.renumber_edits(all_txt,ext_sel,start,step,
+        self.build_edits(all_txt,ext_sel,start,step,
             self.flags & flags::PASS_OVER_REFS == 0,
             self.flags & flags::REORDER > 0, 0 , 32767)
     }
@@ -112,17 +146,21 @@ impl Renumberer {
     /// References are updated globally.
     /// This function assumes the existing numbering is valid.
     pub fn renumber(&mut self,source: &str, beg: usize, end: usize, first: usize, step: usize) -> Result<String,DYNERR> {
-        let all_primaries = match self.gather(source,0, true, false) {
+        let all_primaries = match self.gather_defs(source,0) {
             Ok(result) => result,
             Err(_) => return Err(Box::new(lang::Error::LineNumber))
         };
         let [mut l0,mut ln] = [0x10000,0];
         for (num,label) in &all_primaries {
-            if *num >= beg && l0 > label.rng.start.line {
-                l0 = label.rng.start.line;
+            if label.len() != 1 {
+                log::error!("duplicated primary line number");
+                return Err(Box::new(crate::lang::Error::LineNumber));
             }
-            if *num < end && ln < label.rng.start.line {
-                ln = label.rng.start.line;
+            if *num >= beg && l0 > label[0].rng.start.line {
+                l0 = label[0].rng.start.line;
+            }
+            if *num < end && ln < label[0].rng.start.line {
+                ln = label[0].rng.start.line;
             }
         }
         debug!("renumber rows {} to {}",l0,ln);
@@ -130,7 +168,7 @@ impl Renumberer {
             true => Some(Range::new(Position::new(l0,0),Position::new(ln+1,0))),
             false => None
         };
-        match self.renumber_edits(source,ext_sel,
+        match self.build_edits(source,ext_sel,
             &first.to_string(),
             &step.to_string(),
             self.flags & flags::PASS_OVER_REFS == 0,

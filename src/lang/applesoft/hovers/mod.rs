@@ -117,6 +117,7 @@ impl Navigate for HoverProvider {
                 }
                 if is_overloaded(curs) {
                     self.markup.value += "overloaded token";
+                    return Ok(Navigation::Exit);
                 } else if let Some(statement) = self.statements.get(curs.node().kind()) {
                     self.markup.value += &statement;
                 }
@@ -130,6 +131,7 @@ impl Navigate for HoverProvider {
                     self.markup.value += "custom command";
                 } else {
                     self.markup.value += "overloaded token";
+                    return Ok(Navigation::Exit);
                 }
             }
 

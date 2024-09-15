@@ -39,10 +39,8 @@
 //! 
 //! A simple example follows:
 //! ```rs
-//! let img_bytes = std::fs::read(&Path::new("disk.woz"))?;
 //! // DiskFS is always mutable because the underlying image can be stateful.
-//! // Here the underlying image is owned by the DiskFS, but can be borrowed.
-//! let mut disk = a2kit::create_fs_from_bytestream(&img_bytes,Some("woz"))?;
+//! let mut disk = a2kit::create_fs_from_file("disk.woz")?;
 //! // Get a text file from the disk image as a String.
 //! let text = disk.read_text("README")?;
 //! ```
@@ -66,12 +64,13 @@
 //! 
 //! A simple example follows:
 //! ```rs
-//! let img = std::fs::read(&Path::new("disk.woz"))?;
-//! // We can grab a physical sector without solving the file system
+//! // DiskImage can be stateful and therefore is always mutable
+//! let mut img = a2kit::create_img_from_file("disk.woz")?;
+//! // Unlike DiskFS, we cannot access files, only tracks and sectors
 //! let sector_data = img.read_sector(0,0,0)?;
 //! // Disk images are *always* buffered, so writing only affects memory
 //! img.write_sector(0,0,1,&sector_data)?;
-//! // Save the changes to local storage:
+//! // Save the changes to local storage
 //! a2kit::save_img(&mut img,"disk.woz")?;
 //! ```
 //!

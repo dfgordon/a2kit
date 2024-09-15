@@ -176,6 +176,11 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                         if sym.defs[0].uri.to_string()!=self.symbols.display_doc_uri {
                             new_section(&mut self.markup.value,&format!("imported from {}",path_in_workspace(&sym.defs[0].uri,&self.ws_folder)));
                         }
+                    } else if sym.decs.len()>0 {
+                        new_section(&mut self.markup.value, &sym.docstring);
+                        if sym.decs[0].uri.to_string()!=self.symbols.display_doc_uri {
+                            new_section(&mut self.markup.value,&format!("imported from {}",path_in_workspace(&sym.decs[0].uri,&self.ws_folder)));
+                        }
                     }
                 }
                 for (name,sym) in &self.symbols.macros {
@@ -214,7 +219,18 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                         }
                         if let Some(sym) = self.symbols.globals.get(&txt) {
                             if sym.flags & super::symbol_flags::EXT > 0 {
-                                new_section(&mut self.markup.value,&sym.docstring);
+                                if sym.defining_code.is_some() {
+                                    if let Some(hinted_code) = &sym.defining_code {
+                                        let code = hinted_code.to_string().replace("\u{0100}","");
+                                        new_section(&mut self.markup.value, &["```\n",&code,"```\n"].concat());
+                                    }
+                                }
+                                new_section(&mut self.markup.value, &sym.docstring);
+                                if sym.defs.len() > 0 && sym.defs[0].uri.to_string()!=self.symbols.display_doc_uri {
+                                    new_section(&mut self.markup.value,&format!("imported from {}",path_in_workspace(&sym.defs[0].uri,&self.ws_folder)));
+                                } else if sym.decs.len() > 0 && sym.decs[0].uri.to_string()!=self.symbols.display_doc_uri {
+                                    new_section(&mut self.markup.value,&format!("imported from {}",path_in_workspace(&sym.decs[0].uri,&self.ws_folder)));
+                                }
                             } else {
                                 new_section(&mut self.markup.value,"global defined right here");
                             }

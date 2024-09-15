@@ -4,12 +4,12 @@ fn test_renumber(test_code: &str,expected: &str,beg: usize,end: usize,first: usi
 	let mut renumberer = Renumberer::new();
 	let result = renumberer.renumber(test_code, beg, end, first, step);
 	match should_fail {
-		true => if let Ok(_actual) = result {
+		true => if result.is_ok() {
 			// if renumbering should fail, but instead works, the test has failed
 			assert!(false);
 		},
-		false => if let Ok(actual) = renumberer.renumber(test_code, beg, end, first, step) {
-			assert_eq!(actual,String::from(expected));
+		false => {
+			assert_eq!(result.expect("renumber failed"),String::from(expected));
 		}
 	}
 }
@@ -19,12 +19,12 @@ fn test_move(test_code: &str,expected: &str,beg: usize,end: usize,first: usize,s
 	renumberer.set_flags(1);
 	let result = renumberer.renumber(test_code, beg, end, first, step);
 	match should_fail {
-		true => if let Ok(_actual) = result {
+		true => if result.is_ok() {
 			// if renumbering should fail, but instead works, the test has failed
 			assert!(false);
 		},
-		false => if let Ok(actual) = renumberer.renumber(test_code, beg, end, first, step) {
-			assert_eq!(actual,String::from(expected) + "\n");
+		false => {
+			assert_eq!(result.expect("renumber failed"),String::from(expected) + "\n");
 		}
 	}
 }
@@ -47,6 +47,12 @@ mod valid_cases {
 		let test_code = "10 HOME\n20 INPUT X\n30 PRINT X\n40 END";
 		let expected = "10 HOME\n27 INPUT X\n29 PRINT X\n40 END";
 		super::test_renumber(test_code, expected,20,40,27,2,false);
+	}
+	#[test]
+	fn refs() {
+		let test_code = "10 home: input a\n\n20 if a=0 then 10\n30 if a=1 then print a\n40 if a=2 then 10: \n50 end";
+		let expected = "1 home: input a\n\n2 if a=0 then 1\n3 if a=1 then print a\n40 if a=2 then 1: \n50 end";
+		super::test_renumber(test_code, expected, 10, 39, 1, 1, false);
 	}
 }
 

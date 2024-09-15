@@ -298,15 +298,14 @@ impl Symbol {
     /// Add a node to the symbol.
     /// The node can be `label_def`, `label_ref`, `macro_def`, `macro_ref`, or `var_mac`.
     /// The latter can occur without a wrapper in some pseudo-ops such as `ASC`.
-    /// This will not create any overlaps between `refs` and `defs`, but there can be
-    /// overlap between `decs` and `defs`, namely EXT/EXD will always be `def` and `dec`.
-    /// An ENT is either `def` (column 1) or `ref` (column 3).
-    pub fn add_node(&mut self, loc: lsp::Location, node: &tree_sitter::Node, source: &str) {
+    /// This will not create any overlaps between `refs`, `defs`, and `decs`.
+    pub fn add_node(&mut self, loc: lsp::Location, node: &tree_sitter::Node, _source: &str) {
         if node.kind() == "var_mac" {
             self.refs.push(loc);
             self.flags |= symbol_flags::ARG | symbol_flags::VAR;
             return;
         }
+        let mut is_dec = false;
         if let Some(parent) = node.parent() {
             if let Some(grandparent) = parent.parent() {
                 if grandparent.kind() == "arg_jsr" {
@@ -315,33 +314,40 @@ impl Symbol {
             }
             if parent.kind() == "arg_ent" {
                 self.flags |= symbol_flags::ENT;
+                self.decs.push(loc.clone());
+                is_dec = true;
             }
             if parent.kind() == "arg_ext" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
+                is_dec = true;
             }
             if parent.kind() == "arg_exd" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
+                is_dec = true;
             }
         }
         if let Some(next) = node.next_named_sibling() {
             if next.kind() == "psop_ent" {
                 self.flags |= symbol_flags::ENT;
+                // in this form we really do have a definition
             }
             if next.kind() == "psop_ext" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
+                is_dec = true;
             }
             if next.kind() == "psop_exd" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
+                is_dec = true;
             }
         }
         match node.kind()  {
-            "label_def" => self.defs.push(loc),
+            "label_def" if !is_dec => self.defs.push(loc),
             "macro_def" => { self.defs.push(loc); self.flags |= symbol_flags::MAC },
-            "label_ref" => self.refs.push(loc),
+            "label_ref" if !is_dec => self.refs.push(loc),
             "macro_ref" => { self.refs.push(loc); self.flags |= symbol_flags::MAC},
             _ => {}
         };
@@ -410,6 +416,20 @@ impl Symbols {
                 Some(fwd) => fwd.contains(&LabelType::Macro),
                 None => false
             }
+        } else {
+            false
+        }
+    }
+    pub fn global_declared_or_defined(&self,txt: &str) -> bool {
+        if let Some(sym) = self.globals.get(txt) {
+            sym.decs.len() + sym.defs.len() > 0
+        } else {
+            false
+        }
+    }
+    pub fn global_declared(&self,txt: &str) -> bool {
+        if let Some(sym) = self.globals.get(txt) {
+            sym.decs.len() > 0
         } else {
             false
         }

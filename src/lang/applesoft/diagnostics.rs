@@ -460,7 +460,7 @@ impl Analyzer {
                 self.symbols.arrays.insert(keyname.clone(),Variable::new());
             }
             let var_info = self.symbols.arrays.get_mut(&keyname).unwrap();
-            var_info.refs.push(lsp_range(name_range, self.row, self.col));
+            var_info.push_ref_selectively(lsp_range(name_range, self.row, self.col));
             var_info.case.insert(cased);
             if var_info.decs.len() == 0 && self.config.flag.undeclared_arrays.is_some() {
                 self.diagnostics.push(self.create(name_range, "array is never DIM'd", self.config.flag.undeclared_arrays.unwrap()));
@@ -470,7 +470,7 @@ impl Analyzer {
                 self.symbols.scalars.insert(keyname.clone(),Variable::new());
             }
             let var_info = self.symbols.scalars.get_mut(&keyname).unwrap();
-            var_info.refs.push(lsp_range(name_range, self.row, self.col));
+            var_info.push_ref_selectively(lsp_range(name_range, self.row, self.col));
             var_info.case.insert(cased);
             if var_info.defs.len() == 0 && not_dummy && self.config.flag.undefined_variables.is_some() {
                 self.diagnostics.push(self.create(name_range, "variable is never assigned", self.config.flag.undefined_variables.unwrap()));
@@ -537,7 +537,7 @@ impl Analyzer {
                 self.symbols.functions.insert(keyname.clone(),Variable::new());
             }
 			let var_info = self.symbols.functions.get_mut(&keyname).unwrap();
-			var_info.refs.push(lsp_range(rng, self.row, self.col));
+			var_info.push_ref_selectively(lsp_range(rng, self.row, self.col));
 			var_info.case.insert(cased);
             if var_info.defs.len()==0 && parent.is_some() && parent.unwrap().kind() == "fcall" {
                 self.diagnostics.push(self.create(rng, "function never defined",lsp::DiagnosticSeverity::ERROR));

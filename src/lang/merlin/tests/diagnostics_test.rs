@@ -190,9 +190,7 @@ mod equates {
     #[test]
     fn entries() {
         super::test_diagnostics("test-ent-equates.S", None, &[
-            "global label is undefined",
-            "global label is undefined",
-            "global label is undefined",
+            "entry label declared, but never defined",
             "pseudo-op argument is disabled",
             "pseudo-op argument is disabled",
             "pseudo-op argument is disabled"
@@ -201,9 +199,7 @@ mod equates {
     #[test]
     fn entries32() {
         super::test_diagnostics("test-ent-equates.S", Some(super::MerlinVersion::Merlin32), &[
-            "global label is undefined",
-            "global label is undefined",
-            "global label is undefined"
+            "entry label declared, but never defined",
         ]);
     }
 }

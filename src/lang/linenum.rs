@@ -25,12 +25,24 @@ fn apply_mapping(new_num: usize,info: &LabelInformation) -> TextEdit {
     TextEdit::new(info.rng,fmt_num)
 }
 
+#[deprecated(since="3.2.0", note="use `Renumber` trait instead")]
 pub trait LineNumberTool {
+    fn get_info(_curs: &tree_sitter::TreeCursor,_source: &str,_row: isize) -> Result<(usize,LabelInformation),DYNERR> {
+        Err(Box::new(lang::Error::Syntax))
+    }
+    fn gather(&mut self,source: &str, row: isize, primaries: bool, secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR>;
+    fn renumber_edits(&mut self,_all_txt: &str, _ext_sel: Option<Range>, _start: &str, _step: &str, _update_refs: bool, _allow_move: bool, _min_num: usize, _max_num: usize)
+        -> Result<Vec<TextEdit>,String> {
+        Err("unable to renumber".to_string())
+    }
+}
+
+pub trait Renumber {
     /// Default method should usually suffice
-    fn get_info(curs: &tree_sitter::TreeCursor,source: &str,row: isize) -> Result<(usize,LabelInformation),DYNERR> {
+    fn get_one(curs: &tree_sitter::TreeCursor,source: &str,row: isize) -> Result<(usize,LabelInformation),DYNERR> {
         if let Some(num) = lang::node_integer(&curs.node(), source) {
             let txt = lang::node_text(&curs.node(), source);
-            trace!("found line number {}",num);
+            trace!("found line number {} at row {}",num,row);
             return Ok((num, LabelInformation {
                 rng: lang::lsp_range(curs.node().range(),row,0),
                 leading_space: txt.len() - txt.trim_start().len(),
@@ -39,17 +51,19 @@ pub trait LineNumberTool {
         }
         Err(Box::new(lang::Error::Syntax))
     }
-    /// This must build a map from line labels to information about the line label.
+    /// This must build a map from line labels to information about all defining nodes (usually just one).
     /// Once you have the cursor on the label, you can usually call the default `get_info` to form the map value.
-    /// Each BASIC will have its own way of performing the gather, so there is no default method.
-    fn gather(&mut self,source: &str, row: isize, primaries: bool, secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR>;
+    fn gather_defs(&mut self, source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR>;
+    /// This must build a map from line labels to information about all reference nodes.
+    /// Once you have the cursor on the label, you can usually call the default `get_info` to form the map value.
+    fn gather_refs(&mut self, source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR>;
     /// Build edits to renumber and possibly move a selected range of lines.
     /// This does the heavy lifting, the default should work for most BASIC dialects.
     /// If you want to apply the returned edits outside the LSP context, use `crate::lang::apply_edits`.
     /// If the result would lead to interleaving of selected and unselected lines, an error is returned.
     /// If `allow_move`, the lines will be re-ordered as necessary.
     /// If `!allow_move` and the lines need to be re-ordered, an error is returned.
-    fn renumber_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str, update_refs: bool, allow_move: bool, min_num: usize, max_num: usize)
+    fn build_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str, update_refs: bool, allow_move: bool, min_num: usize, max_num: usize)
         -> Result<Vec<TextEdit>,String> {
 
         let line_sep = match all_txt.lines().count() == all_txt.split("\r\n").count() {
@@ -85,21 +99,25 @@ pub trait LineNumberTool {
         }
 
         // gather line number info
-        let sel_primaries = match self.gather(&sel_txt,sel.start.line as isize, true, false) {
+        log::debug!("gather primaries in selection");
+        let sel_primaries = match self.gather_defs(&sel_txt,sel.start.line as isize) {
             Ok(result) => result,
             Err(_) => return Err("unable to gather primaries".to_string())
         };
-        let sel_secondaries = match self.gather(&sel_txt,sel.start.line as isize, false, true) {
+        log::debug!("gather secondaries in selection");
+        let sel_secondaries = match self.gather_refs(&sel_txt,sel.start.line as isize) {
+            Ok(result) => result,
+            Err(_) => return Err("unable to gather secondaries".to_string())
+        };
+        log::debug!("gather all primaries");
+        let all_primaries = match self.gather_defs(all_txt,0) {
             Ok(result) => result,
             Err(_) => return Err("unable to gather primaries".to_string())
         };
-        let all_primaries = match self.gather(all_txt,0, true, false) {
+        log::debug!("gather all secondaries");
+        let all_secondaries = match self.gather_refs(all_txt,0) {
             Ok(result) => result,
-            Err(_) => return Err("unable to gather primaries".to_string())
-        };
-        let all_secondaries = match self.gather(all_txt,0, false, true) {
-            Ok(result) => result,
-            Err(_) => return Err("unable to gather primaries".to_string())
+            Err(_) => return Err("unable to gather secondaries".to_string())
         };
 
         // check for errors
@@ -112,15 +130,24 @@ pub trait LineNumberTool {
         }
         let mut insert_pos = Position::new(0,0);
         for (primary,info) in &all_primaries {
-            if info.rng.start.line >= sel.start.line && info.rng.end.line <= sel.end.line {
+            if info.len() != 1 {
+                return Err(format!("duplicated primary line number {}",primary));
+            }
+            if info[0].rng.start.line >= sel.start.line && info[0].rng.end.line <= sel.end.line {
                 // moves or interleaves not possible within selection
                 continue;
             }
-            if *primary < l0 && info.rng.start.line >= insert_pos.line {
-                insert_pos = Position::new(info.rng.start.line + 1,0);
+            if *primary < l0 && info[0].rng.start.line >= insert_pos.line {
+                insert_pos = Position::new(info[0].rng.start.line + 1,0);
             }
             if *primary >= l0 && *primary <= ln {
                 return Err(format!("existing line {} is within proposed range",*primary));
+            }
+        }
+        // if there are blank lines we need to push forward the insert position past them
+        for (row,line) in all_txt.lines().enumerate() {
+            if insert_pos.line as usize == row && line.trim_start().len()==0 {
+                insert_pos.line += 1;
             }
         }
         if !allow_move && insert_pos.line != sel.start.line {
@@ -139,13 +166,15 @@ pub trait LineNumberTool {
         let mut sel_edits = Vec::new();
         for (primary,info) in &sel_primaries {
             if let Some(new_num) = mapping.get(primary) {
-                sel_edits.push(apply_mapping(*new_num, info));
+                sel_edits.push(apply_mapping(*new_num, &info[0]));
             }
         }
         if update_refs {
             for (secondary,info) in &sel_secondaries {
-                if let Some(new_num) = mapping.get(secondary) {
-                    sel_edits.push(apply_mapping(*new_num, info));
+                for item in info {
+                    if let Some(new_num) = mapping.get(secondary) {
+                        sel_edits.push(apply_mapping(*new_num, item));
+                    }
                 }
             }
         }
@@ -154,9 +183,11 @@ pub trait LineNumberTool {
         let mut unsel_edits = Vec::new();
         if update_refs {
             for (secondary,info) in &all_secondaries {
-                if let Some(new_num) = mapping.get(secondary) {
-                    if info.rng.start.line < sel.start.line || info.rng.end.line > sel.end.line {
-                        unsel_edits.push(apply_mapping(*new_num, info));
+                for item in info {
+                    if let Some(new_num) = mapping.get(secondary) {
+                        if item.rng.start.line < sel.start.line || item.rng.end.line > sel.end.line {
+                            unsel_edits.push(apply_mapping(*new_num, item));
+                        }
                     }
                 }
             }    

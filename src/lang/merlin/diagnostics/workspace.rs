@@ -139,6 +139,7 @@ pub struct WorkspaceScanner {
     curr_uri: Option<lsp::Url>,
     curr_row: isize,
     ws: Workspace,
+    running_docstring: String,
     scan_patt: regex::Regex,
     link_patt: regex::Regex
 }
@@ -153,6 +154,7 @@ impl WorkspaceScanner {
             curr_uri: None,
             curr_row: 0,
             ws: Workspace::new(),
+            running_docstring: String::new(),
             scan_patt: regex::Regex::new(r"^\S*\s+(ENT|PUT|USE|REL|ent|put|use|rel)(\s+|$)").expect(RCH),
             link_patt: regex::Regex::new(r"^\S*\s+(LNK|LKV|ASM|lnk|lkv|asm)\s+").expect(RCH)
         }
@@ -241,14 +243,16 @@ impl WorkspaceScanner {
             self.curr_uri = Some(doc.uri.clone());
             self.curr_row = 0;
             let mut linker_count = 0.0;
+            self.running_docstring = String::new();
             for line in doc.text.lines() {
                 // use regex to skip most lines, this avoids the need to
                 // deal with implicit macro call resolution, and may speed things up
-                if !self.scan_patt.is_match(line) {
+                if !self.scan_patt.is_match(line) && !line.starts_with("*") {
                     if self.link_patt.is_match(line) {
                         linker_count += 1.0;
                     }
                     self.curr_row += 1;
+                    self.running_docstring = String::new();
                     continue;
                 }
                 self.line = line.to_string() + "\n";
@@ -281,6 +285,7 @@ impl Navigate for WorkspaceScanner {
     fn visit(&mut self, curs: &TreeCursor) -> Result<Navigation,DYNERR> {
         // as an optimization, take swift action on certain high level nodes
         if curs.node().kind() == "operation" || curs.node().kind() == "macro_call" {
+            self.running_docstring = String::new();
             return Ok(Navigation::Exit);
         }
         if curs.node().kind() == "source_file" {
@@ -294,6 +299,20 @@ impl Navigate for WorkspaceScanner {
         let curr_uri = self.curr_uri.as_ref().unwrap().clone();
         let loc = lsp::Location::new(curr_uri.clone(), lsp_range(curr.range(), self.curr_row, 0));
 
+        // Gather docstring
+
+        if curr.kind() == "heading" {
+            let temp = match curr.named_child(0) {
+                Some(n) => node_text(&n, &self.line),
+                None => String::new()
+            };
+            self.running_docstring += &temp;
+            self.running_docstring += "\n";
+            return Ok(Navigation::Exit);
+        } else if curs.depth()>1 && curr.kind() != "label_def" {
+            self.running_docstring = String::new();
+        }
+
         // Identify REL modules
 
         if curr.kind() == "psop_rel" {
@@ -304,9 +323,15 @@ impl Navigate for WorkspaceScanner {
         // Handle entries.
 
         if curr.kind() == "label_def" && next.is_some() && next.unwrap().kind() == "psop_ent" {
-            let mut sym = Symbol::new(&node_text(&curr, &self.line));
+            let name = node_text(&curr,&self.line);
+            if !self.ws.entries.contains_key(&name) {
+                self.ws.entries.insert(name.clone(),Symbol::new(&name));
+            }
+            let sym = self.ws.entries.get_mut(&name).unwrap();
             sym.add_node(loc, &curr, &self.line);
-            self.ws.entries.insert(node_text(&curr, &self.line),sym);
+            sym.defining_code = Some(self.line.clone());
+            sym.docstring = self.running_docstring.clone();
+            self.running_docstring = String::new();
             return Ok(Navigation::Exit);
         }
         if curr.kind() == "psop_ent" {
@@ -315,10 +340,12 @@ impl Navigate for WorkspaceScanner {
                 None => None
             };
             while sib.is_some() && sib.unwrap().kind() == "label_ref" {
-                let sib_txt = &node_text(&sib.unwrap(),&self.line);
-                let mut sym = Symbol::new(sib_txt);
+                let name = node_text(&sib.unwrap(),&self.line);
+                if !self.ws.entries.contains_key(&name) {
+                    self.ws.entries.insert(name.clone(),Symbol::new(&name));
+                }
+                let sym = self.ws.entries.get_mut(&name).unwrap();
                 sym.add_node(loc.clone(), &sib.unwrap(), &self.line);
-                self.ws.entries.insert(sib_txt.to_owned(),sym);
                 sib = sib.unwrap().next_named_sibling();
             }
             return Ok(Navigation::Exit);
@@ -327,6 +354,7 @@ impl Navigate for WorkspaceScanner {
         // Now check for includes.
 
         if curr.kind() == "label_def" {
+            self.running_docstring = String::new();
             return Ok(Navigation::GotoSibling);
         }
         if curr.kind() == "psop_use" {

@@ -85,9 +85,9 @@ pub struct Line {
 /// should be understood as a substring (to repeat, no arrays of strings).
 #[derive(Clone)]
 pub struct Variable {
-    decs: Vec<lsp_types::Range>,
-    defs: Vec<lsp_types::Range>,
-    refs: Vec<lsp_types::Range>,
+    decs: Vec<Range>,
+    defs: Vec<Range>,
+    refs: Vec<Range>,
     is_array: bool,
     is_string: bool,
     case: HashSet<String>
@@ -104,7 +104,18 @@ impl Variable {
             case: HashSet::new()
         }
     }
+    /// if rng is already in defs or decs, do nothing, otherwise push to refs
+    fn push_ref_selectively(&mut self,rng: Range) {
+        if self.decs.contains(&rng) {
+            return;
+        }
+        if self.defs.contains(&rng) {
+            return;
+        }
+        self.refs.push(rng);
+    }
 }
+
 #[derive(Clone)]
 pub struct Symbols {
     pub lines: HashMap<i64,Line>,
@@ -209,7 +220,7 @@ pub fn var_to_key(node: tree_sitter::Node,line: &str) -> (String,String,bool,boo
 /// @param node can be any LEXPR type
 /// @param row current row being analyzed
 /// @returns [normalized name,specific name,is_array,is_str,inner range], key name includes `$` if a string
-pub fn lexpr_to_key(node: tree_sitter::Node,row: isize,line: &str) -> Result<(String, String, bool, bool, lsp_types::Range),DYNERR>
+pub fn lexpr_to_key(node: tree_sitter::Node,row: isize,line: &str) -> Result<(String, String, bool, bool, Range),DYNERR>
 {
 	if SIMPLE_VAR_TYPES.contains(&node.kind()) {
         let vk = var_to_key(node,line);

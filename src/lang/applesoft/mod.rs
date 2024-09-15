@@ -65,6 +65,16 @@ impl Variable {
             case: HashSet::new()
         }
     }
+    /// if rng is already in defs or decs, do nothing, otherwise push to refs
+    fn push_ref_selectively(&mut self,rng: lsp::Range) {
+        if self.decs.contains(&rng) {
+            return;
+        }
+        if self.defs.contains(&rng) {
+            return;
+        }
+        self.refs.push(rng);
+    }
 }
 
 /// Main structure containing the symbol information
