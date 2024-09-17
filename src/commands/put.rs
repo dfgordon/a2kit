@@ -1,7 +1,9 @@
 use clap;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::str::FromStr;
-use super::{ItemType,CommandError};
+use binrw::BinRead;
+use crate::bios::r#as::{AppleSingleFile, EntryData, EntryType};
+use super::{ItemType, CommandError};
 use crate::fs::FileImage;
 use crate::STDRESULT;
 
@@ -12,6 +14,32 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
     match typ {
         ItemType::Raw => fimg.pack_raw(&dat),
         ItemType::Binary => fimg.pack_bin(&dat,load_addr,None),
+        ItemType::AppleSingle => {
+            let parsed = AppleSingleFile::read(&mut Cursor::new(dat))?;
+
+            let data = match parsed.get_entry(EntryType::DataFork) {
+                Some(EntryData::DataFork(data)) => Ok(data),
+                _ => {
+                    log::error!("AppleSingle file does not contain any data");
+                    Err(Box::new(CommandError::UnknownFormat))
+                },
+            }?;
+
+            let resource: Option<&[u8]> = match parsed.get_entry(EntryType::ResourceFork) {
+                Some(EntryData::DataFork(data)) => Some(data),
+                _ => None,
+            };
+
+            let load_addr = match parsed.get_entry(EntryType::ProdosFileInfo) {
+                Some(EntryData::ProDOSFileInfo(file_info)) => Some(usize::try_from(file_info.aux_type).unwrap()),
+                _ => {
+                    log::warn!("AppleSingle file does not contain any ProDOS file info");
+                    None
+                },
+            };
+
+            fimg.pack_bin(&data, load_addr, resource)
+        },
         ItemType::ApplesoftTokens => fimg.pack_tok(&dat,ItemType::ApplesoftTokens,None),
         ItemType::IntegerTokens => fimg.pack_tok(&dat,ItemType::IntegerTokens,None),
         ItemType::MerlinTokens => fimg.pack_raw(&dat),

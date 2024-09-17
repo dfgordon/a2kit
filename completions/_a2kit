@@ -32,8 +32,8 @@ _a2kit() {
 _arguments "${_arguments_options[@]}" : \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
 '--indent+[JSON indentation, omit to minify]:SPACES: ' \
@@ -48,8 +48,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
 '-a+[load-address if applicable]:ADDRESS: ' \

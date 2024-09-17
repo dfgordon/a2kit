@@ -62,14 +62,14 @@ complete -c a2kit -n "__fish_a2kit_needs_command" -f -a "dasm" -d 'read from std
 complete -c a2kit -n "__fish_a2kit_needs_command" -f -a "glob" -d 'write JSON list of matching paths to stdout'
 complete -c a2kit -n "__fish_a2kit_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s f -l file -d 'path, key, or address, maybe inside disk image' -r -F
-complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s t -l type -d 'type of the item' -r -f -a "{any\t'',auto\t'',bin\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t'',block\t'',sec\t'',track\t'',raw_track\t'',meta\t''}"
+complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s t -l type -d 'type of the item' -r -f -a "{any\t'',auto\t'',bin\t'',as\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t'',block\t'',sec\t'',track\t'',raw_track\t'',meta\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s d -l dimg -d 'path to disk image itself' -r -F
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -l indent -d 'JSON indentation, omit to minify' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s l -l len -d 'length of record in DOS 3.3 random access text file' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -l trunc -d 'truncate raw at EOF if possible'
 complete -c a2kit -n "__fish_a2kit_using_subcommand get" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s f -l file -d 'path, key, or address, maybe inside disk image' -r -F
-complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s t -l type -d 'type of the item' -r -f -a "{any\t'',auto\t'',bin\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t'',block\t'',sec\t'',track\t'',raw_track\t'',meta\t''}"
+complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s t -l type -d 'type of the item' -r -f -a "{any\t'',auto\t'',bin\t'',as\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t'',block\t'',sec\t'',track\t'',raw_track\t'',meta\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s d -l dimg -d 'path to disk image itself' -r -F
 complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s a -l addr -d 'load-address if applicable' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand put" -s h -l help -d 'Print help'

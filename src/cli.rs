@@ -55,6 +55,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "any",
         "auto",
         "bin",
+        "as",
         "txt",
         "raw",
         "rec",

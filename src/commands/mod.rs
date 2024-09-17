@@ -31,7 +31,7 @@ pub enum CommandError {
     #[error("File not found")]
     FileNotFound,
     #[error("Key not found")]
-    KeyNotFound
+    KeyNotFound,
 }
 
 /// Types of files that may be distinguished by the file system or a2kit.
@@ -44,6 +44,7 @@ pub enum ItemType {
     Text,
     Records,
     FileImage,
+    AppleSingle,
     ApplesoftText,
     IntegerText,
     MerlinText,
@@ -70,6 +71,7 @@ impl FromStr for ItemType {
             "txt" => Ok(Self::Text),
             "rec" => Ok(Self::Records),
             "any" => Ok(Self::FileImage),
+            "as" => Ok(Self::AppleSingle),
             "atxt" => Ok(Self::ApplesoftText),
             "itxt" => Ok(Self::IntegerText),
             "mtxt" => Ok(Self::MerlinText),
