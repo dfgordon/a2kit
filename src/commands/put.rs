@@ -30,7 +30,7 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
                 _ => None,
             };
 
-            let load_addr = match parsed.get_entry(EntryType::ProdosFileInfo) {
+            let prodos_load_addr = match parsed.get_entry(EntryType::ProdosFileInfo) {
                 Some(EntryData::ProDOSFileInfo(file_info)) => Some(usize::try_from(file_info.aux_type).unwrap()),
                 _ => {
                     log::warn!("AppleSingle file does not contain any ProDOS file info");
@@ -38,7 +38,7 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
                 },
             };
 
-            fimg.pack_bin(&data, load_addr, resource)
+            fimg.pack_bin(&data, load_addr.or(prodos_load_addr), resource)
         },
         ItemType::ApplesoftTokens => fimg.pack_tok(&dat,ItemType::ApplesoftTokens,None),
         ItemType::IntegerTokens => fimg.pack_tok(&dat,ItemType::IntegerTokens,None),
