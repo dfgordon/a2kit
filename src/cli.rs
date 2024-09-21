@@ -427,5 +427,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .about("write JSON list of matching paths to stdout")
             .after_help("the pattern may need to be quoted depending on shell\n\n".to_string() + IN_HELP)
     );
+    main_cmd = main_cmd.subcommand(
+        Command::new("completions")
+            .arg(
+                Arg::new("shell").short('s').long("shell").help("shell target").value_name("NAME")
+                    .required(true)
+                    .value_parser(["bash","elv","fish","ps1","zsh"])
+            )
+            .about("write completions script to stdout for the specified shell")
+    );
     return main_cmd;
 }

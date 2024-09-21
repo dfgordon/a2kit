@@ -4,6 +4,8 @@
 //! that are typically sent by a language client.  The `Analysis`
 //! trait is also used by the CLI `verify` subcommand.
 
+use std::io::Write;
+use std::str::FromStr;
 use lsp_types as lsp;
 use lsp::request::Request;
 use tree_sitter;
@@ -394,4 +396,50 @@ pub fn path_in_workspace(full: &lsp::Url, ws_folder: &Vec<lsp::Url>) -> String {
         },
         _ => full.to_string()
     }
+}
+
+fn setup_env_logger(filt: log::LevelFilter, path: &str) {
+    if filt==log::LevelFilter::Off {
+        return;
+    }
+    let a2kit_logging_file = Box::new(std::fs::File::create(path).expect("failed to create log file"));
+    env_logger::Builder::new().format(|buf,record| {
+        writeln!(buf,"{}:{} [{}] - {}",record.file().unwrap_or("unknown"),
+            record.line().unwrap_or(0),
+            record.level(),
+            record.args()
+        )
+    })
+    .filter(Some("a2kit::lang"),filt)
+    .target(env_logger::Target::Pipe(a2kit_logging_file))
+    .init();
+}
+
+/// Parse the language server's command line arguments.
+/// Sets up logging based on the arguments, panics if log level or log file are invalid.
+/// As of this writing it returns only the `--suppress-tokens` status in `parse_args().0[0]`.
+pub fn parse_args() -> (Vec<bool>,Vec<String>) {
+    let mut log_level = log::LevelFilter::Off;
+    let mut log_file = "a2kit_log.txt".to_string();
+    let mut suppress_tokens = false;
+    
+    // process arguments
+    let mut args = std::env::args().into_iter();
+    args.next();
+    while let Some(val) = args.next() {
+        if &val == "--log-level" {
+            if let Some(val) = args.next() {
+                log_level = log::LevelFilter::from_str(&val).expect("invalid logging filter");
+            }
+        } else if &val == "--log-file" {
+            if let Some(val) = args.next() {
+                log_file = val;
+            }
+        } else if &val == "--suppress-tokens" {
+            // tokens will only be sent to client upon request
+            suppress_tokens = true;
+        }
+    }
+    setup_env_logger(log_level, &log_file);
+    (vec![suppress_tokens],vec![])
 }

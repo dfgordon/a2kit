@@ -29,6 +29,7 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     colored::control::set_virtual_terminal(true).unwrap();
 
     let main_cmd = cli::build_cli();
+    let main_cmd_copy = main_cmd.clone();
     let matches = main_cmd.get_matches();
     
     // Create a disk image
@@ -552,6 +553,11 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         return commands::get::unpack(cmd);
     }
     
+    // Completions
+    if let Some(cmd) = matches.subcommand_matches("completions") {
+        return commands::completions::generate(main_cmd_copy,cmd);
+    }
+
     log::error!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
 

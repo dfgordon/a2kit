@@ -52,10 +52,10 @@ pub trait Renumber {
         Err(Box::new(lang::Error::Syntax))
     }
     /// This must build a map from line labels to information about all defining nodes (usually just one).
-    /// Once you have the cursor on the label, you can usually call the default `get_info` to form the map value.
+    /// Once you have the cursor on the label, you can usually call the default `get_one` to form the map value.
     fn gather_defs(&mut self, source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR>;
     /// This must build a map from line labels to information about all reference nodes.
-    /// Once you have the cursor on the label, you can usually call the default `get_info` to form the map value.
+    /// Once you have the cursor on the label, you can usually call the default `get_one` to form the map value.
     fn gather_refs(&mut self, source: &str, row: isize) -> Result<BTreeMap<usize,Vec<LabelInformation>>,DYNERR>;
     /// Build edits to renumber and possibly move a selected range of lines.
     /// This does the heavy lifting, the default should work for most BASIC dialects.

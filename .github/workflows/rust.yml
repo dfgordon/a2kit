@@ -80,7 +80,7 @@ jobs:
             TAG=$GITHUB_SHA
           fi
           mv ./target/$TARGET/release/a2kit$EXE ./a2kit$EXE
-          tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz completions a2kit$EXE
+          tar -czf ./artifacts/a2kit-$TARGET-$TAG.tar.gz a2kit$EXE
           for i in ${SERVERS[@]}; do
             mv ./target/$TARGET/release/${i}$EXE ./artifacts/${i}-${TARGET}$EXE
           done

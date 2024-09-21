@@ -7,6 +7,7 @@ pub mod put;
 pub mod get;
 pub mod get_img;
 pub mod put_img;
+pub mod completions;
 
 use std::str::FromStr;
 use std::io::Read;

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::sync::{Arc,Mutex};
+use a2kit::lang::server::TOKEN_TYPES; // used if we register tokens on server side
 use a2kit::lang::server::Analysis;
 use a2kit::lang::applesoft;
 use a2kit::lang::applesoft::diagnostics::Analyzer;
@@ -163,6 +164,8 @@ impl Tools {
 }
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
+    let (bools,_) = a2kit::lang::server::parse_args();
+    let suppress_tokens = bools[0];
 
     let mut tools = Tools::new();
     let (connection, io_threads) = lsp_server::Connection::stdio();
@@ -192,6 +195,20 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             }),
             document_symbol_provider: Some(lsp::OneOf::Left(true)),
             rename_provider: Some(lsp::OneOf::Left(true)),
+            semantic_tokens_provider: match suppress_tokens {
+                true => None,
+                false => Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(lsp::SemanticTokensOptions {
+                    work_done_progress_options: lsp::WorkDoneProgressOptions {
+                        work_done_progress: None
+                    },
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: TOKEN_TYPES.iter().map(|x| lsp::SemanticTokenType::new(x)).collect(),
+                        token_modifiers: vec![]
+                    },
+                    range: None,
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true))
+                }))
+            },
             ..lsp::ServerCapabilities::default()
         },
         server_info: Some(lsp::ServerInfo {

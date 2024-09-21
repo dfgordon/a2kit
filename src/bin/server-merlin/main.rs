@@ -6,8 +6,6 @@
 //! The server activity is all in this file.
 
 use lsp_types as lsp;
-use std::io::Write;
-use std::str::FromStr;
 use lsp::{notification::Notification, request::Request};
 use lsp_server;
 use serde_json;
@@ -238,43 +236,9 @@ impl Tools {
     }
 }
 
-fn setup_env_logger(filt: log::LevelFilter, path: &str) {
-    if filt==log::LevelFilter::Off {
-        return;
-    }
-    let a2kit_logging_file = Box::new(std::fs::File::create(path).expect("failed to create log file"));
-    env_logger::Builder::new().format(|buf,record| {
-        writeln!(buf,"{}:{} [{}] - {}",record.file().unwrap_or("unknown"),
-            record.line().unwrap_or(0),
-            record.level(),
-            record.args()
-        )
-    })
-    .filter(Some("a2kit::lang"),filt)
-    .target(env_logger::Target::Pipe(a2kit_logging_file))
-    .init();
-}
-
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
-
-    let mut log_level = log::LevelFilter::Off;
-    let mut log_file = "a2kit_log.txt".to_string();
-
-    // process arguments
-    let mut args = std::env::args().into_iter();
-    args.next();
-    while let Some(val) = args.next() {
-        if &val == "--log-level" {
-            if let Some(val) = args.next() {
-                log_level = log::LevelFilter::from_str(&val).expect("invalid logging filter");
-            }
-        } else if &val == "--log-file" {
-            if let Some(val) = args.next() {
-                log_file = val;
-            }
-        }
-    }
-    setup_env_logger(log_level, &log_file);
+    let (bools,_) = a2kit::lang::server::parse_args();
+    let suppress_tokens = bools[0];
 
     let mut tools = Tools::new();
     let (connection, io_threads) = lsp_server::Connection::stdio();
@@ -316,17 +280,20 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 more_trigger_character: Some(vec![";".to_string()])
             }),
             folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
-            semantic_tokens_provider: Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(lsp::SemanticTokensOptions {
-                work_done_progress_options: lsp::WorkDoneProgressOptions {
-                    work_done_progress: None
-                },
-                legend: lsp::SemanticTokensLegend {
-                    token_types: TOKEN_TYPES.iter().map(|x| lsp::SemanticTokenType::new(x)).collect(),
-                    token_modifiers: vec![]
-                },
-                range: None,
-                full: Some(lsp::SemanticTokensFullOptions::Bool(true))
-            })),
+            semantic_tokens_provider: match suppress_tokens {
+                true => None,
+                false => Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(lsp::SemanticTokensOptions {
+                    work_done_progress_options: lsp::WorkDoneProgressOptions {
+                        work_done_progress: None
+                    },
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: TOKEN_TYPES.iter().map(|x| lsp::SemanticTokenType::new(x)).collect(),
+                        token_modifiers: vec![]
+                    },
+                    range: None,
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true))
+                }))
+            },
             ..lsp::ServerCapabilities::default()
         },
         server_info: Some(lsp::ServerInfo {

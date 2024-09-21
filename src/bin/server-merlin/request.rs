@@ -6,7 +6,7 @@ use lsp_server::{Connection,RequestId,Response};
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use a2kit::lang::server::Checkpoint;
+use a2kit::lang::server::{Checkpoint,Tokens};
 // use a2kit::lang::server::Tokens; // used if we register tokens on client side
 use a2kit::lang::{disk_server, merlin, normalize_client_uri, normalize_client_uri_str};
 use a2kit::lang::merlin::formatter;
@@ -154,28 +154,28 @@ pub fn handle_request(
                             }
                         }
                     },
-                    // "merlin6502.semantic.tokens" => {
-                    //     if params.arguments.len()==2 {
-                    //         let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
-                    //         let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
-                    //         if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
-                    //             let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                    //             if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
-                    //                 tools.highlighter.use_shared_symbols(chk.shared_symbols());
-                    //             } else {
-                    //                 // need to clear symbols if there is no checkpoint
-                    //                 tools.highlighter.use_shared_symbols(Arc::new(a2kit::lang::merlin::Symbols::new()));
-                    //             }
-                    //             // decision here is to highlight even if no symbols found
-                    //             resp = match tools.highlighter.get(&program) {
-                    //                 Ok(result) => {
-                    //                     lsp_server::Response::new_ok(req.id,result)
-                    //                 },
-                    //                 Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"semantic tokens failed".to_string())
-                    //             };
-                    //         }
-                    //     }
-                    // },
+                    "merlin6502.semantic.tokens" => {
+                        if params.arguments.len()==2 {
+                            let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
+                            let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
+                            if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
+                                let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
+                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                    tools.highlighter.use_shared_symbols(chk.shared_symbols());
+                                } else {
+                                    // need to clear symbols if there is no checkpoint
+                                    tools.highlighter.use_shared_symbols(Arc::new(a2kit::lang::merlin::Symbols::new()));
+                                }
+                                // decision here is to highlight even if no symbols found
+                                resp = match tools.highlighter.get(&program) {
+                                    Ok(result) => {
+                                        lsp_server::Response::new_ok(req.id,result)
+                                    },
+                                    Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"semantic tokens failed".to_string())
+                                };
+                            }
+                        }
+                    },
                     "merlin6502.pasteFormat" => {
                         if params.arguments.len()==2 {
                             let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
