@@ -80,13 +80,13 @@ complete -c a2kit -n "__fish_a2kit_using_subcommand mput" -s d -l dimg -d 'path 
 complete -c a2kit -n "__fish_a2kit_using_subcommand mput" -s f -l file -d 'override target paths' -r -F
 complete -c a2kit -n "__fish_a2kit_using_subcommand mput" -s h -l help -d 'Print help'
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s f -l file -d 'target path for this file image' -r -F
-complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s t -l type -d 'type of the item' -r -f -a "{auto\t'',bin\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t''}"
+complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s t -l type -d 'type of the item' -r -f -a "{auto\t'',bin\t'',as\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s a -l addr -d 'load-address if applicable' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s b -l block -d 'size of block in bytes if needed' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s o -l os -d 'operating system format' -r -f -a "{cpm2\t'',cpm3\t'',dos32\t'',dos33\t'',prodos\t'',pascal\t'',fat\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -l indent -d 'JSON indentation, omit to minify' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand pack" -s h -l help -d 'Print help'
-complete -c a2kit -n "__fish_a2kit_using_subcommand unpack" -s t -l type -d 'type of the item' -r -f -a "{auto\t'',bin\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t''}"
+complete -c a2kit -n "__fish_a2kit_using_subcommand unpack" -s t -l type -d 'type of the item' -r -f -a "{auto\t'',bin\t'',as\t'',txt\t'',raw\t'',rec\t'',atok\t'',itok\t'',mtok\t''}"
 complete -c a2kit -n "__fish_a2kit_using_subcommand unpack" -s l -l len -d 'length of record in DOS 3.3 random access text file' -r
 complete -c a2kit -n "__fish_a2kit_using_subcommand unpack" -l trunc -d 'truncate raw at EOF if possible'
 complete -c a2kit -n "__fish_a2kit_using_subcommand unpack" -s h -l help -d 'Print help'

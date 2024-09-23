@@ -51,7 +51,7 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
             let json_str = std::str::from_utf8(&dat)?;
             fimg.pack_rec_str(json_str)
         },
-        _ => return Err(Box::new(CommandError::UnsupportedItemType))
+        _ => Err(Box::new(CommandError::UnsupportedItemType))
     }
 }
 

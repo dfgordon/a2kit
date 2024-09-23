@@ -554,6 +554,5 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     
     log::error!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));
-
 }
 
