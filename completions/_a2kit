@@ -32,8 +32,8 @@ _a2kit() {
 _arguments "${_arguments_options[@]}" : \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
 '--indent+[JSON indentation, omit to minify]:SPACES: ' \
@@ -48,8 +48,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-f+[path, key, or address, maybe inside disk image]:PATH:_files' \
 '--file+[path, key, or address, maybe inside disk image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
-'--type+[type of the item]:TYPE:(any auto bin as txt raw rec atok itok mtok block sec track raw_track meta)' \
+'-t+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
+'--type+[type of the item]:TYPE:(any auto bin txt raw rec atok itok mtok block sec track raw_track meta)' \
 '-d+[path to disk image itself]:PATH:_files' \
 '--dimg+[path to disk image itself]:PATH:_files' \
 '-a+[load-address if applicable]:ADDRESS: ' \
@@ -81,8 +81,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-f+[target path for this file image]:PATH:_files' \
 '--file+[target path for this file image]:PATH:_files' \
-'-t+[type of the item]:TYPE:(auto bin as txt raw rec atok itok mtok)' \
-'--type+[type of the item]:TYPE:(auto bin as txt raw rec atok itok mtok)' \
+'-t+[type of the item]:TYPE:(auto bin txt raw rec atok itok mtok)' \
+'--type+[type of the item]:TYPE:(auto bin txt raw rec atok itok mtok)' \
 '-a+[load-address if applicable]:ADDRESS: ' \
 '--addr+[load-address if applicable]:ADDRESS: ' \
 '-b+[size of block in bytes if needed]:BYTES: ' \
@@ -96,8 +96,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (unpack)
 _arguments "${_arguments_options[@]}" : \
-'-t+[type of the item]:TYPE:(auto bin as txt raw rec atok itok mtok)' \
-'--type+[type of the item]:TYPE:(auto bin as txt raw rec atok itok mtok)' \
+'-t+[type of the item]:TYPE:(auto bin txt raw rec atok itok mtok)' \
+'--type+[type of the item]:TYPE:(auto bin txt raw rec atok itok mtok)' \
 '-l+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
 '--len+[length of record in DOS 3.3 random access text file]:LENGTH: ' \
 '--trunc[truncate raw at EOF if possible]' \

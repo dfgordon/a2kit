@@ -779,11 +779,11 @@ _a2kit() {
                     return 0
                     ;;
                 --type)
-                    COMPREPLY=($(compgen -W "any auto bin as txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "any auto bin txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
                     return 0
                     ;;
                 -t)
-                    COMPREPLY=($(compgen -W "any auto bin as txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "any auto bin txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
                     return 0
                     ;;
                 --dimg)
@@ -1675,11 +1675,11 @@ _a2kit() {
                     return 0
                     ;;
                 --type)
-                    COMPREPLY=($(compgen -W "auto bin as txt raw rec atok itok mtok" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto bin txt raw rec atok itok mtok" -- "${cur}"))
                     return 0
                     ;;
                 -t)
-                    COMPREPLY=($(compgen -W "auto bin as txt raw rec atok itok mtok" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto bin txt raw rec atok itok mtok" -- "${cur}"))
                     return 0
                     ;;
                 --addr)
@@ -1815,11 +1815,11 @@ _a2kit() {
                     return 0
                     ;;
                 --type)
-                    COMPREPLY=($(compgen -W "any auto bin as txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "any auto bin txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
                     return 0
                     ;;
                 -t)
-                    COMPREPLY=($(compgen -W "any auto bin as txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "any auto bin txt raw rec atok itok mtok block sec track raw_track meta" -- "${cur}"))
                     return 0
                     ;;
                 --dimg)
@@ -2265,11 +2265,11 @@ _a2kit() {
             fi
             case "${prev}" in
                 --type)
-                    COMPREPLY=($(compgen -W "auto bin as txt raw rec atok itok mtok" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto bin txt raw rec atok itok mtok" -- "${cur}"))
                     return 0
                     ;;
                 -t)
-                    COMPREPLY=($(compgen -W "auto bin as txt raw rec atok itok mtok" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto bin txt raw rec atok itok mtok" -- "${cur}"))
                     return 0
                     ;;
                 --len)

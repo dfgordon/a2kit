@@ -10,6 +10,9 @@ use std::fs::File;
 use std::path::Path;
 use binrw::BinRead;
 use chrono::DateTime;
+use crate::commands::CommandError;
+use crate::fs::FileImage;
+use crate::STDRESULT;
 
 #[derive(BinRead, Debug, Clone)]
 #[brw(big, magic = 0x0051600u32)]
@@ -26,6 +29,32 @@ pub struct AppleSingleFile {
 impl AppleSingleFile {
     pub fn get_entry(&self, entry_type: EntryType) -> Option<&EntryData> {
         self.entries.iter().find(|e| e.r#type == entry_type).map(|e| &e.data)
+    }
+
+    // Todo; make this a trait?
+    pub fn pack_into(self, fimg: &mut FileImage, load_addr: Option<usize>) -> STDRESULT {
+        let data = match self.get_entry(EntryType::DataFork) {
+            Some(EntryData::DataFork(data)) => Ok(data),
+            _ => {
+                log::error!("AppleSingle file does not contain any data");
+                Err(Box::new(CommandError::UnknownFormat))
+            },
+        }?;
+
+        let resource: Option<&[u8]> = match self.get_entry(EntryType::ResourceFork) {
+            Some(EntryData::DataFork(data)) => Some(data),
+            _ => None,
+        };
+
+        let prodos_load_addr = match self.get_entry(EntryType::ProdosFileInfo) {
+            Some(EntryData::ProDOSFileInfo(file_info)) => Some(usize::try_from(file_info.aux_type).unwrap()),
+            _ => {
+                log::warn!("AppleSingle file does not contain any ProDOS file info");
+                None
+            },
+        };
+
+        fimg.pack_bin(&data, load_addr.or(prodos_load_addr), resource)
     }
 }
 

@@ -2,7 +2,7 @@ use clap;
 use std::io::{Cursor, Read};
 use std::str::FromStr;
 use binrw::BinRead;
-use crate::bios::r#as::{AppleSingleFile, EntryData, EntryType};
+use crate::bios::r#as::AppleSingleFile;
 use super::{ItemType, CommandError};
 use crate::fs::FileImage;
 use crate::STDRESULT;
@@ -14,31 +14,16 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
     match typ {
         ItemType::Raw => fimg.pack_raw(&dat),
         ItemType::Binary => fimg.pack_bin(&dat,load_addr,None),
-        ItemType::AppleSingle => {
-            let parsed = AppleSingleFile::read(&mut Cursor::new(dat))?;
-
-            let data = match parsed.get_entry(EntryType::DataFork) {
-                Some(EntryData::DataFork(data)) => Ok(data),
-                _ => {
-                    log::error!("AppleSingle file does not contain any data");
-                    Err(Box::new(CommandError::UnknownFormat))
-                },
-            }?;
-
-            let resource: Option<&[u8]> = match parsed.get_entry(EntryType::ResourceFork) {
-                Some(EntryData::DataFork(data)) => Some(data),
-                _ => None,
-            };
-
-            let prodos_load_addr = match parsed.get_entry(EntryType::ProdosFileInfo) {
-                Some(EntryData::ProDOSFileInfo(file_info)) => Some(usize::try_from(file_info.aux_type).unwrap()),
-                _ => {
-                    log::warn!("AppleSingle file does not contain any ProDOS file info");
-                    None
-                },
-            };
-
-            fimg.pack_bin(&data, load_addr.or(prodos_load_addr), resource)
+        ItemType::Automatic => {
+            if let Ok(appleSingleFile) = AppleSingleFile::read(&mut Cursor::new(dat)) {
+                log::info!("Detected AppleSingle file");
+                appleSingleFile.pack_into(fimg, load_addr)
+            } else if load_addr.is_some() {
+                log::info!("Detected binary file");
+                fimg.pack_bin(&dat, load_addr, None)
+            } else {
+                Err(Box::new(CommandError::UnknownFormat))
+            }
         },
         ItemType::ApplesoftTokens => fimg.pack_tok(&dat,ItemType::ApplesoftTokens,None),
         ItemType::IntegerTokens => fimg.pack_tok(&dat,ItemType::IntegerTokens,None),
