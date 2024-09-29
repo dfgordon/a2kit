@@ -3,7 +3,7 @@
 //! This module is used by both the CLI and the language server.
 //! The Merlin parser is provided by `tree_sitter_merlin6502`.  Every file will be parsed as Merlin 16+,
 //! other Merlin versions are handled via diagnostic filters.
-//! The server compiles to a separate executable, its entry point is in `src/bin/server-merlin.rs`.
+//! The server compiles to a separate executable, its entry point is in `src/bin/server-merlin/main.rs`.
 //! 
 //! The analyzer performs functions that begin to resemble assembly, such as resolving
 //! file relationships and identifying symbols.  There is a spot assembler that is used to aid in

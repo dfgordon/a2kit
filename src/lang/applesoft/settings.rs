@@ -91,7 +91,7 @@ pub fn parse(json: &str) -> Result<Settings,DYNERR> {
                         update_json_bool(val,"keywords",&mut ans.hovers.keywords);
                     },
                     "completions" => {
-                        update_json_bool(val,"lowerCaseCompletions",&mut ans.completions.lower_case);
+                        update_json_bool(val,"lowerCase",&mut ans.completions.lower_case);
                         update_json_bool(val,"negativeAddresses",&mut ans.completions.negative_addresses);
                     },
                     "detokenizer" => {

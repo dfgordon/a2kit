@@ -2,7 +2,7 @@
 //! 
 //! This module is used by both the CLI and the language server.
 //! The Integer BASIC parser is provided by `tree_sitter_integerbasic`.
-//! The server compiles to a separate executable, its entry point is in `src/bin/server-integerbasic.rs`.
+//! The server compiles to a separate executable, its entry point is in `src/bin/server-integerbasic/main.rs`.
 
 mod token_maps;
 #[cfg(test)]

@@ -175,10 +175,8 @@ impl CodeCompletionProvider {
         self.symbols = sym;
     }
 	fn modify(&self,s: &str,padreq: usize) -> String {
-		if let Some(sev) = self.config.flag.case_sensitive {
-			if self.config.completions.lower_case && sev != lsp::DiagnosticSeverity::ERROR {
-				return [" ".repeat(padreq), s.to_lowercase()].concat();
-			}
+		if self.config.flag.case_sensitive.is_none() && self.config.completions.lower_case {
+			return [" ".repeat(padreq), s.to_lowercase()].concat();
 		}
 		return [" ".repeat(padreq), s.to_uppercase()].concat();
 	}

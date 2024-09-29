@@ -213,10 +213,8 @@ impl StatementCompletionProvider {
     }
 	fn modify(&self,s: &str) -> String
 	{
-		if let Some(sev) = self.config.flag.case_sensitive {
-			if self.config.completions.lower_case && sev != lsp::DiagnosticSeverity::ERROR {
-				return s.to_lowercase();
-			}
+		if self.config.flag.case_sensitive.is_none() && self.config.completions.lower_case {
+			return s.to_lowercase();
 		}
 		return s.to_string();
 	}

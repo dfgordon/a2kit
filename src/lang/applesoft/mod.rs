@@ -2,7 +2,7 @@
 //! 
 //! This module is used by both the CLI and the language server.
 //! The Applesoft parser is provided by `tree_sitter_applesoft`.
-//! The server compiles to a separate executable, its entry point is in `src/bin/server-applesoft.rs`.
+//! The server compiles to a separate executable, its entry point is in `src/bin/server-applesoft/main.rs`.
 
 mod token_maps;
 mod minify_guards;
