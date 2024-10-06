@@ -96,8 +96,13 @@ pub fn handle_request(
                         }
                     }
                     "applesoft.minify" => {
-                        if params.arguments.len()==1 {
+                        if params.arguments.len()==1 || params.arguments.len()==2 {
                             if let Ok(program) = serde_json::from_value::<String>(params.arguments[0].clone()) {
+                                if params.arguments.len()==2 {
+                                    if let Ok(level) = serde_json::from_value::<usize>(params.arguments[1].clone()) {
+                                        tools.minifier.set_level(level);
+                                    }
+                                }
                                 resp = match tools.minifier.minify(&program) {
                                     Ok(result) => {
                                         lsp_server::Response::new_ok(req.id,result)

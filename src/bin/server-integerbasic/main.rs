@@ -207,6 +207,12 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     full: Some(lsp::SemanticTokensFullOptions::Bool(true))
                 }))
             },
+            execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                commands: vec![], // so far no client seems to need this
+                work_done_progress_options: lsp::WorkDoneProgressOptions {
+                    work_done_progress: None
+                }
+            }),
             ..lsp::ServerCapabilities::default()
         },
         server_info: Some(lsp::ServerInfo {

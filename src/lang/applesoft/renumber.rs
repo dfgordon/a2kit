@@ -61,7 +61,7 @@ impl Renumber for Renumberer {
         self.info = BTreeMap::new();
         self.row = row;
         for line in source.lines() {
-            if line.len()==0 {
+            if line.trim().len()==0 {
                 self.row += 1;
                 continue;
             }
@@ -80,7 +80,7 @@ impl Renumber for Renumberer {
         self.info = BTreeMap::new();
         self.row = row;
         for line in source.lines() {
-            if line.len()==0 {
+            if line.trim().len()==0 {
                 self.row += 1;
                 continue;
             }

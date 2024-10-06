@@ -145,7 +145,7 @@ impl Tokenizer
 		};
 		self.tokenized_program = Vec::new();
 		for line in program.lines() {
-			if line.len()==0 {
+			if line.trim().len()==0 {
 				self.tokenized_program.push(0x8d);
 				continue;
 			}

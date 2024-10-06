@@ -31,7 +31,7 @@ impl Navigate for Minifier
 		let node_str: String = lang::node_text(&curs.node(),&self.line);
 
 		// Shorten variable names
-		if curs.node().kind().starts_with("name_") {
+		if curs.node().kind().starts_with("name_") && !curs.node().kind().ends_with("amp") {
 			let txt = node_str.replace(" ","");
 			if txt.len()>3 && (curs.node().kind()=="name_str" || curs.node().kind()=="name_int") {
 				self.minified_line += &txt[0..2];
@@ -187,7 +187,7 @@ impl Minifier
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
 		for line in program.lines() {
-			if line.len()==0 {
+			if line.trim().len()==0 {
 				continue;
 			}
 			self.minified_line = String::from(line) + "\n";
