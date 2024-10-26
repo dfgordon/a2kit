@@ -153,7 +153,8 @@ impl Tokenizer
 		}
 		Ok(self.tokenized_program.clone())
 	}
-	/// Detokenize from byte array into a UTF8 string
+	/// Detokenize from byte array into a UTF8 string.
+	/// The `img` size must match the program size.
 	pub fn detokenize(&self,img: &[u8]) -> Result<String,DYNERR> {
 		const OPEN_QUOTE: u8 = 0x28;
 		const CLOSE_QUOTE: u8 = 0x29;
@@ -242,6 +243,10 @@ impl Tokenizer
 		}
 		let addr = img[202] as usize + img[203] as usize * 256;
 		let himem = img[76] as usize + img[77] as usize * 256;
-		self.detokenize(&img[addr..=himem])
+		if addr >= img.len() || himem > img.len() || addr >= himem {
+			error!("program pointers or RAM image bounds are invalid");
+			return Err(Box::new(lang::Error::Detokenization));
+		}
+		self.detokenize(&img[addr..himem])
 	}
 }

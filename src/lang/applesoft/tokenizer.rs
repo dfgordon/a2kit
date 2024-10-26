@@ -219,6 +219,10 @@ impl Tokenizer
 			return Err(Box::new(lang::Error::Detokenization));
 		}
 		let addr = img[103] as usize + img[104] as usize * 256;
+		if addr >= img.len() {
+			error!("program falls outside RAM image");
+			return Err(Box::new(lang::Error::Detokenization));
+		}
 		self.detokenize(&img[addr..])
 	}
 }

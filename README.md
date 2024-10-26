@@ -24,7 +24,7 @@ Command line interface and library for retro disk images, file systems, and lang
 
 [Call-A.P.P.L.E.](https://www.callapple.org/) - user group dating to 1978, offering books, software, magazine, archival documents, forums, etc.
 
-[CiderPress](https://github.com/fadden/ciderpress) - long standing Windows software for manipulating disk images
+[CiderPress](https://github.com/fadden/ciderpress), [CiderPress2](https://github.com/fadden/CiderPress2) - famous Apple disk image software and successor.
 
 [Virtual II](https://www.virtualii.com/), [AppleWin](https://github.com/AppleWin/AppleWin), [MicroM8](https://paleotronic.com/software/microm8/), [MAME](https://www.mamedev.org/) - emulators
 

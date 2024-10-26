@@ -286,7 +286,7 @@ pub struct Stat {
 /// Abstract file system interface.  Presumed to own an underlying DiskImage.
 /// Handles files, blocks, and directory structures.
 /// Files are loaded or saved by passing file images.
-/// File images are manipulated using the `FileData` trait.
+/// File images are manipulated using the `Packing` trait.
 pub trait DiskFS {
     /// Create an empty file image appropriate for this file system.
     /// To use the block size of this specific disk set `chunk_len` to `None`.
