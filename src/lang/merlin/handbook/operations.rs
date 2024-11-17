@@ -401,4 +401,28 @@ impl OperationHandbook {
         }
         ans
     }
+    /// pc is the address of the branch instruction, addr is the destination
+    pub fn abs_to_rel(pc: usize,addr: usize,operand_bytes: usize) -> Option<usize> {
+        let h = 0x80 * match operand_bytes { 1 => 1, _ => 0x100 };
+        let f = 0x100 * match operand_bytes { 1 => 1, _ => 0x100 };
+        match addr as i64 - (pc as i64 + operand_bytes as i64 + 1) {
+            x if x >= 0 && x < h => Some(x as usize),
+            x if x >= -h && x < 0 => Some((x + f) as usize),
+            _ => None
+        }
+    }
+    /// pc is the address of the branch instruction, rel is the operand value
+    pub fn rel_to_abs(pc: usize,rel: usize,operand_bytes: usize) -> Option<usize> {
+        let h = 0x80 * match operand_bytes { 1 => 1, _ => 0x100 };
+        let f = 0x100 * match operand_bytes { 1 => 1, _ => 0x100 };
+        let dest = match rel as i64 {
+            x if x >=0 && x < h => x as i64 + pc as i64 + operand_bytes as i64 + 1,
+            x if x >=h && x < f => x as i64 + pc as i64 + operand_bytes as i64 + 1 - f,
+            _ => return None
+        };
+        if dest < 0 || dest > 0xffff {
+            return None
+        }
+        Some(dest as usize)
+    }
 }

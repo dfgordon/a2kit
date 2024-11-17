@@ -1,4 +1,6 @@
 use std::collections::{HashSet,HashMap};
+use std::ffi::OsString;
+use std::path::PathBuf;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use super::super::{SourceType,Symbol,Workspace};
@@ -6,6 +8,13 @@ use crate::lang::{Document,Navigate,Navigation,node_text,lsp_range};
 use crate::{DYNERR,STDRESULT};
 
 const RCH: &str = "unreachable was reached";
+const MAX_DIRS: usize = 1000;
+const MAX_DEPTH: usize = 10;
+const IGNORE_DIRS: [&str;3] = [
+    "build",
+    "node_modules",
+    "target"
+];
 
 impl Workspace {
     pub fn new() -> Self {
@@ -138,6 +147,9 @@ pub struct WorkspaceScanner {
     line: String,
     curr_uri: Option<lsp::Url>,
     curr_row: isize,
+    curr_depth: usize,
+    file_count: usize,
+    dir_count: usize,
     ws: Workspace,
     running_docstring: String,
     scan_patt: regex::Regex,
@@ -153,6 +165,9 @@ impl WorkspaceScanner {
             line: String::new(),
             curr_uri: None,
             curr_row: 0,
+            curr_depth: 0,
+            file_count: 0,
+            dir_count: 0,
             ws: Workspace::new(),
             running_docstring: String::new(),
             scan_patt: regex::Regex::new(r"^\S*\s+(ENT|PUT|USE|REL|ent|put|use|rel)(\s+|$)").expect(RCH),
@@ -185,48 +200,78 @@ impl WorkspaceScanner {
             self.ws.docs.push(doc);
         }
     }
-    /// Buffer all documents matching `**/*.s` in any of `dirs`, up to maximum count `max_files`
+    /// Recursively gather files from this directory
+    fn gather_from_dir(&mut self, base: &PathBuf, max_files: usize) -> STDRESULT {
+        self.dir_count += 1;
+        self.curr_depth += 1;
+        let opt = glob::MatchOptions {
+            case_sensitive: false,
+            require_literal_leading_dot: false,
+            require_literal_separator: false
+        };
+        // first scan source files
+        let patt = base.join("*.s");
+        if let Some(globable) = patt.as_os_str().to_str() {
+            if let Ok(paths) = glob::glob_with(globable,opt) {
+                for entry in paths {
+                    if let Ok(path) = &entry {
+                        let full_path = base.join(path);
+                        if let (Ok(uri),Ok(txt)) = (lsp::Url::from_file_path(full_path),std::fs::read_to_string(path.clone())) {
+                            log::trace!("{}",uri.as_str());
+                            self.ws.docs.push(Document::new(uri, txt));
+                        }
+                    }
+                    self.file_count += 1;
+                    if self.file_count >= max_files {
+                        log::error!("aborting due to excessive source file count of {}",self.file_count);
+                        return Err(Box::new(crate::lang::Error::OutOfRange));
+                    }
+                }
+            }
+        } else {
+            log::warn!("directory {} could not be globbed",base.display());
+        }
+        // now go into subdirectories
+        if self.curr_depth < MAX_DEPTH {
+            for entry in std::fs::read_dir(base)? {
+                let entry = entry?;
+                let ignore_dirs = IGNORE_DIRS.iter().map(|x| OsString::from(x)).collect::<Vec<OsString>>();
+                if ignore_dirs.contains(&entry.file_name()) {
+                    continue;
+                }
+                let path = entry.path();
+                if path.is_dir() && self.dir_count < MAX_DIRS {
+                    self.gather_from_dir(&path,max_files)?
+                }
+            }
+        }
+        self.curr_depth -= 1;
+        Ok(())
+    }
+    /// Buffer all documents matching `*.s` in any of `dirs`, up to maximum count `max_files`,
+    /// searching at most MAX_DIRS directories, using at most MAX_DEPTH recursions, and ignoring IGNORE_DIRS.
 	pub fn gather_docs(&mut self, dirs: &Vec<lsp::Url>, max_files: usize) -> STDRESULT {
         self.ws.ws_folders = Vec::new();
         self.ws.docs = Vec::new();
+        self.curr_depth = 0;
+        self.file_count = 0;
+        self.dir_count = 0;
         // copy the workspace url's to the underlying workspace object
         for dir in dirs {
             self.ws.ws_folders.push(dir.clone());
         }
         for dir in dirs {
-            let base = match dir.to_file_path() {
+            log::debug!("scanning {}",dir.as_str());
+            let path = match dir.to_file_path() {
                 Ok(b) => b,
                 Err(_) => return Err(Box::new(crate::lang::Error::BadUrl))
             };
-            let opt = glob::MatchOptions {
-                case_sensitive: false,
-                require_literal_leading_dot: false,
-                require_literal_separator: false
-            };
-            log::debug!("scanning {}",dir.as_str());
-            let patt = base.join("**").join("*.s");
-            if let Some(globable) = patt.as_os_str().to_str() {
-                if let Ok(paths) = glob::glob_with(globable,opt) {
-                    let mut count = 0;
-                    for entry in paths {
-                        if let Ok(path) = &entry {
-                            let full_path = base.join(path);
-                            if let (Ok(uri),Ok(txt)) = (lsp::Url::from_file_path(full_path),std::fs::read_to_string(path.clone())) {
-                                log::trace!("{}",uri.as_str());
-                                self.ws.docs.push(Document::new(uri, txt));
-                            }
-                        }
-                        count += 1;
-                        if count >= max_files {
-                            return Err(Box::new(crate::lang::Error::OutOfRange));
-                        }
-                    }
-                    log::info!("there were {} sources in the workspace",count);
-                }
-            } else {
-                log::warn!("directory {} could not be globbed",dir.to_string());
-            }
+            self.gather_from_dir(&path,max_files)?;
 		}
+        if self.dir_count >= MAX_DIRS {
+            log::warn!("scan was aborted after {} directories",self.dir_count);
+        }
+        log::info!("there were {} sources in the workspace",self.file_count);
         Ok(())
 	}
     /// Scan buffered documents for entries and includes.

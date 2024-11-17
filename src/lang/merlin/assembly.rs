@@ -1,7 +1,7 @@
 //! # Assembler for any Merlin version.
 //! 
-//! Currently we provide only "spot assembly," which is useful for re-assembling sections
-//! of code as data after disassembly.
+//! Currently we provide only "spot assembly," which is useful for disassembly workflows that
+//! involve conversion of code to data and vice-versa.
 //! 
 //! The spot assembler is designed to work under conditions where the program counter and/or
 //! symbol information are not necessarily known, i.e., it will proceed as far as it can
@@ -263,8 +263,14 @@ impl Assembler {
         self.m8bit = m8bit;
         self.x8bit = x8bit;
     }
+    pub fn get_mx(&self) -> [bool;2] {
+        [self.m8bit,self.x8bit]
+    }
     pub fn set_program_counter(&mut self,pc: usize) {
         self.pc = Some(pc);
+    }
+    pub fn get_program_counter(&self) -> Option<usize> {
+        self.pc
     }
     fn prefix_shift(prefix: &str) -> usize {
         match prefix {
@@ -345,19 +351,21 @@ impl Assembler {
     /// * prefix - expression modifier such as #, #<, etc.
 	/// returns success or error
 	fn push_instruction(&mut self, op: &Operation, op_node: &tree_sitter::Node, mode_node: &tree_sitter::Node, val: u32, prefix: &str) -> STDRESULT {
-		let mut val_bytes = u32::to_le_bytes(val);
+
+        // First work out the byte range `beg..end` within `val` that will be written out to the object code.
+        let mut val_bytes = u32::to_le_bytes(val);
 		let mut beg = 0;
 		let mut end = 1;
 		if val_bytes[1] > 0 {
 			end = 2;
         }
+
+        // Modify `beg..end` based on operand suffix, forcing absolute or long addressing.
+        // This must precede the prefix handling.
         let suffix = match op_node.named_child(0) {
             Some(s) => node_text(&s,&self.line),
             None => "".to_string()
         };
-
-        // Handle mnemonic suffix forcing absolute or long addressing,
-        // this must precede the prefix handling.
         if end == 1 {
             if self.symbols.assembler==MerlinVersion::Merlin8 {
                 if suffix.len() > 0 && suffix != "D" && suffix != "d" {
@@ -375,7 +383,7 @@ impl Assembler {
             }
         }
 
-        // Handle prefix modifiers and special cases
+        // Modify `beg..end` based on prefix modifiers and special cases.
         let is16bit = !self.x8bit && op.x_sensitive || !self.m8bit && op.m_sensitive;
         if mode_node.kind()=="data" {
             if op_node.kind()=="op_pea" {
@@ -407,44 +415,50 @@ impl Assembler {
             }
         }
 
-        let mode = op.get_address_mode(mode_node.kind(), end-beg)?;
+        // Find the addressing mode
+        let mut maybe_mode: Option<super::AddressMode> = None;
+        for padding in 0..3 {
+            match op.get_address_mode(mode_node.kind(), end-beg+padding) {
+                Ok(m) => {
+                    maybe_mode = Some(m);
+                    end += padding;
+                    break;
+                },
+                Err(_) => continue
+            };
+        }
+        let mode = match maybe_mode {
+            Some(m) => m,
+            None => return Err(Box::new(Error::BadAddressMode))
+        };
+
+        // We can now write the opcode
         self.code.push(mode.code as u8);
-        if mode.mnemonic=="rel" {
-            let abs = val_bytes[0] as isize + 0x100 * val_bytes[1] as isize;
+
+        // The operand value needs to be transformed if this is a relative branch
+        if mode.mnemonic=="rel" || mode.mnemonic=="rell" {
+            let mut abs_addr = val_bytes[0] as usize + 0x100 * val_bytes[1] as usize;
+            (beg,end) = match mode.mnemonic=="rel" {
+                true => (0,1),
+                false => (0,2)
+            };
+            abs_addr += (end-1) * 0x10000 * val_bytes[2] as usize;
             if let Some(pc) = self.pc {
-                let rel = match abs - (pc as isize + 2) {
-                    x if x >= 0 => x,
-                    x => x + 0x100
+                let rel = match OperationHandbook::abs_to_rel(pc, abs_addr, end-beg) {
+                    Some(x) => x,
+                    None => return Err(Box::new(Error::BadBranch))
                 };
-                if rel < 0 || rel > u8::MAX as isize {
-                    return Err(Box::new(Error::BadBranch));
-                }
                 val_bytes = u32::to_le_bytes(rel as u32);
-                beg = 0;
-                end = 1;
-            } else {
-                return Err(Box::new(Error::UnresolvedProgramCounter));
-            }
-        } else if mode.mnemonic=="rell" {
-            let abs = val_bytes[0] as isize + 0x100 * val_bytes[1] as isize + 0x10000 * val_bytes[2] as isize;
-            if let Some(pc) = self.pc {
-                let rel = match abs - (pc as isize + 3) {
-                    x if x >= 0 => x,
-                    x => x + 0x10000
-                };
-                if rel < 0 || rel > u16::MAX as isize {
-                    return Err(Box::new(Error::BadBranch));
-                }
-                val_bytes = u32::to_le_bytes(rel as u32);
-                beg = 0;
-                end = 2;
             } else {
                 return Err(Box::new(Error::UnresolvedProgramCounter));
             }
         }
+
+        // We can now write the operand bytes
         for i in beg..end {
             self.code.push(val_bytes[i]);
         }
+        // Update the program counter
         if let Some(pc) = self.pc.as_mut() {
             *pc += 1 + end - beg;
         }

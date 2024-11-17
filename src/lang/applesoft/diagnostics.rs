@@ -75,6 +75,25 @@ impl FlowState {
         }
         None
     }
+    /// use print node to pop the interprogram branch in case we have a RUN command.
+    fn eval_ip_run(&mut self,print_node: &tree_sitter::Node) -> Option<lsp::Diagnostic> {
+        if self.ip_branch_stack.len() == 0 {
+            return None;
+        }
+        if let Some(nxt) = print_node.next_named_sibling() {
+            let txt = node_text(&nxt,&self.line).replace(" ","").to_lowercase();
+            if txt.starts_with("chr$") || nxt.kind()=="var_str" {
+                if let Some(nxtnxt) = nxt.next_named_sibling() {
+                    if node_text(&nxtnxt,&self.line).replace(" ","").to_lowercase().starts_with("\"run") {
+                        self.ip_branch_stack = Vec::new();
+                    }
+                }
+            } else if txt.starts_with("\"\u{0004}run") || txt.starts_with("\"\\x04run") {
+                self.ip_branch_stack = Vec::new();
+            }
+        }
+        None
+    }
 }
 
 pub struct Analyzer {
@@ -581,6 +600,11 @@ impl Analyzer {
                 }
 			}
 		}
+        else if curs.node().kind() == "tok_print" {
+            if let Some(diag) = self.flow.eval_ip_run(&curs.node()) {
+                self.diagnostics.push(diag);
+            }
+        }
         else if curs.node().kind() == "tok_call" {
             if let Some(addr) = curs.node().next_named_sibling() {
 				self.value_range(addr,-32767.,65535.,true);

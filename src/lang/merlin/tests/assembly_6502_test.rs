@@ -409,3 +409,64 @@ mod bitwise {
         super::test_assembler(hex, test_code, 0);
     }
 }
+
+// Check that ZP addresses are padded in cases where
+// there is no ZP addressing mode available.
+mod requires_padding {
+    #[test]
+    fn adc() {
+        let hex = "791000";
+        let mut test_code = String::new();
+        test_code += "         ADC   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn and() {
+        let hex = "391000";
+        let mut test_code = String::new();
+        test_code += "         AND   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn cmp() {
+        let hex = "d91000";
+        let mut test_code = String::new();
+        test_code += "         CMP   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn eor() {
+        let hex = "591000";
+        let mut test_code = String::new();
+        test_code += "         EOR   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn lda() {
+        let hex = "b91000";
+        let mut test_code = String::new();
+        test_code += "         LDA   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn ora() {
+        let hex = "191000";
+        let mut test_code = String::new();
+        test_code += "         ORA   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn sbc() {
+        let hex = "f91000";
+        let mut test_code = String::new();
+        test_code += "         SBC   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+    #[test]
+    fn sta() {
+        let hex = "991000";
+        let mut test_code = String::new();
+        test_code += "         STA   $10,Y\n";
+        super::test_assembler(hex, test_code, 0);
+    }
+}

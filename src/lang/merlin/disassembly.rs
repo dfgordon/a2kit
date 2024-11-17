@@ -4,10 +4,11 @@
 //! part of a language server, wherein live human intervention is possible.
 //! However, it can also be used from the command line for simple disassemblies.
 
+use std::sync::Arc;
 use std::collections::{HashSet,HashMap};
 use hex::ToHex;
 use crate::lang;
-use crate::lang::merlin::{ProcessorType,settings::Settings,MachineOperation};
+use crate::lang::merlin::{ProcessorType,settings::Settings,MachineOperation,Symbols};
 use crate::lang::merlin::handbook::operations::OperationHandbook;
 use super::formatter;
 use crate::DYNERR;
@@ -85,8 +86,10 @@ impl DasmLine {
 
 pub struct Disassembler {
     config: Settings,
+    pc: Option<usize>,
     m8bit: bool,
     x8bit: bool,
+    symbols: Arc<Symbols>,
     dasm_map: HashMap<u8,MachineOperation>,
     dasm_lines: Vec<DasmLine>,
     std_patt: regex::Regex,
@@ -142,8 +145,10 @@ impl Disassembler {
         let book = OperationHandbook::new();
         Self {
             config: Settings::new(),
+            pc: None,
             m8bit: true,
             x8bit: true,
+            symbols: Arc::new(Symbols::new()),
             dasm_map: book.create_dasm_map(),
             dasm_lines: Vec::new(),
             std_patt: regex::Regex::new(r"[0-9]").expect(super::RCH),
@@ -152,6 +157,12 @@ impl Disassembler {
     }
     pub fn set_config(&mut self,config: Settings) {
         self.config = config;
+    }
+    pub fn use_shared_symbols(&mut self,sym: Arc<Symbols>) {
+        self.symbols = sym;
+    }
+    pub fn set_program_counter(&mut self,pc: Option<usize>) {
+        self.pc = pc;
     }
     pub fn set_mx(&mut self, m8bit: bool, x8bit: bool) {
         self.m8bit = m8bit;
@@ -330,24 +341,16 @@ impl Disassembler {
         } else if operand_bytes > 0 {
             let mut val = u32_from_operand(&img[addr..addr+operand_bytes]) as usize;
             if op.relative {
-                let ival = match operand_bytes {
-                    1 => match val < 128 {
-                        true => (addr + operand_bytes + val) as i64,
-                        false => addr as i64 + operand_bytes as i64 + val as i64 - 256
-                    },
-                    _ => match val < 0x8000 {
-                        true => (addr + operand_bytes + val) as i64,
-                        false => addr as i64 + operand_bytes as i64 + val as i64 - 0x10000
+                val = match OperationHandbook::rel_to_abs(addr-1, val, operand_bytes) {
+                    Some(dest) => dest,
+                    None => {
+                        // if out of range interpret as data
+                        log::debug!("branch out of bounds: {} + {}",addr-1,val);
+                        self.push_data_pattern(addr-1,img,operand_bytes+1,1);
+                        addr += operand_bytes;
+                        return Ok(addr)
                     }
                 };
-                if ival < 0 || ival > 0xffff {
-                    // if out of range interpret as data
-                    log::debug!("branch out of bounds: {} -> {}",addr,ival);
-                    self.push_data_pattern(addr-1,img,operand_bytes+1,1);
-                    addr += operand_bytes;
-                    return Ok(addr);
-                }
-                val = usize::try_from(ival)?;
             }
             if !op.operand_snippet.starts_with("#") {
                 new_line.references.push(val);
@@ -372,30 +375,15 @@ impl Disassembler {
         self.dasm_lines.push(new_line);
         Ok(addr)
     }
-	pub fn disassemble(&mut self, img: &[u8], range: DasmRange, proc: ProcessorType, labeling: &str) -> Result<String,DYNERR> {
-        let addr_range = match range {
-            DasmRange::All => [0,img.len()],
-            DasmRange::LastBloadDos33 => dos33_bload_range(img)?,
-            DasmRange::LastBloadProDos => prodos_bload_range(img)?,
-            DasmRange::Range([beg,end]) => [beg,end]
+    fn format_lines(&self,labeling: &str) -> String {
+        let mut last_addr = usize::MAX;
+        let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
+        let pc_bytes = match self.dasm_lines.iter().map(|x| x.address > 0xffff).collect::<Vec<bool>>().contains(&true) {
+            true => 3,
+            false => 2
         };
-		let mut addr = addr_range[0];
-		let mut code = String::new();
-
-		self.dasm_lines = Vec::new();
-		let mut labels = HashSet::new();
-		while addr < addr_range[1] {
-            if let Some((op,operand_bytes)) = self.is_instruction(img[addr],addr,addr_range[1],&proc) {
-                addr = self.push_instruction(img, addr, op, operand_bytes)?;
-			} else {
-				let data_bytes = self.try_data_run(img, addr, addr_range[1]);
-				addr += data_bytes;
-				if data_bytes == 0 {
-					self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
-					addr += 1;
-				}
-			}
-		}
+        let mut code = String::new();
+        let mut labels = HashSet::new();
         // gather references
         let mut references = HashSet::new();
         for line in &self.dasm_lines {
@@ -407,16 +395,11 @@ impl Disassembler {
 		for i in 0..self.dasm_lines.len()	{
 			if labeling.contains("all") {
 				labels.insert(self.dasm_lines[i].address);
-            } else if labeling.contains("some") && references.contains(&self.dasm_lines[i].address) {
+            } else if labeling.contains("some") && (i==0 || references.contains(&self.dasm_lines[i].address)) {
 				labels.insert(self.dasm_lines[i].address);
             }
 		}
-        let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
-        let pc_bytes = match proc {
-            ProcessorType::_65c816 => 3,
-            _ => 2
-        };
-        let mut last_addr = usize::MAX;
+        // loop over lines
 		for i in 0..self.dasm_lines.len() {
 			let mut line = String::new();
 			if labels.contains(&self.dasm_lines[i].address) && self.dasm_lines[i].address != last_addr {
@@ -430,7 +413,7 @@ impl Disassembler {
             if let Some(operand) = &self.dasm_lines[i].operand {
                 line.push(super::COLUMN_SEPARATOR);
                 line += &self.dasm_lines[i].prefix;
-                if operand.num.len() == 1 && labels.contains(&(operand.num[0] as usize)) {
+                if operand.num.len() == 1 && labels.contains(&(operand.num[0] as usize)) && !operand.txt.starts_with("#") {
                     line += "_";
                     line += &hex_from_val("",operand.num[0] as u32,pc_bytes);
                 } else {
@@ -441,33 +424,79 @@ impl Disassembler {
 			code += &line;
             code += "\n";
 		}
-		Ok(code)
-	}
-	pub fn disassemble_as_data(&mut self, img: &[u8]) -> String {
-		let mut addr = 0;
-		let mut code = String::new();
+        code
+    }
+    /// Disassemble a range of bytes within `img`, which can be thought of as a RAM image.
+    /// If the data source is a file, the data should be copied to `img` at the appropriate offset.
+    /// In particular, the starting address will be taken as `range[0]`.
+    /// Data sections are triggered by any failure to match an instruction.
+	pub fn disassemble(&mut self, img: &[u8], range: DasmRange, proc: ProcessorType, labeling: &str) -> Result<String,DYNERR> {
+        let addr_range = match range {
+            DasmRange::All => [0,img.len()],
+            DasmRange::LastBloadDos33 => dos33_bload_range(img)?,
+            DasmRange::LastBloadProDos => prodos_bload_range(img)?,
+            DasmRange::Range([beg,end]) => [beg,end]
+        };
+		let mut addr = addr_range[0];
+
 		self.dasm_lines = Vec::new();
+		while addr < addr_range[1] {
+            if let Some((op,operand_bytes)) = self.is_instruction(img[addr],addr,addr_range[1],&proc) {
+                addr = self.push_instruction(img, addr, op, operand_bytes)?;
+			} else {
+				let data_bytes = self.try_data_run(img, addr, addr_range[1]);
+				addr += data_bytes;
+				if data_bytes == 0 {
+					self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
+					addr += 1;
+				}
+			}
+		}
+		Ok(self.format_lines(labeling))
+	}
+    /// Disassemble as pure data.
+    /// Various Merlin pseudo-operations are used to express the result.
+    /// Purpose is to re-disassemble specified lines during an iterative disassembly process.
+    /// This will label "some lines" if self.pc.is_some().
+	pub fn disassemble_as_data(&mut self, buf: &[u8]) -> String {
+		self.dasm_lines = Vec::new();
+		let mut addr = match self.pc {
+            Some(a) => a,
+            None => 0x8000
+        };
+        let mut img: Vec<u8> = vec![0;addr];
+        img.append(&mut buf.to_vec());
 		while addr < img.len() {
-			let data_bytes = self.try_data_run(img, addr, img.len());
+			let data_bytes = self.try_data_run(&img, addr, img.len());
 			addr += data_bytes;
             if data_bytes == 0 {
                 self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
                 addr += 1;
             }
 		}
-        let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
-		for i in 0..self.dasm_lines.len() {
-			let mut line = String::new();
-			line.push(super::COLUMN_SEPARATOR);
-            line += &self.dasm_lines[i].instruction;
-            if let Some(operand) = &self.dasm_lines[i].operand {
-                line.push(super::COLUMN_SEPARATOR);
-                line += &operand.txt;
-            }
-			line = formatter::format_tokens(&line, &formatter::ColumnStyle::Variable, widths);
-			code += &line;
-            code += "\n";
+        self.format_lines(match self.pc { Some(_) => "some", None => "none"})
+	}
+    /// Disassemble with the most aggressive possible interpretation as code.
+    /// Purpose is to re-disassemble specified lines during an iterative disassembly process.
+    /// If self.pc.is_none() then ORG 0x8000 is assumed, otherwise self.pc is used and "some lines" are labeled.
+	pub fn disassemble_as_code(&mut self, buf: &[u8]) -> String {
+		self.dasm_lines = Vec::new();
+        let mut addr = match self.pc {
+            Some(pc) => pc,
+            None => 0x8000
+        };
+        let mut img: Vec<u8> = vec![0;addr];
+        img.append(&mut buf.to_vec());
+		while addr < img.len() {
+            if let Some((op,operand_bytes)) = self.is_instruction(img[addr],addr,img.len(),&self.symbols.processor) {
+                if let Ok(a) = self.push_instruction(&img, addr, op, operand_bytes) {
+                    addr = a;
+                    continue
+                }
+			}
+            self.push_data_psop(addr, self.modify("DFB"), hex_from_val("$",img[addr] as u32,1));
+            addr += 1;
 		}
-		code
+        self.format_lines(match self.pc { Some(_) => "some", None => "none"})
 	}
 }

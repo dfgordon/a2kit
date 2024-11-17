@@ -238,7 +238,7 @@ pub fn handle_request(
                             };
                         }
                     },
-                    "merlin6502.toData" => {
+                    cmd if cmd=="merlin6502.toData" || cmd=="merlin6502.toCode" => {
                         if params.arguments.len()==4 {
                             let prog_res = serde_json::from_value::<String>(params.arguments[0].clone());
                             let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
@@ -247,12 +247,31 @@ pub fn handle_request(
                             if let (Ok(program),Ok(uri),Ok(beg),Ok(end)) = (prog_res,uri_res,beg_res,end_res) {
                                 let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
                                 if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
-                                    let dasm_symbols = merlin::assembly::Assembler::dasm_symbols(chk.shared_symbols());
-                                    tools.assembler.use_shared_symbols(Arc::new(dasm_symbols));
+                                    let dasm_symbols = Arc::new(merlin::assembly::Assembler::dasm_symbols(chk.shared_symbols()));
+                                    tools.assembler.use_shared_symbols(Arc::clone(&dasm_symbols));
+                                    tools.disassembler.use_shared_symbols(Arc::clone(&dasm_symbols));
                                     resp = match tools.assembler.spot_assemble(program, beg, end, None) {
-                                        Ok(img) => {
-                                            let dasm = tools.disassembler.disassemble_as_data(&img);
-                                            lsp_server::Response::new_ok(req.id,dasm)
+                                        Ok(buf) => {
+                                            let pc = tools.assembler.get_program_counter();
+                                            tools.disassembler.set_program_counter(match pc {
+                                                Some(end) => Some(end - buf.len()),
+                                                None => None
+                                            });
+                                            match (pc.is_some(),cmd) {
+                                                (_,"merlin6502.toData") => {
+                                                    let dasm = tools.disassembler.disassemble_as_data(&buf);
+                                                    lsp_server::Response::new_ok(req.id,dasm)
+                                                },
+                                                (true,"merlin6502.toCode") => {
+                                                    let [m,x] = tools.assembler.get_mx();
+                                                    tools.disassembler.set_mx(m,x);
+                                                    let dasm = tools.disassembler.disassemble_as_code(&buf);
+                                                    lsp_server::Response::new_ok(req.id,dasm)
+                                                },
+                                                _ => {
+                                                    lsp_server::Response::new_err(req.id,PARSE_ERROR,"program counter hint is required".to_string())
+                                                }
+                                            }
                                         },
                                         Err(e) => {
                                             let mess = format!("spot assembler failed: {}",e.to_string());
