@@ -560,7 +560,7 @@ impl super::TrackBits for TrackBits {
         return ans;
     }
     fn chs_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;3]>,NibbleError> {
-        let mut secs_found: Vec<u8> = Vec::new();
+        let mut bit_ptr_list: Vec<usize> = Vec::new();
         self.reset();
         let mut ans: Vec<[usize;3]> = Vec::new();
         for _try in 0..32 {
@@ -568,11 +568,11 @@ impl super::TrackBits for TrackBits {
                 let (mod_cyl,sector,side,_format,_chksum) = self.decode_addr(bits)?;
                 let cyl = mod_cyl as usize + 64 * (side as usize & 0x01);
                 let head = side as usize >> 5;
-                if secs_found.contains(&sector) {
+                if bit_ptr_list.contains(&self.bit_ptr) {
                     return Ok(ans)
                 }
                 ans.push([cyl,head,sector as usize]);
-                secs_found.push(sector);
+                bit_ptr_list.push(self.bit_ptr);
             } else {
                 return Err(NibbleError::BitPatternNotFound);
             }
@@ -580,7 +580,7 @@ impl super::TrackBits for TrackBits {
         return Ok(ans);
     }
     fn chss_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;4]>,NibbleError> {
-        let mut secs_found: Vec<u8> = Vec::new();
+        let mut bit_ptr_list: Vec<usize> = Vec::new();
         self.reset();
         let mut ans: Vec<[usize;4]> = Vec::new();
         for _try in 0..32 {
@@ -588,11 +588,13 @@ impl super::TrackBits for TrackBits {
                 let (mod_cyl,sector,side,_format,_chksum) = self.decode_addr(bits)?;
                 let cyl = mod_cyl as usize + 64 * (side as usize & 0x01);
                 let head = side as usize >> 5;
-                if secs_found.contains(&sector) {
+                if bit_ptr_list.contains(&self.bit_ptr) {
                     return Ok(ans)
                 }
+                // TODO: including the tag bytes here can cause problems since the sector reader does not;
+                // unfortunately altering this now would be a breaking change.
                 ans.push([cyl,head,sector as usize,524]);
-                secs_found.push(sector);
+                bit_ptr_list.push(self.bit_ptr);
             } else {
                 return Err(NibbleError::BitPatternNotFound);
             }

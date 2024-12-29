@@ -542,67 +542,65 @@ impl Woz2 {
         }
     }
     /// Get index to the `Trk` structure, searching main track and nearby quarter-tracks.
-    /// If no data this will panic.
-    fn get_trk_idx(&self,track: u8) -> usize {
+    fn get_trk_idx(&self,track: u8) -> Result<usize,img::NibbleError> {
         match self.kind {
             img::names::A2_400_KIND => {
                 let key_idx = track as usize;
                 if self.tmap.map[key_idx]<80 {
-                    return self.tmap.map[key_idx] as usize;
+                    return Ok(self.tmap.map[key_idx] as usize);
                 }
             },
             img::names::A2_800_KIND => {
                 let key_idx = track as usize;
                 if self.tmap.map[key_idx]<160 {
-                    return self.tmap.map[key_idx] as usize;
+                    return Ok(self.tmap.map[key_idx] as usize);
                 }
             },
             _ => {
                 let key_idx = track as usize*4;
                 if self.tmap.map[key_idx]!=0xff {
-                    return self.tmap.map[key_idx] as usize;
+                    return Ok(self.tmap.map[key_idx] as usize);
                 }
                 if key_idx!=0 {
                     if self.tmap.map[key_idx-1]!=0xff {
-                        return self.tmap.map[key_idx-1] as usize;
+                        return Ok(self.tmap.map[key_idx-1] as usize);
                     }
                 }
                 if key_idx!=self.tmap.map.len() {
                     if self.tmap.map[key_idx+1]!=0xff {
-                        return self.tmap.map[key_idx+1] as usize;
+                        return Ok(self.tmap.map[key_idx+1] as usize);
                     }
                 }
             }
         }
-        error!("This image has a missing track; cannot be handled in general");
-        panic!("WOZ track not found");
+        Err(img::NibbleError::BadTrack)
     }
     /// Find track and get a reference
-    fn get_trk_ref(&self,track: u8) -> &Trk {
-        return &self.trks.tracks[self.get_trk_idx(track)];
+    fn get_trk_ref(&self,track: u8) -> Result<&Trk,img::NibbleError> {
+        return Ok(&self.trks.tracks[self.get_trk_idx(track)?]);
     }
     /// Get a reference to the track bits
-    fn get_trk_bits_ref(&self,track: u8) -> &[u8] {
-        let trk = self.get_trk_ref(track);
+    fn get_trk_bits_ref(&self,track: u8) -> Result<&[u8],img::NibbleError> {
+        let trk = self.get_trk_ref(track)?;
         let begin = u16::from_le_bytes(trk.starting_block) as usize*512 - self.track_bits_offset;
         let end = begin + u16::from_le_bytes(trk.block_count) as usize*512;
-        &self.trks.bits[begin..end]
+        Ok(&self.trks.bits[begin..end])
     }
     /// Get a mutable reference to the track bits
-    fn get_trk_bits_mut(&mut self,track: u8) -> &mut [u8] {
-        let trk = self.get_trk_ref(track);
+    fn get_trk_bits_mut(&mut self,track: u8) -> Result<&mut [u8],img::NibbleError> {
+        let trk = self.get_trk_ref(track)?;
         let begin = u16::from_le_bytes(trk.starting_block) as usize*512 - self.track_bits_offset;
         let end = begin + u16::from_le_bytes(trk.block_count) as usize*512;
-        &mut self.trks.bits[begin..end]
+        Ok(&mut self.trks.bits[begin..end])
     }
     /// Create a lightweight trait object to read/write the bits.  The nibble format will be
     /// determined by the image's underlying `DiskKind`.
-    fn new_rw_obj(&mut self,track: u8) -> Box<dyn super::TrackBits> {
+    fn new_rw_obj(&mut self,track: u8) -> Result<Box<dyn super::TrackBits>,img::NibbleError> {
         if self.head_coords.track != track as usize {
             debug!("goto track {} of {}",track,self.kind);
             self.head_coords.track = track as usize;
         }
-        let bit_count_le = self.get_trk_ref(track).bit_count;
+        let bit_count_le = self.get_trk_ref(track)?.bit_count;
         let bit_count = u32::from_le_bytes(bit_count_le) as usize;
         let mut ans: Box<dyn super::TrackBits> = match self.kind {
             super::names::A2_DOS32_KIND => Box::new(disk525::TrackBits::create(
@@ -628,7 +626,7 @@ impl Woz2 {
         if self.head_coords.bit_ptr < bit_count {
             ans.set_bit_ptr(self.head_coords.bit_ptr);
         }
-        return ans;
+        return Ok(ans);
     }
 }
 
@@ -640,14 +638,14 @@ impl img::woz::WozUnifier for Woz2 {
         self.trks.num_tracks()
     }
     fn read_sector(&mut self,track: u8,sector: u8) -> Result<Vec<u8>,img::NibbleError> {
-        let mut reader = self.new_rw_obj(track);
-        let ans = reader.read_sector(self.get_trk_bits_ref(track),track,sector)?;
+        let mut reader = self.new_rw_obj(track)?;
+        let ans = reader.read_sector(self.get_trk_bits_ref(track)?,track,sector)?;
         self.head_coords.bit_ptr = reader.get_bit_ptr();
         Ok(ans)
     }
     fn write_sector(&mut self,dat: &[u8],track: u8,sector: u8) -> Result<(),img::NibbleError> {
-        let mut writer = self.new_rw_obj(track);
-        writer.write_sector(self.get_trk_bits_mut(track),dat,track,sector)?;
+        let mut writer = self.new_rw_obj(track)?;
+        writer.write_sector(self.get_trk_bits_mut(track)?,dat,track,sector)?;
         self.head_coords.bit_ptr = writer.get_bit_ptr();
         Ok(())
     }
@@ -783,11 +781,11 @@ impl img::DiskImage for Woz2 {
     }
     fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
-        Ok(self.get_trk_bits_ref(track_num as u8).to_vec())
+        Ok(self.get_trk_bits_ref(track_num as u8)?.to_vec())
     }
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
-        let bits = self.get_trk_bits_mut(track_num as u8);
+        let bits = self.get_trk_bits_mut(track_num as u8)?;
         if bits.len()!=dat.len() {
             error!("source track buffer is {} bytes, destination track buffer is {} bytes",dat.len(),bits.len());
             return Err(Box::new(img::Error::ImageSizeMismatch));
@@ -803,8 +801,8 @@ impl img::DiskImage for Woz2 {
                 2 => img::names::A2_800_KIND,
                 _ => return Err(Box::new(img::Error::UnknownImageType))
             };
-            let mut reader = self.new_rw_obj(track as u8);
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
+            let mut reader = self.new_rw_obj(track as u8)?;
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)?) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
@@ -816,8 +814,8 @@ impl img::DiskImage for Woz2 {
             return Ok(None);
         } else if self.info.disk_type==1 {
             self.kind = img::names::A2_DOS32_KIND;
-            let mut reader = self.new_rw_obj(track as u8);
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
+            let mut reader = self.new_rw_obj(track as u8)?;
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)?) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
@@ -827,8 +825,8 @@ impl img::DiskImage for Woz2 {
                 }));
             }
             self.kind = img::names::A2_DOS33_KIND;
-            reader = self.new_rw_obj(track as u8);
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)) {
+            reader = self.new_rw_obj(track as u8)?;
+            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(track as u8)?) {
                 return Ok(Some(img::TrackSolution {
                     cylinder,
                     head,
@@ -843,8 +841,8 @@ impl img::DiskImage for Woz2 {
     }
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
         let track_num = super::woz::cyl_head_to_track(self, cyl, head)?;
-        let mut reader = self.new_rw_obj(track_num as u8);
-        Ok(reader.to_nibbles(self.get_trk_bits_ref(track_num as u8)))
+        let mut reader = self.new_rw_obj(track_num as u8)?;
+        Ok(reader.to_nibbles(self.get_trk_bits_ref(track_num as u8)?))
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         super::woz::display_track(self, 0, &bytes)

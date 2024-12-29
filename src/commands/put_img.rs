@@ -25,23 +25,24 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
                 ItemType::Sector => {
                     let mut ptr = 0;
                     let sec_list = super::parse_sector_request(&dest_path)?;
+                    let mut chsl = Vec::new();
+                    // Gather all the sector sizes, this must be done first so that
+                    // we preserve angle-order during the write phase.
                     for [cyl,head,sec] in &sec_list {
-                        // read the sector to get its length
                         let sec_len = img.read_sector(*cyl, *head, *sec)?.len();
-                        if ptr + sec_len > dat.len() && sec_list.len() > 1 {
-                            error!("{}",RANGED_ACCESS);
-                            return Err(Box::new(CommandError::InvalidCommand));
-                        }
-                        if ptr >= dat.len() {
-                            error!("{}",RANGED_ACCESS);
-                            return Err(Box::new(CommandError::InvalidCommand));
-                        }
-                        img.write_sector(*cyl,*head,*sec,&dat[ptr..])?;
+                        chsl.push([*cyl,*head,*sec,sec_len]);
                         ptr += sec_len;
                     }
-                    if sec_list.len() > 1 && ptr != dat.len() {
+                    // If multi-sector write, demand exact size match
+                    if ptr != dat.len() && sec_list.len() > 1 {
                         error!("{}",RANGED_ACCESS);
                         return Err(Box::new(CommandError::InvalidCommand));
+                    }
+                    // Now write the sectors
+                    ptr = 0;
+                    for [cyl,head,sec,sec_len] in &chsl {
+                        img.write_sector(*cyl,*head,*sec,&dat[ptr..])?;
+                        ptr += *sec_len;
                     }
                 },
                 ItemType::RawTrack => {

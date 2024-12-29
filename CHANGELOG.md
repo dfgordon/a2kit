@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2024-12-29
+
+### Fixes
+
+* Eliminate possible panics due to missing WOZ tracks
+* Allow for repeated address fields when solving nibble tracks
+* CLI multi-sector `put` strictly seeks in angle order
+    - this matters for tracks with repeated sector addresses
+    - non-contiguous sequences can be used to resolve ambiguities
+
+### New Behaviors
+
+* CLI multi-sector `put` may resolve differently (see above)
+
 ## [3.4.0] - 2024-11-17
 
 ### Fixes
