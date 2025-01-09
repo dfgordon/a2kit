@@ -11,6 +11,15 @@ fn test_disassembler(hex: &str, expected: &str) {
     assert_eq!(actual, expected);
 }
 
+fn test_disassembler_with_labeling(hex: &str, expected: &str, org: usize) {
+    let img = [vec![0;org],hex::decode(hex).expect("hex error")].concat();
+    let mut disassembler = Disassembler::new();
+    let actual = disassembler
+        .disassemble(&img, DasmRange::Range([org,img.len()]), ProcessorType::_65c816, "all")
+        .expect("dasm error");
+    assert_eq!(actual, expected);
+}
+
 mod forced_long_suffix {
     #[test]
     fn adc() {
@@ -331,5 +340,37 @@ mod other {
         expected += "         PEA   $8100\n";
         super::test_disassembler(hex, &expected);
     }
+}
 
+mod label_substitution {
+    #[test]
+    fn stack() {
+        let hex = "620200d406f40380";
+        let mut expected = String::new();
+        expected += "_8000    PER   _8005\n";
+        expected += "_8003    PEI   ($06)\n";
+        expected += "_8005    PEA   _8003\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x8000);
+    }
+    #[test]
+    fn jumping() {
+        let hex = "fc00105c00100322001003dc03806b";
+        let mut expected = String::new();
+        expected += "_8000    JSR   ($1000,X)\n";
+        expected += "_8003    JML   $031000\n";
+        expected += "_8007    JSL   $031000\n";
+        expected += "_800B    JML   (_8003)\n";
+        expected += "_800E    RTL\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x8000);
+    }
+    #[test]
+    fn lda() {
+        let hex = "a380b386a782b784";
+        let mut expected = String::new();
+        expected += "_0080    LDA   _0080,S\n";
+        expected += "_0082    LDA   (_0086,S),Y\n";
+        expected += "_0084    LDA   [_0082]\n";
+        expected += "_0086    LDA   [_0084],Y\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x80);
+    }
 }

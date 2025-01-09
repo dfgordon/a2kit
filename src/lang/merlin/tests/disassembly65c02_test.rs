@@ -10,6 +10,15 @@ fn test_disassembler(hex: &str, expected: &str) {
     assert_eq!(actual, expected);
 }
 
+fn test_disassembler_with_labeling(hex: &str, expected: &str, org: usize) {
+    let img = [vec![0;org],hex::decode(hex).expect("hex error")].concat();
+    let mut disassembler = Disassembler::new();
+    let actual = disassembler
+        .disassemble(&img, DasmRange::Range([org,img.len()]), ProcessorType::_65c02, "all")
+        .expect("dasm error");
+    assert_eq!(actual, expected);
+}
+
 mod octet {
     #[test]
     fn adc() {
@@ -139,5 +148,27 @@ mod bitwise {
         expected += "         TSB   $1000\n";
         expected += "         TRB   $1000\n";
         super::test_disassembler(hex, &expected);
+    }
+}
+
+mod label_substitution {
+    #[test]
+    fn bit() {
+        let hex = "340089003c0003";
+        let mut expected = String::new();
+        expected += "_0300    BIT   $00,X\n";
+        expected += "_0302    BIT   #$00\n";
+        expected += "_0304    BIT   _0300,X\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x300);
+    }
+    #[test]
+    fn stz() {
+        let hex = "640074009c00109e0203";
+        let mut expected = String::new();
+        expected += "_0300    STZ   $00\n";
+        expected += "_0302    STZ   $00,X\n";
+        expected += "_0304    STZ   $1000\n";
+        expected += "_0307    STZ   _0302,X\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x300);
     }
 }

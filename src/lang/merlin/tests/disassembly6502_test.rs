@@ -16,6 +16,15 @@ fn test_disassembler(hex: &str, expected: &str, brk: bool) {
     assert_eq!(actual,expected);
 }
 
+fn test_disassembler_with_labeling(hex: &str, expected: &str, org: usize) {
+    let img = [vec![0;org],hex::decode(hex).expect("hex error")].concat();
+    let mut disassembler = Disassembler::new();
+    let actual = disassembler
+        .disassemble(&img, DasmRange::Range([org,img.len()]), ProcessorType::_6502, "all")
+        .expect("dasm error");
+    assert_eq!(actual, expected);
+}
+
 mod forced_abs {
     #[test]
     fn adc() {
@@ -408,5 +417,73 @@ mod bitwise {
         expected += "         ROR   $1000\n";
         expected += "         ROR   $1000,X\n";
         super::test_disassembler(hex, &expected, true);
+    }
+}
+
+mod label_substitution {
+    #[test]
+    fn lda_abs() {
+        let hex = "ad8000bd8300b98600";
+        let mut expected = String::new();
+        expected += "_0080    LDA:  _0080\n";
+        expected += "_0083    LDA:  _0083,X\n";
+        expected += "_0086    LDA:  _0086,Y\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x80);
+    }
+    #[test]
+    fn and_zp() {
+        let hex = "2980258035802d00103d001039001021803180";
+        let mut expected = String::new();
+        expected += "_0080    AND   #$80\n";
+        expected += "_0082    AND   _0080\n";
+        expected += "_0084    AND   _0080,X\n";
+        expected += "_0086    AND   $1000\n";
+        expected += "_0089    AND   $1000,X\n";
+        expected += "_008C    AND   $1000,Y\n";
+        expected += "_008F    AND   (_0080,X)\n";
+        expected += "_0091    AND   (_0080),Y\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x80);
+    }
+    #[test]
+    fn and_abs() {
+        let hex = "2980258035802d00103d001039001021803180";
+        let mut expected = String::new();
+        expected += "_1000    AND   #$80\n";
+        expected += "_1002    AND   $80\n";
+        expected += "_1004    AND   $80,X\n";
+        expected += "_1006    AND   _1000\n";
+        expected += "_1009    AND   _1000,X\n";
+        expected += "_100C    AND   _1000,Y\n";
+        expected += "_100F    AND   ($80,X)\n";
+        expected += "_1011    AND   ($80),Y\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0x1000);
+    }
+    #[test]
+    fn forward_branch() {
+        let hex = "900cb00af0083006d004100250007000";
+        let mut expected = String::new();
+        expected += "_0000    BCC   _000E\n";
+        expected += "_0002    BCS   _000E\n";
+        expected += "_0004    BEQ   _000E\n";
+        expected += "_0006    BMI   _000E\n";
+        expected += "_0008    BNE   _000E\n";
+        expected += "_000A    BPL   _000E\n";
+        expected += "_000C    BVC   _000E\n";
+        expected += "_000E    BVS   $0010\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0);
+    }
+    #[test]
+    fn reverse_branch() {
+        let hex = "90feb0fcf0fa30f8d0f610f450f270f0";
+        let mut expected = String::new();
+        expected += "_0000    BCC   _0000\n";
+        expected += "_0002    BCS   _0000\n";
+        expected += "_0004    BEQ   _0000\n";
+        expected += "_0006    BMI   _0000\n";
+        expected += "_0008    BNE   _0000\n";
+        expected += "_000A    BPL   _0000\n";
+        expected += "_000C    BVC   _0000\n";
+        expected += "_000E    BVS   _0000\n";
+        super::test_disassembler_with_labeling(hex, &expected, 0);
     }
 }

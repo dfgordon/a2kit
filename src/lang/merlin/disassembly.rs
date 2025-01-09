@@ -376,6 +376,10 @@ impl Disassembler {
         Ok(addr)
     }
     fn format_lines(&self,labeling: &str) -> String {
+        // This regex allows erroneous digits, which should not occur, assuming this routine
+        // is only parsing code that orginated from the disassembler.
+        // More strict constructions like (hex|binary|decimal) run into issues of precedence.
+        let addr_pattern = regex::Regex::new("[\\$%]?[0-9a-fA-F]+").expect(super::RCH);
         let mut last_addr = usize::MAX;
         let widths = [self.config.columns.c1 as usize,self.config.columns.c2 as usize,self.config.columns.c3 as usize];
         let pc_bytes = match self.dasm_lines.iter().map(|x| x.address > 0xffff).collect::<Vec<bool>>().contains(&true) {
@@ -414,8 +418,8 @@ impl Disassembler {
                 line.push(super::COLUMN_SEPARATOR);
                 line += &self.dasm_lines[i].prefix;
                 if operand.num.len() == 1 && labels.contains(&(operand.num[0] as usize)) && !operand.txt.starts_with("#") {
-                    line += "_";
-                    line += &hex_from_val("",operand.num[0] as u32,pc_bytes);
+                    let lab_txt = ["_", &hex_from_val("",operand.num[0] as u32,pc_bytes)].concat();
+                    line += &addr_pattern.replace(&operand.txt,&lab_txt);
                 } else {
                     line += &operand.txt;
                 }
