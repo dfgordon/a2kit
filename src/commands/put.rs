@@ -1,7 +1,9 @@
 use clap;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::str::FromStr;
-use super::{ItemType,CommandError};
+use binrw::BinRead;
+use crate::bios::r#as::AppleSingleFile;
+use super::{ItemType, CommandError};
 use crate::fs::FileImage;
 use crate::STDRESULT;
 
@@ -12,6 +14,17 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
     match typ {
         ItemType::Raw => fimg.pack_raw(&dat),
         ItemType::Binary => fimg.pack_bin(&dat,load_addr,None),
+        ItemType::Automatic => {
+            if let Ok(appleSingleFile) = AppleSingleFile::read(&mut Cursor::new(dat)) {
+                log::info!("Detected AppleSingle file");
+                appleSingleFile.pack_into(fimg, load_addr)
+            } else if load_addr.is_some() {
+                log::info!("Detected binary file");
+                fimg.pack_bin(&dat, load_addr, None)
+            } else {
+                Err(Box::new(CommandError::UnknownFormat))
+            }
+        },
         ItemType::ApplesoftTokens => fimg.pack_tok(&dat,ItemType::ApplesoftTokens,None),
         ItemType::IntegerTokens => fimg.pack_tok(&dat,ItemType::IntegerTokens,None),
         ItemType::MerlinTokens => fimg.pack_raw(&dat),
@@ -23,7 +36,7 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
             let json_str = std::str::from_utf8(&dat)?;
             fimg.pack_rec_str(json_str)
         },
-        _ => return Err(Box::new(CommandError::UnsupportedItemType))
+        _ => Err(Box::new(CommandError::UnsupportedItemType))
     }
 }
 

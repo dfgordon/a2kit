@@ -32,7 +32,7 @@ pub enum CommandError {
     #[error("File not found")]
     FileNotFound,
     #[error("Key not found")]
-    KeyNotFound
+    KeyNotFound,
 }
 
 /// Types of files that may be distinguished by the file system or a2kit.

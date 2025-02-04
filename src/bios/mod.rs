@@ -12,6 +12,7 @@ pub mod skew;
 pub mod dpb;
 pub mod bpb;
 pub mod fat;
+pub mod r#as;
 
 /// Enumerates bios errors.  The `Display` trait will print equivalent long message.
 #[derive(thiserror::Error,Debug)]
