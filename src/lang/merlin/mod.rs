@@ -9,25 +9,53 @@
 //! file relationships and identifying symbols.  There is a spot assembler that is used to aid in
 //! disassembly. As of this writing, however, full assembly is not supported.
 //! 
-//! We test against Merlin 8 and Merlin 32.
-//! Test coverage is 100% in terms of instructions and addressing modes available on
-//! all processor variants (barring human error in constructing the tests).
-//! We rely on documentation to glean Merlin 16/16+ behavior.
-//! In theory a2kit should conform to the selected Merlin version.
-//! Table of known or interesting distinctions follows.
+//! ## Conditional Macro Definitions
 //! 
-//! Operation | Merlin 8 | Merlin 16+ | Merlin 32
-//! ----------|----------|-----------|------
-//! DCI | invert end of dstring | M8 | invert end of whole argument
-//! INV | wrong lower case | correct lower case | refuses lower case (1)
-//! FLS | wrong lower case | wrong lower case | refuses lower case
-//! FLS | flashes specials | flashes specials | does not flash specials
-//! REV | hex ignored | unknown | hex incorporated into string (2)
-//! DS | bit shift not allowed | unknown | bit shift works
-//! JML | n/a | unknown | cannot produce $DC opcode
+//! The Merlin 8/16 manual explicitly recommends wrapping `MAC` in a `DO 0` fold.
+//! Testing shows this is unnecessary and can lead to unexpected behaviors.  For example, something
+//! other than `MAC` within this fold can end up being assembled by legacy Merlin.
+//! This language server does not conform to legacy Merlin in this regard, except to produce a
+//! warning if `MAC` appears inside a conditional.
+//! 
+//! ## Macro Locals
+//! 
+//! Labels that are defined within a macro definition require some discussion.
+//! They are scoped to a macro and all of its dependencies, e.g., a label defined
+//! in a nested macro is visible to the enclosing macro, and vice-versa.
+//! Duplicate labels are legal in this scope, but this does *not* make them variables.
+//! In particular, the first (last) assigned value is used everywhere in Merlin 32 (legacy Merlin).
+//! Merlin 8 errors out if an equivalence is used after a reference, but Merlin 16+ does not.
+//! 
+//! ## Testing
+//! 
+//! We test against Merlin 8/16/16+/32.
+//! Test versions are M8(2.58), M16(3.41), M16+(4.08), M32(1.1).
+//! CI test coverage is 100% in terms of instructions and addressing modes available on
+//! all processor variants (barring human error in constructing the tests).
+//! Table of some under-documented distinctions follows.
+//! 
+//! Operation | Merlin 8 | Merlin 16 | Merlin 16+ | Merlin 32
+//! ----------|----------|-----------|------------|-----------
+//! DCI | invert end of dstring | M8 | M32 | invert end of whole argument
+//! INV | wrong lower case | M8 | correct lower case | refuses lower case (1)
+//! FLS | wrong lower case | M8 | M8 | refuses lower case (2)
+//! FLS | flashes specials | M8 | M8 | does not flash specials
+//! REV | hex ignored | M8 | M32 | hex incorporated into string (3)
+//! STR | hex not counted | M8 | M32 | hex is counted
+//! STRL | n/a | n/a | M32 | hex is counted
+//! DS | bit shift not allowed | M8 | M8 | bit shift works
+//! JML ($8000) | n/a | `DC 00 80` | `DC 00 80` | `6C 00 80`
+//! MAC | last duplicate label takes precedence | M8 | M8 | first takes precedence
+//! MAC | unreachable label accepted | M8 | M8 | unreachable label errors out (4)
+//! MX | n/a | no shadowing | no shadowing | equivalence can shadow
+//! LDA #'A' | `A9 41` | `A9 41` | `A9 41` | refuses until v1.1
+//! DO 0 | MAC cancels | M8 | M8 | MAC does not cancel (5)
 //!
-//! 1. lower case is only invertible in the alternate character set
-//! 2. a2kit will reject trailing hex as a syntax error, but the REV processor would reverse each dstring separately if the parser allowed it
+//! 1. lower case is invertible in the alternate character set
+//! 2. refusal is correct, flashing lower case is not possible
+//! 3. a2kit will reject trailing hex as a syntax error, but the REV processor would reverse each dstring separately if the parser allowed it
+//! 4. this can happen when expanding a nested macro definition
+//! 5. "cancels" means code following the macro definition is assembled, even if `DO 0` is not closed
 
 use lsp_types as lsp;
 use std::collections::{HashSet,HashMap};
@@ -179,8 +207,11 @@ pub struct Symbol {
     /// It is a map from a reference's location to label types that were not defined up to that point.
     /// Multiple label types can occur due to ambiguities during the first pass (e.g. global vs. macro local).
     fwd_refs: HashMap<lsp::Location,Vec<LabelType>>,
-    /// Current value of a symbol.
+    /// Current value of a symbol. When post-analyzing variables, the value at a given location
+    /// can be reconstructed using `value_history`.
     value: Option<i64>,
+    /// It is useful to be able to stash values for later restoration during analysis.
+    value_stack: Vec<Option<i64>>,
     /// Merlin children are as follows:
     /// * global labels can have local labels as children
     /// * macros can have "global labels" as children (macro locals)
@@ -188,9 +219,21 @@ pub struct Symbol {
     /// heading that precedes a symbol definition is its docstring
     docstring: String,
     /// line(s) of code defining this symbol
-    defining_code: Option<String>
+    defining_code: Option<String>,
+    /// macro call or nested macro within another macro
+    dependencies: HashSet<String>,
+    /// ordered record of values assumed by the symbol, for a variable there can be many.
+    /// when closing an include an entry should be added at the including location.
+    /// At present LUP updates are not handled (variables are unset upon exit).
+    /// The @ substitution feature is also not handled.
+    checkpoints: Vec<(lsp::Location,Option<i64>)>
 }
 
+/// Extended symbol table applicable to a single module.
+/// The symbols are gathered into globals, variables, and macros.
+/// Locals and macro-locals appear as children of the former.
+/// The symbols themselves contain global information such as all
+/// the places where a symbol is referenced, defined, assigned a value, etc.
 #[derive(Clone)]
 pub struct Symbols {
     assembler: MerlinVersion,
@@ -201,6 +244,7 @@ pub struct Symbols {
     globals: HashMap<String,Symbol>,
     vars: HashMap<String,Symbol>,
     macros: HashMap<String,Symbol>,
+    mx: Symbol,
     /// lines in the display document that need the parser hint
     alt_parser_lines: HashSet<isize>
 }
@@ -284,9 +328,12 @@ impl Symbol {
             refs: Vec::new(),
             fwd_refs: HashMap::new(),
             value: None,
+            value_stack: Vec::new(),
             children: HashMap::new(),
             docstring: String::new(),
-            defining_code: None
+            defining_code: None,
+            dependencies: HashSet::new(),
+            checkpoints: Vec::new()
         }
     }
     /// create new symbol and add a node in one step
@@ -359,6 +406,33 @@ impl Symbol {
             }
         }
     }
+    fn add_dependency(&mut self,label: &str) {
+        self.dependencies.insert(label.to_string());
+    }
+    fn dependencies(&self) -> &HashSet<String> {
+        &self.dependencies
+    }
+    /// Set symbol to its value just prior to the given line.
+    /// This can be used to rollback a variable for local analysis.
+    fn localize_value(&mut self,loc: &lsp::Location) {
+        let mut latest_val: Option<i64> = None;
+        for (prev_loc,val) in &self.checkpoints {
+            if prev_loc.uri == loc.uri {
+                if prev_loc.range.start.line >= loc.range.start.line {
+                    break;
+                } 
+                latest_val = *val;
+            }
+        }
+        self.value = latest_val;
+    }
+    /// set value of child nodes to None, does not affect duplicates that may be
+    /// defined in dependencies
+    fn unset_children(&mut self) {
+        for child in self.children.values_mut() {
+            child.value = None;
+        }
+    }
 }
 
 impl Symbols {
@@ -372,6 +446,7 @@ impl Symbols {
             globals: HashMap::new(),
             vars: HashMap::new(),
             macros: HashMap::new(),
+            mx: Symbol::new("MX"),
             alt_parser_lines: HashSet::new()
         }
     }
@@ -469,6 +544,11 @@ impl Symbols {
         }
     }
     pub fn child_defined(&self,txt: &str,scope: &Symbol) -> bool {
+        if scope.flags & symbol_flags::MAC > 0 {
+            if let Ok(count) = self.count_macro_loc_definitions(scope, txt, 0, 15) {
+                return count > 0;
+            }
+        }
         if let Some(sym) = scope.children.get(txt) {
             sym.defs.len() > 0
         } else {
@@ -498,6 +578,117 @@ impl Symbols {
         if col<0 && doc.uri.to_string()==self.display_doc_uri {
             self.alt_parser_lines.insert(row);
         }
+    }
+    /// recursively check to see if this label is a dependency of the symbol
+    fn is_dependency(&self,label: &str,sym: &Symbol,curr_depth: usize,max_depth: usize) -> Result<bool,crate::DYNERR> {
+        if curr_depth > max_depth {
+            return Err(Box::new(assembly::Error::Nesting));
+        }
+        for m2 in sym.dependencies() {
+            if m2 == label {
+                log::debug!("indirect reference to {}",label);
+                log::debug!("    from {}",&sym.name);
+                return Ok(true);
+            }
+            if let Some(dep) = self.macros.get(m2) {
+                if self.is_dependency(label, dep,curr_depth+1,max_depth)? {
+                    log::debug!("    from {}",&sym.name);
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+    /// test whether a macro is ever referenced, even indirectly
+    fn is_macro_referenced(&self,label: &str, max_depth: usize) -> Result<bool,crate::DYNERR> {
+        // first see if it is directly referenced, if yes we are done
+        if let Some(sym) = self.macros.get(label) {
+            if sym.refs.len() > 0 {
+                return Ok(true);
+            }
+        }
+        for sym in self.macros.values() {
+            if sym.refs.len() > 0 {
+                if self.is_dependency(label, sym,0,max_depth)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+    /// how many times is the label defined in this macro and its dependencies
+    fn count_macro_loc_definitions(&self,mac: &Symbol, label: &str, curr_depth: usize, max_depth: usize) -> Result<usize,crate::DYNERR> {
+        let mut count: usize = 0;
+        if curr_depth > max_depth {
+            return Err(Box::new(assembly::Error::Nesting));
+        }
+        if let Some(child) = mac.children.get(label) {
+            count += child.defs.len();
+        }
+        for m2 in mac.dependencies() {
+            if let Some(sym) = self.macros.get(m2) {
+                count += self.count_macro_loc_definitions(sym,label,curr_depth+1,max_depth)?;
+            }
+        }
+        Ok(count)
+    }
+    /// this can be called as a macro definition is closed to get a list of duplicates
+    fn detect_all_duplicates_in_macro(&self,mac: &Symbol) -> Result<Option<String>,crate::DYNERR> {
+        let mut ans = String::new();
+        for label in mac.children.keys() {
+            if self.count_macro_loc_definitions(mac, label, 0, 15)? > 1 {
+                ans += &label;
+                ans += ",";
+            }
+        }
+        if ans.len() > 0 {
+            ans.pop();
+            Ok(Some(ans))
+        } else {
+            Ok(None)
+        }
+    }
+    /// Set variables to value at the given location.
+    /// The analyzer's first pass establishes the values.
+    fn localize_all_variables(&mut self,loc: &lsp::Location) {
+        for var in self.vars.values_mut() {
+            var.localize_value(loc);
+        }
+        self.mx.localize_value(loc);
+    }
+    /// Clear the current value of all variables, the variables themselves remain.
+    fn unset_all_variables(&mut self) {
+        for var in self.vars.values_mut() {
+            var.value = None;
+        }
+        self.mx.value = None;
+    }
+    /// Save the current value of all variables onto a stack.
+    fn stash_all_variables(&mut self) {
+        for var in self.vars.values_mut() {
+            var.value_stack.push(var.value);
+        }
+        self.mx.value_stack.push(self.mx.value);
+    }
+    /// Restore the current values of all variables from a stack.
+    fn restore_all_variables(&mut self) {
+        for var in self.vars.values_mut() {
+            if let Some(v) = var.value_stack.pop() {
+                var.value = v;
+            }
+        }
+        if let Some(v) = self.mx.value_stack.pop() {
+            self.mx.value = v;
+        }
+    }
+    /// Checkpoint variables at the given location.
+    /// Locations must be visited in order, and only during the first pass.
+    /// Typical use is immediately after exiting a source scope.
+    fn checkpoint_all_variables(&mut self,loc: &lsp::Location) {
+        for var in self.vars.values_mut() {
+            var.checkpoints.push((loc.clone(),var.value));
+        }
+        self.mx.checkpoints.push((loc.clone(),self.mx.value));
     }
 }
 

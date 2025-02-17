@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2025-02-17
+
+Most of the changes pertain to Merlin components.
+
+### Fixes
+
+* Docstrings are handled more consistently
+* Nested conditionals are handled more accurately
+* Variables are tracked more accurately
+* Various minor fixes
+
+### New Features
+
+* Macro expansions resolve `IF` and `DO` in many cases
+* Tracking of macro dependencies to maximum allowed depth
+
+### New Behaviors
+
+* `a2kit verify` returns an error if handed an empty string
+* Duplicate labels in a macro trigger a warning rather than multiple errors
+* Conditional macro definitions are handled differently
+    - they are always discouraged by a warning
+    - they will be dimmed if the conditional evaluates false
+
 ## [3.5.1] - 2025-01-09
 
 ### Fixes

@@ -80,6 +80,11 @@ impl AddressHovers {
     }
     pub fn get_from_node(&self,curs: &tree_sitter::TreeCursor,line: &str) -> Option<String> {
         if curs.node().kind() == "num" {
+            if curs.node().prev_named_sibling().is_some() {
+                if curs.node().prev_named_sibling().unwrap().kind() == "imm_prefix" {
+                    return None;
+                }
+            }
             if let Some(num) = node_radix::<i64>(&curs.node(),line,"$","%") {
                 return self.get(num);
             }

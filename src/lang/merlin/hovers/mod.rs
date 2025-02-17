@@ -149,13 +149,19 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
 				return Ok(Navigation::Exit);
 			}
 			if curs.node().kind() == "macro_ref" {
-                if let Some(mut expansion) = super::diagnostics::macros::expand_macro(&curs.node(), &self.parser.line(), &mut self.symbols, 1) {
-                    expansion = expansion.replace("\u{0100}","");
-                    new_section(&mut self.markup.value, &&["```\n",&expansion,"```"].concat());
-                } else {
-                    self.markup.value += "unable to expand macro";
-                }
+                let url = lsp::Url::parse(&self.symbols.display_doc_uri)?;
+                let loc = lsp::Location::new(url,self.rng);
+                let local_symbols = Arc::make_mut(&mut self.symbols);
+                local_symbols.localize_all_variables(&loc);
+                let expansion = match super::diagnostics::macros::expand_macro(&curs.node(), &self.parser.line(), &local_symbols, 1) {
+                    Some(x) => ["```\n",&x.replace("\u{0100}",""),"```"].concat(),
+                    None => "unable to expand macro".to_string()
+                };
                 if let Some(sym) = self.symbols.macros.get(&txt) {
+                    new_section(&mut self.markup.value,&expansion);
+                    if sym.docstring.len() > 0 {
+                        new_section(&mut self.markup.value,&sym.docstring);
+                    }
                     if sym.defs.len() > 0 && sym.defs[0].uri.to_string()!=self.symbols.display_doc_uri {
                         new_section(&mut self.markup.value,&format!("imported from {}",path_in_workspace(&sym.defs[0].uri,&self.ws_folder)));
                     }

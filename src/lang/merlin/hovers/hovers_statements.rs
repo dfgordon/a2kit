@@ -28,7 +28,7 @@ impl StatementHovers {
                     table += "|";
                     table += &format!("{}",mode.cycles);
                     table += "|";
-                    table += &format!("${:2x}",mode.code);
+                    table += &format!("${:02X}",mode.code);
                     table += "|";
                     let mut xc = String::new();
                     if !mode.processors.contains(&ProcessorType::_6502) {

@@ -78,13 +78,15 @@ impl PseudoOpSentry {
                 };
                 if let Some(re) = maybe_re {
                     if let Some(arg) = node.next_named_sibling() {
-                        let mut next = arg.named_child(0);
-                        while next.is_some() {
-                            let (arg_rng,arg_txt) = ctx.node_spec(&next.unwrap());
-                            if re.find(&arg_txt).is_some() {
-                                push(arg_rng, "pseudo-op argument is disabled for the selected Merlin version", lsp::DiagnosticSeverity::ERROR);
+                        if arg.kind().starts_with("arg_") {
+                            let mut next = arg.named_child(0);
+                            while next.is_some() {
+                                let (arg_rng,arg_txt) = ctx.node_spec(&next.unwrap());
+                                if re.find(&arg_txt).is_some() {
+                                    push(arg_rng, "pseudo-op argument is disabled for the selected Merlin version", lsp::DiagnosticSeverity::ERROR);
+                                }
+                                next = next.unwrap().next_named_sibling();
                             }
-                            next = next.unwrap().next_named_sibling();
                         }
                     }
                 }

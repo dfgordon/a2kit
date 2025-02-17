@@ -4,26 +4,27 @@
 //! Also contains the workspace scanner and workspace methods.
 //! Used for both CLI and LSP.
 
-use tree_sitter;
+use tree_sitter::{Node,TreeCursor};
 use workspace::WorkspaceScanner;
-use super::Workspace;
+use super::{Symbols,Symbol,Workspace,assembly};
 use std::io;
 use std::io::Read;
 use std::collections::HashMap;
 use std::sync::Arc;
-use lsp_types::{Diagnostic,DiagnosticSeverity,FoldingRange};
-use crate::lang::{Navigate,Navigation,Document};
+use lsp_types::{Diagnostic,DiagnosticSeverity,FoldingRange,Location};
+use crate::lang::{Navigate,Navigation,Document,lsp_range};
 use crate::lang::merlin::context::Context;
-use crate::lang::server::Analysis;
+use crate::lang::server::{Analysis,basic_diag};
 use crate::{DYNERR, STDRESULT};
 use log::{info,trace};
 
 pub mod macros;
-mod labels;
+mod pass1;
+mod pass2;
 mod asm;
 pub mod workspace;
 
-fn node_path(node: &tree_sitter::Node, source: &str) -> Vec<String> {
+fn node_path(node: &Node, source: &str) -> Vec<String> {
     let mut txt = super::super::node_text(node,source);
     if !txt.ends_with(".S") && !txt.ends_with(".s") {
         txt.push_str(".S");
@@ -34,7 +35,7 @@ fn node_path(node: &tree_sitter::Node, source: &str) -> Vec<String> {
 /// Return a value indicating the quality of the match of a ProDOS path to a path in the
 /// local file system.  Any value >0 means the filename itself matched case insensitively.
 /// Higher values mean there were additional matches, such as parent directories.
-fn match_prodos_path(node: &tree_sitter::Node, source: &str, doc: &Document) -> usize {
+fn match_prodos_path(node: &Node, source: &str, doc: &Document) -> usize {
     let mut quality = 0;
     if !doc.uri.cannot_be_a_base() {
         let mut doc_segs = std::path::Path::new(doc.uri.path()).iter().rev();
@@ -55,7 +56,7 @@ fn match_prodos_path(node: &tree_sitter::Node, source: &str, doc: &Document) -> 
 
 /// Starting from someplace in an argument tree, go up to find the arg_* node kind.
 /// This is useful if we need to adjust the processing based on the specific operation.
-fn find_arg_node(node: &tree_sitter::Node) -> Option<String> {
+fn find_arg_node(node: &Node) -> Option<String> {
     let mut check = node.parent();
     while let Some(parent) = check {
         if parent.kind().starts_with("arg_") {
@@ -64,6 +65,80 @@ fn find_arg_node(node: &tree_sitter::Node) -> Option<String> {
         check = parent.parent();
     }
     None
+}
+
+/// Get the current value of any symbol or MX by looking around the node.
+/// Node type should be `arg_mx` or `label_def`.
+fn get_value(node: &Node, symbols: &Symbols, line: &str, scope: Option<&Symbol>) -> Option<i64> {
+    let mut new_val: Option<i64> = None;
+    // TODO: assign a value based on PC here
+    if node.kind() == "arg_mx" {
+        if let Some(expr) = node.child(0) {
+            new_val = match super::assembly::eval_expr(&expr, line, None, symbols, scope) {
+                Ok(v) => Some(v),
+                Err(_) => None
+            }
+        }
+    } else if node.kind() == "label_def" {
+        if let Some(c2) = node.next_named_sibling() {
+            if c2.kind()=="psop_equ" {
+                if let Some(c3) = c2.next_named_sibling() {
+                    new_val = match super::assembly::eval_expr(&c3, line, None, symbols, scope) {
+                        Ok(v) => Some(v),
+                        Err(_) => None 
+                    };
+                }
+            }
+        }
+    }
+    new_val
+}
+
+/// Update the current value of a variable or MX by looking around the node.
+/// Node type should be `arg_mx` or `(label_def (var_label))`.
+/// This is intended for use during second and subsequent passes (does not checkpoint).
+/// value of `txt` is not used if node is `arg_mx`.
+fn update_var_value(txt: &str, node: &Node, symbols: &mut Symbols, line: &str, scope: Option<&Symbol>) {
+    let new_val = get_value(node,symbols,line,scope);
+    if node.kind() == "arg_mx" {
+        symbols.mx.value = new_val;
+    } else if node.kind() == "label_def" {
+        if let Some(var) = node.named_child(0) {
+            if var.kind() == "var_label" {
+                if let Some(sym) = symbols.vars.get_mut(txt) {
+                    sym.value = new_val;
+                }
+            }
+        }
+    }
+}
+
+/// Get value of a fold argument and add to diagnostics if there is an issue
+fn eval_fold_expr(node: &Node,pc: Option<usize>,symbols: &Symbols,ctx: &Context,in_macro_def: bool,diagnostics: Option<&mut Vec<Diagnostic>>) -> i64 {
+    let range = lsp_range(node.range(),ctx.row(),ctx.col());
+    let cannot_eval_mess = match in_macro_def {
+        true => basic_diag(range,"evaluation was deferred",DiagnosticSeverity::HINT),
+        false => basic_diag(range,"extension cannot evaluate, assuming true",DiagnosticSeverity::WARNING)
+    };
+    let (arg,diag) = match node.next_named_sibling() {
+        Some(arg_node) => match node.kind() {
+            "psop_if" | "psop_do" => match assembly::eval_conditional(&arg_node, ctx.line(), pc, symbols, ctx.curr_scope()) {
+                Ok(val) => (val,None),
+                Err(_) => (1,Some(cannot_eval_mess))
+            },
+            _ =>  match assembly::eval_expr(&arg_node, ctx.line(), pc, symbols, ctx.curr_scope()) {
+                Ok(val) => (val,None),
+                Err(_) => (1,None)
+            }
+        },
+        None => (1,None)
+    };
+    if let Some(diag) = diag {
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.push(diag);
+        }
+    }
+    arg
 }
 
 pub struct Analyzer {
@@ -125,6 +200,7 @@ impl Analyzer {
     fn reset_for_pass(&mut self) {
         self.ctx.reset_for_pass();
         self.asm = asm::Asm::new(&self.ctx);
+        self.symbols.unset_all_variables();
     }
     pub fn get_symbols(&self) -> super::Symbols {
         self.symbols.clone()
@@ -187,6 +263,32 @@ impl Analyzer {
             }
         }
     }
+    /// Carry out actions requested by visitors on the previously processed line.
+    /// When finished clear all triggers.
+    fn pull_triggers(&mut self) {
+        if self.ctx.trigs.push_vars {
+            self.symbols.stash_all_variables();
+        }
+        if self.ctx.trigs.unset_vars {
+            self.symbols.unset_all_variables();
+        }
+        if self.ctx.trigs.unset_children {
+            if let Some(scope) = self.ctx.curr_scope_mut() {
+                scope.unset_children();
+            }
+        }
+        if self.ctx.trigs.pop_vars {
+            self.symbols.restore_all_variables();
+        }
+        if self.ctx.trigs.checkpoint_vars {
+            if let Some(src) = self.ctx.curr_source() {
+                let pos = lsp_types::Position::new(self.ctx.row() as u32,0);
+                let loc = Location::new(src.doc.uri.clone(), lsp_types::Range::new(pos,pos));
+                self.symbols.checkpoint_all_variables(&loc);
+            }
+        }
+        self.ctx.trigs = super::context::Triggers::new();
+    }
     fn analyze_recursively(&mut self,typ: super::SourceType,doc: Arc<Document>) -> Result<(),DYNERR> {
         // save diagnostics for the previous source scope
         self.move_diagnostics();
@@ -196,6 +298,7 @@ impl Analyzer {
         self.ctx.enter_source(typ,Arc::clone(&doc));
         for line in doc.text.lines() {
             trace!("analyze row {}",self.ctx.row());
+            self.pull_triggers();
             if line.trim_start().len()==0 {
                 self.ctx.next_row();
                 self.ctx.running_docstring = String::new();
@@ -206,9 +309,6 @@ impl Analyzer {
             self.ctx.set_col(self.parser.col_offset());
             self.symbols.update_row_data(&doc,self.ctx.row(), self.ctx.col());
             self.walk(&tree)?;
-            if self.pass == 1 {
-                self.ctx.annotate_fold(&mut self.diagnostics);
-            }
             self.ctx.next_row();
         }
         // save diagnostics for this scope
@@ -223,18 +323,21 @@ impl Navigate for Analyzer {
 	/// default descend function
 	/// * `curs` expected to be on a PUT or USE pseudo-op node
 	/// * returns where to go when we return to master
-    fn descend(&mut self, curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
+    fn descend(&mut self, curs: &TreeCursor) -> Result<Navigation,DYNERR> {
 		if let Some((typ,include)) = self.ctx.prepare_to_descend(curs,self.scanner.get_workspace()) {
             trace!("descending into include {}",include.uri.as_str());
             self.analyze_recursively(typ,include)?;
             trace!("ascending out of include");
+            if self.pass == 1 {
+                self.ctx.trigs.checkpoint_vars = true;
+            }
 		}
 		return Ok(Navigation::GotoSibling);
 	}
-    fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
+    fn visit(&mut self,curs: &TreeCursor) -> Result<Navigation,DYNERR> {
         match self.pass {
-            1 => labels::visit_gather(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics, &mut self.folding),
-            2 => labels::visit_verify(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
+            1 => pass1::visit_gather(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics, &mut self.folding),
+            2 => pass2::visit_verify(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
             3 => self.asm.visit(curs, &mut self.ctx, &self.scanner.get_workspace(), &mut self.symbols, &mut self.diagnostics),
             _ => panic!("unexpected number of visit passes")
         }

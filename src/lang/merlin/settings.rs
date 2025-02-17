@@ -12,6 +12,8 @@ use lsp_types::DiagnosticSeverity;
 pub struct Flag {
     pub case_sensitive: Option<DiagnosticSeverity>,
     pub unclosed_folds: Option<DiagnosticSeverity>
+    // TODO: major version: pub unused_macros: Option<DiagnosticSeverity>
+    // TODO: major version: pub dup_mac_locs: Option<DiagnosticSeverity>
 }
 #[derive(Clone)]
 pub struct Columns {
@@ -62,6 +64,8 @@ impl Settings {
             flag : Flag {
                 case_sensitive: None,
                 unclosed_folds: Some(DiagnosticSeverity::ERROR)
+                // TODO: major version: unused_macros: Some(DiagnosticSeverity::HINT)
+                // TODO: major version: dup_mac_locs: Some(DiagnosticSeverity::WARNING)
             },
             columns : Columns {
                 c1: 9,
@@ -109,6 +113,8 @@ pub fn parse(json: &str) -> Result<Settings,DYNERR> {
                     "flag" => {
                         update_json_severity(val,"caseSensitive",&mut ans.flag.case_sensitive);
                         update_json_severity(val,"unclosedFolds",&mut ans.flag.unclosed_folds);
+                        // TODO: major version: update_json_severity(val,"unusedMacros",&mut ans.flag.unused_macros);
+                        // TODO: major version: update_json_severity(val,"duplicateMacroLocals",&mut ans.flag.dup_mac_locs);
                     },
                     "columns" => {
                         update_json_i64(val,"c1",&mut ans.columns.c1);

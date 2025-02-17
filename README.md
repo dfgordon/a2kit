@@ -4,7 +4,7 @@ Command line interface and library for retro disk images, file systems, and lang
 
 * Designed to be scriptable
 * Language Servers - Applesoft, Integer BASIC, Merlin Assembly
-    - deep analysis, tokenization, disassembly, follows LSP
+    - deep analysis, tokenization, disassembly, adheres to [LSP](https://microsoft.github.io/language-server-protocol/)
 * File Systems - Apple DOS 3.x, ProDOS, CP/M, Pascal, FAT (such as MS-DOS)
     - full read and write access
     - high or low level manipulations
@@ -26,5 +26,5 @@ Command line interface and library for retro disk images, file systems, and lang
 
 [CiderPress](https://github.com/fadden/ciderpress), [CiderPress2](https://github.com/fadden/CiderPress2) - famous Apple disk image software and successor.
 
-[Virtual II](https://www.virtualii.com/), [AppleWin](https://github.com/AppleWin/AppleWin), [MicroM8](https://paleotronic.com/software/microm8/), [MAME](https://www.mamedev.org/) - emulators
+[Virtual II](https://www.virtualii.com/), [AppleWin](https://github.com/AppleWin/AppleWin), [MicroM8](https://paleotronic.com/software/microm8/), [MAME](https://www.mamedev.org/), [Crossrunner](https://www.crossrunner.gs/) - emulators
 

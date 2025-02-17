@@ -105,7 +105,8 @@ pub enum Error {
 }
 
 /// Evaluate any expression starting on an arg node (assuming it wraps an expression), or an expression node.
-pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>) -> Result<i64,DYNERR> {
+/// The special MX symbol is included and given precedence if `ifmx` is true.
+fn eval_any_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>, ifmx: bool) -> Result<i64,DYNERR> {
     let node = match start_node.kind().starts_with("arg_") {
         true => match start_node.named_child(0) {
             Some(child) => child,
@@ -136,6 +137,12 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
         },
         "label_ref" => {
             let txt = node_text(&node, source);
+            if ifmx && txt == "MX" {
+                match symbols.mx.value {
+                    Some(val) => return Ok(val),
+                    None => return Err(Box::new(Error::UnresolvedValue))
+                }
+            }
             if let Some(scope) = scope {
                 if let Some(child) = scope.children.get(&txt) {
                     if let Some(val) = child.value {
@@ -159,7 +166,7 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
             if node.child_count() != 2 {
                 Err(Box::new(Error::Syntax))
             } else {
-                let raw = eval_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope)?;
+                let raw = eval_any_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope, ifmx)?;
                 if node.named_child(1).unwrap().kind() == "eop_minus" {
                     Ok(-raw)
                 } else {
@@ -171,13 +178,16 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
             if node.child_count() != 3 {
                 Err(Box::new(Error::Syntax))
             } else {
-                let val1 = eval_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope)?;
-                let val2 = eval_expr(&node.named_child(2).unwrap(), source, pc, symbols, scope)?;
+                let val1 = eval_any_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope, ifmx)?;
+                let val2 = eval_any_expr(&node.named_child(2).unwrap(), source, pc, symbols, scope, ifmx)?;
                 match node.named_child(1).unwrap().kind() {
                     "eop_plus" => Ok(val1 + val2),
                     "eop_minus" => Ok(val1 - val2),
                     "eop_times" => Ok(val1 * val2),
-                    "eop_div" => Ok(val1 / val2),
+                    "eop_div" => match val2 {
+                        0 => Err(Box::new(Error::ExpressionEvaluation)),
+                        _ => Ok(val1 / val2)
+                    },
                     "eop_or" => Ok(val1 | val2),
                     "eop_and" => Ok(val1 & val2),
                     "eop_xor" => Ok(val1 ^ val2),
@@ -191,7 +201,7 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
         },
         "braced_aexpr" => {
             if let Some(child) = node.named_child(0) {
-                eval_expr(&child, source, pc, symbols, scope)
+                eval_any_expr(&child, source, pc, symbols, scope, ifmx)
             } else {
                 Err(Box::new(Error::Syntax))
             }
@@ -200,23 +210,73 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
     }
 }
 
-/// Evaluate IF argument which could parse as (arg_if (if_char (...))) or (arg_if (if_mx (...))).
-/// If it is the MX variety, the expression will need to be reparsed with MX inserted.
-/// N.b. it is not correct precedence-wise to multiply MX by the already-parsed expression.
+/// Evaluate expression starting on an arg node (assuming it wraps an expression), or an expression node.
+/// Cannot be used to evaluate `arg_if`, for that use `eval_conditional`.
+pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>) -> Result<i64,DYNERR> {
+    eval_any_expr(start_node, source, pc, symbols, scope, false)
+}
+
+#[deprecated(since="3.6.0", note="use eval_conditional instead")]
 pub fn eval_if(start_node: &tree_sitter::Node, source: &str) -> Result<i64,DYNERR> {
-    let txt = start_node.utf8_text(source.as_bytes())?;
-    let chars = txt.chars().collect::<Vec<char>>();
-    if txt.starts_with("MX") {
-        Err(Box::new(Error::ExpressionEvaluation))
-    } else {
-        if chars.len() < 3 {
-            return Err(Box::new(Error::Syntax));
-        }
-        match chars[0]==chars[2] {
-            true => Ok(1),
-            false => Ok(0)
+    eval_conditional(start_node,source,None,&Symbols::new(),None)
+}
+
+/// Evaluate IF or DO argument, start node can be `psop_if`, `psop_do`, `arg_if` or `arg_do`.
+pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>) -> Result<i64,DYNERR> {
+    let arg_node = match start_node.kind() {
+        "psop_if" | "psop_do" => {
+            match start_node.next_named_sibling() {
+                Some(n) => n,
+                None => return Err(Box::new(Error::Syntax))
+            }
+        },
+        _ => start_node.clone()
+    };
+    if arg_node.kind() == "arg_do" {
+        return match arg_node.child(0) {
+            Some(expr) => eval_expr(&expr,source,pc,symbols,scope),
+            None => Err(Box::new(Error::Syntax))
+        };
+    } else if arg_node.kind() == "arg_if" {
+        let txt = arg_node.utf8_text(source.as_bytes())?;
+        let chars = txt.chars().collect::<Vec<char>>();
+        return if txt.starts_with("MX") {
+            // Important to reparse the whole arg_if node in order to handle operator precedence.
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&tree_sitter_merlin6502::language()).expect("failed to load language");
+            let dummy_code = [" lda ",txt,"\n"].concat();
+            if let Some(tree) = parser.parse(&dummy_code,None) {
+                let mut curs = tree.root_node().walk();
+                curs.goto_first_child(); // operation
+                curs.goto_first_child(); // lda
+                curs.goto_next_sibling(); // arg_lda
+                curs.goto_first_child(); // addr
+                curs.goto_first_child(); // expr
+                eval_any_expr(&curs.node(),&dummy_code,pc,symbols,scope,true)
+            } else {
+                Err(Box::new(Error::ExpressionEvaluation))
+            }
+        } else {
+            if let Some(child) = arg_node.child(0) {
+                if let Some(grandchild) = child.child(0) {
+                    if grandchild.kind() == "var_mac" || (grandchild.kind() == "var_cnt" && symbols.assembler != MerlinVersion::Merlin8) {
+                        // induce a deferred evalution
+                        // TODO: the parser has to be changed to produce var_cnt
+                        return Err(Box::new(Error::ExpressionEvaluation));
+                    }
+                }
+            }
+            if chars.len() < 3 {
+                return Err(Box::new(Error::Syntax));
+            }
+            match chars[0]==chars[2] {
+                true => Ok(1),
+                false => Ok(0)
+            }
         }
     }
+
+    Err(Box::new(Error::Syntax))
 }
 
 pub struct Assembler

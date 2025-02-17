@@ -68,7 +68,7 @@ pub fn visit(curs: &TreeCursor, ctx: &Context, diagnostics: &mut Vec<Diagnostic>
         }
     }
     else if (kind=="nchar" || kind=="pchar") && version==MerlinVersion::Merlin32 {
-        push(rng,"syntax unavailable in Merlin 32",DiagnosticSeverity::ERROR);
+        push(rng,"syntax requires Merlin 32 v1.1",DiagnosticSeverity::INFORMATION);
     }
     else if kind=="comment" && version!=MerlinVersion::Merlin32 {
         // there is a limit on the combined length of the third and fourth columns.

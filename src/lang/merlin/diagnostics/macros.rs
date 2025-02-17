@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use lsp_types as lsp;
 use crate::lang::{Navigate,Navigation};
 use crate::lang::server::basic_diag;
-use crate::lang::merlin::Symbols;
+use crate::lang::merlin::{Symbol,Symbols};
 use crate::lang::{node_text,lsp_range};
 use crate::lang::merlin::context::Context;
 use crate::DYNERR;
@@ -53,6 +53,11 @@ impl Navigate for Substitutor {
         if curs.node().named_child_count() == 0 {
             self.build += &txt;
             return Ok(Navigation::GotoSibling);
+        } else {
+            if let Some(child) = curs.node().child(0) {
+                let diff = child.start_position().column - curs.node().start_position().column;
+                self.build += &txt.split_at(diff).0;
+            }
         }
         Ok(Navigation::GotoChild)
     }
@@ -108,11 +113,84 @@ fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str)
     Ok((ans, matches))
 }
 
+/// Evaluate IF/DO/ELSE, substitutions should be made first.
+/// This will subtract unassembled lines as well as the control operations themselves.
+fn evaluate_conditionals(txt: &str, symbols: &mut Symbols, scope: &Symbol) -> Result<String,DYNERR> {
+    let mut parser = tree_sitter::Parser::new();
+    if let Err(_) = parser.set_language(&tree_sitter_merlin6502::language()) {
+        return Ok(txt.to_string());
+    }
+    let mut ans = String::new();
+    let mut asm = vec![true]; // assume assembly is on (otherwise why expand?)
+    for line in txt.lines() {
+        let terminated = line.to_string() + "\n";
+        if let Some(tree) = parser.parse(terminated.clone(),None) {
+            let mut show_it = true;
+            let root = tree.root_node();
+            let mut curs = root.walk();
+            curs.goto_first_child();
+            if curs.node().kind() == "macro_call" {
+                symbols.unset_all_variables();
+            }
+            if curs.node().kind() == "pseudo_operation" {
+                curs.goto_first_child();
+                loop {
+                    if curs.node().kind() == "psop_pmc" {
+                        symbols.unset_all_variables();
+                    }
+                    if curs.node().kind() == "arg_if" || curs.node().kind() == "arg_do" {
+                        show_it = false;
+                        asm.push(super::super::assembly::eval_conditional(&curs.node(),&terminated,None,symbols,None)? != 0);
+                    }
+                    if curs.node().kind() == "psop_else" {
+                        show_it = false;
+                        if let Some(a) = asm.pop() {
+                            asm.push(!a);
+                        }
+                    }
+                    if curs.node().kind() == "psop_fin" {
+                        show_it = false;
+                        asm.pop();
+                        // if there is an unmatched `fin` just keep assembling
+                        if asm.len() == 0 {
+                            asm.push(true);
+                        }
+                    }
+                    if curs.node().kind() == "arg_mx" {
+                        super::update_var_value("", &curs.node(), symbols, &terminated, Some(scope));
+                    }
+                    if curs.node().kind() == "label_def" {
+                        if let Some(var) = curs.node().child(0) {
+                            if var.kind() == "var_label" {
+                                let txt = node_text(&var, &terminated);
+                                super::update_var_value(&txt, &curs.node(), symbols, &terminated, Some(scope));
+                            }
+                        }
+                    }
+                    if !curs.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            if show_it && *asm.last().unwrap() {
+                ans += &line;
+                ans += "\n";    
+            }
+        } else {
+            // if line couldn't be parsed just copy it
+            ans += &line;
+            ans += "\n";    
+        }
+    }
+    Ok(ans)
+}
+
 /// Expand a macro reference assuming arguments have already been checked.
 /// * node: must be a macro_ref node
 /// * call_source: text of the line where the macro is called
 /// * symbols: document symbols
 /// * max_recursion: currently must be 1 otherwise panic
+/// N.b. updates to symbols (variables) can happen within, but are not exposed to the caller.
 /// returns the expanded macro, or None if something went wrong
 pub fn expand_macro(node: &tree_sitter::Node, call_source: &str, symbols: &Symbols, max_recursion: usize) -> Option<String> {
     if node.kind() != "macro_ref" {
@@ -137,7 +215,14 @@ pub fn expand_macro(node: &tree_sitter::Node, call_source: &str, symbols: &Symbo
             }
         }
         if let Ok((expanded,_)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, call_source) {
-            return Some(expanded);
+            let mut symbols_clone = symbols.clone();
+            let mut mac = sym.clone();
+            mac.unset_children(); // until we are fully expanding assume these are unknown
+            if let Ok(reduced) = evaluate_conditionals(&expanded, &mut symbols_clone, &mac) {
+                return Some(reduced);
+            } else {
+                return Some(expanded);
+            }
         }
     }
     log::debug!("expand: symbol not found");

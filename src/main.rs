@@ -112,6 +112,10 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
             analyzer.update_config(cmd.get_one::<String>("config").unwrap())?;
         }
         let doc = lang::Document::from_string(analyzer.read_stdin(),0);
+        if doc.text.len()==0 {
+            log::error!("verify was handed an empty string");
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
         if let Some(ws_path) = cmd.get_one::<String>("workspace") {
             match lsp_types::Url::from_directory_path(ws_path) {
                 Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
