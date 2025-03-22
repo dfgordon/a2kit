@@ -191,7 +191,7 @@ mod minify_separators {
     #[test]
 	fn print_with_nulls() {
 		let test_code = "10 print a,b, ,c;d$;;;e$";
-		let expected = "10printa,b,,c;d$;;;e$";
+		let expected = "10printa,b,,c;d$e$";
 		super::test_minify(test_code, expected, 1);
 	}
     #[test]
@@ -211,5 +211,59 @@ mod minify_separators {
 		let test_code = "10 print \"1\": print \"2\":";
 		let expected = "10print\"1\":print\"2";
 		super::test_minify(test_code, expected, 1);
+	}
+}
+
+mod minify_rem {
+	#[test]
+	fn rem_trails() {
+		let test_code = "10 print x: rem print a number";
+		let expected = "10printx";
+		super::test_minify(test_code, expected, 1);
+	}
+	#[test]
+	fn rem_no_ref() {
+		let test_code = "10 rem print a number\n20 print x";
+		let expected = "20printx";
+		super::test_minify(test_code, expected, 2);
+	}
+	#[test]
+	fn rem_with_refs() {
+		let test_code = "10 rem 1\n11 rem 2\n20 x = x + 1\n30 goto 10: goto 11\n40 rem 3\n50 print x\n60 goto 40\n70 end";
+		let expected = "20x=x+1\n30goto20:goto20\n50printx\n60goto50\n70end";
+		super::test_minify(test_code, expected, 2);
+	}
+}
+
+mod combine {
+	#[test]
+	fn unterminated_str() {
+		let test_code = "10 print \"hello\n20 end";
+		let expected = "10print\"hello\":end";
+		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn conditional_guards() {
+		let test_code = "10 print\n20 if x then print\n30 end";
+		let expected = "10print:ifxthenprint\n30end";
+		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn ref_guards() {
+		let test_code = "10 print\n20 print\n30 print\n40 goto 30:end";
+		let expected = "10print:print\n30print:goto30:end";
+		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn all_forbidden() {
+		let test_code = "10 del 20,30\n20 print\n30 end";
+		let expected = "10del20,30\n20print\n30end";
+		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn with_deletion() {
+		let test_code = "10 rem testing\n20 print\n30 print\n40 input a$\n50 on x goto 10,40";
+		let expected = "20print:print\n40inputa$:onxgoto20,40";
+		super::test_minify(test_code, expected, 3);
 	}
 }

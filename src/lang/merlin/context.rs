@@ -532,6 +532,7 @@ impl Context {
     /// If we are pushing a global, this function will call `exit_scope` to get out of the
     /// previous global scope, if necessary.
     /// In Merlin, global scopes are never nested, and cannot exist within a macro scope.
+    /// Moreover, an equivalence establishes a global scope in all Merlin versions.
     pub fn enter_scope(&mut self,name: &str,symbols: &mut Symbols) {
         let maybe_global = symbols.globals.get(name);
         if let Some(glob) = maybe_global {

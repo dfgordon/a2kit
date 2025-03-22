@@ -13,13 +13,17 @@
 //! It handles any valid Merlin expression, assuming symbol values can be resolved.  It handles all Merlin
 //! prefix and suffix modifiers.  It responds to the MX pseudo-operation based on processor target.
 //! 
+//! The following pseudo-operations work as expected if the analyzer results are attached:
+//! 
+//! * Assignment (EQU)
+//! 
 //! The following pseudo-operations are not handled and will yield an error:
 //! 
 //! * Includes (PUT, USE)
 //! * Macros (MAC, PMC, EOM)
 //! * Modules (REL, EXT, EXD, ENT)
 //! * Control (IF, DO, ELSE, FIN, LUP, --^, END, DUM, DEND, CHK, ERR)
-//! * Assignment (EQU, VAR)
+//! * Assignment (VAR)
 //! 
 //! The following pseudo-operations are silently ignored: AST, CAS, CYC, DSK, EXP, KBD, LST, LSTDO, OBJ, PAG, PAU, SAV, SKP, TR, TTL, TYP, XC.
 //! 
@@ -640,6 +644,11 @@ impl Navigate for Assembler {
         // (this is useful for assembling data following disassembly)
         // Check subsequent label definitions with values for misalignment.
         if curs.node().kind()=="label_def" {
+            if let Some(next) = curs.node().next_named_sibling() {
+                if next.kind() == "psop_equ" {
+                    return Ok(Navigation::GotoSibling);
+                }
+            }
             let txt = node_text(&curs.node(), &self.line);
             if let Some(sym) = self.symbols.globals.get(&txt) {
                 if sym.flags & super::symbol_flags::EXT > 0 {
@@ -727,6 +736,10 @@ impl Navigate for Assembler {
             match curs.node().next_named_sibling() {
                 Some(arg) => {
                     match arg.kind() {
+                        "arg_equ" => {
+                            // assume analyzer has already tabulated equivalences
+                            return Ok(Navigation::Exit);
+                        }
                         "arg_mx" => {
                             if let Some(child) = arg.named_child(0) {
                                 match self.eval_expr(&child,&self.line) {

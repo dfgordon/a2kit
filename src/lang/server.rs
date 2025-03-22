@@ -264,28 +264,27 @@ impl SemanticTokensBuilder {
 		})
     }
     pub fn process_escapes(&mut self,curs: &tree_sitter::TreeCursor,line: &str,rng: lsp::Range,typ: &str) {
-        let mut old_start = rng.start.character;
+        let pos0 = rng.start.character;
+        let mut pos = rng.start.character;
         let txt = super::node_text(&curs.node(), line);
         let re_clone = self.hex_re.clone();
         for mtch in re_clone.find_iter(&txt) {
-            let new_start = old_start + mtch.start() as u32;
-            let new_end = old_start + mtch.end() as u32;
-            let emb = lsp::Range::new(
-                lsp::Position::new(rng.start.line, new_start),
-                lsp::Position::new(rng.start.line, new_end)
+            let esc_start =  pos0 + mtch.start() as u32;
+            let esc_end = pos0 + mtch.end() as u32;
+            let outer = lsp::Range::new(
+                lsp::Position::new(rng.start.line,pos),
+                lsp::Position::new(rng.start.line, esc_start)
             );
-            if new_start > old_start {
-                let outer = lsp::Range::new(
-                    lsp::Position::new(rng.start.line, old_start),
-                    lsp::Position::new(rng.start.line, new_start)
-                );
-                self.push(outer, typ);
-            }
+            self.push(outer,typ);
+            let emb = lsp::Range::new(
+                lsp::Position::new(rng.start.line, esc_start),
+                lsp::Position::new(rng.start.line, esc_end)
+            );
             self.push(emb, "regexp");
-            old_start = new_end;
+            pos = esc_end;
         }
         let outer = lsp::Range::new(
-            lsp::Position::new(rng.start.line, old_start),
+            lsp::Position::new(rng.start.line, pos),
             rng.end
         );
         self.push(outer, typ);

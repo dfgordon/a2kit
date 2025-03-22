@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2025-03-22
+
+### Fixes
+
+* Multiple hex escapes in a string are correctly highlighted
+* Format on type while entering `PMC` arguments is repaired
+
+### New Features
+
+* More powerful Applesoft minifier
+* Spot assembler accepts equivalences
+
 ## [3.6.0] - 2025-02-17
 
 Most of the changes pertain to Merlin components.

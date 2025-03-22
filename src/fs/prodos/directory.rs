@@ -2,7 +2,7 @@
 //! ### ProDOS directory structures
 //! 
 //! These are all implemented as fixed length structs with private fields.
-//! External interactions are largely trhough the `Directory` trait object,
+//! External interactions are largely through the `Directory` trait object,
 //! and the `Entry` struct.  The internals involve a somewhat complex
 //! arrangement of traits and generics.
 

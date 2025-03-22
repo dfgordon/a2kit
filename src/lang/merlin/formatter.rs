@@ -194,8 +194,18 @@ impl lang::Navigate for Formatter
     {
         // go down as deep as possible and see if we are in a verbatim node,
         // and also replace persistent white space with any non white space ASCII.
-        if ["dstring","txt","literal"].contains(&curs.node().kind()) {
-            let rng = lsp_range(curs.node().range(), self.search_pos.line as isize, self.parser.col_offset());
+        if ["dstring","txt","literal","macro_ref"].contains(&curs.node().kind()) {
+            let mut include_end = 0;
+            if curs.node().kind()=="macro_ref" {
+                if let Some(parent) = curs.node().parent() {
+                    if parent.kind() == "arg_pmc" {
+                        include_end = 1;
+                    } else {
+                        return Ok(Navigation::GotoChild);
+                    }
+                }
+            }
+            let rng = lsp_range(curs.node().range(), self.search_pos.line as isize, self.parser.col_offset() + include_end);
             let replacement = node_text(&curs.node(),self.parser.line()).replace(" ","A").replace("\t","A");
             self.normalized_line.replace_range(rng.start.character as usize..rng.end.character as usize,&replacement);
             if range_contains_pos(&rng, &self.search_pos) {

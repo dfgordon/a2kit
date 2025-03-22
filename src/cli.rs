@@ -229,8 +229,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg_req.clone())
             .arg(arg!(-p --password <PASSWORD> "password to assign").required(true))
             .arg(arg!(--read "protect read").action(ArgAction::SetTrue))
-            .arg(arg!(--write "protect read").action(ArgAction::SetTrue))
-            .arg(arg!(--delete "protect read").action(ArgAction::SetTrue))
+            .arg(arg!(--write "protect write").action(ArgAction::SetTrue))
+            .arg(arg!(--delete "protect delete").action(ArgAction::SetTrue))
             .about("password protect a disk or file"),
     );
     main_cmd = main_cmd.subcommand(
@@ -306,7 +306,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .multiple(false)
                     .args(["level", "flags"]),
             )
-            .about("reduce program size"),
+            .about("reduce program size")
+            .after_help("level 0=identity, 1=intra-line, 2=delete, 3=combine"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("renumber")
