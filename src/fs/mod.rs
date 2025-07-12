@@ -52,11 +52,8 @@ pub enum UnpackedData {
 
 /// Encapsulates the disk address and addressing mode used by a file system.
 /// Disk addresses generally involve some transformation between logical (file system) and physical (disk fields) addresses.
-/// The disk image layer has the final responsibility for making this transformation.
+/// Disk images are responsible for serving blocks in response to a file system request, see the 'img' docstring for more.
 /// The `Block` implementation includes a simple mapping from blocks to sectors; disk images can use this or not as appropriate.
-/// Disk images can also decide whether to immediately return an error given certain block types; e.g., a PO image might refuse
-/// to locate a DO block type.  However, do not get confused, e.g., a DO image should usually be prepared to process a
-/// PO block, since there are many ProDOS DSK images that are DOS ordered.
 #[derive(PartialEq,Eq,Clone,Copy,Hash)]
 pub enum Block {
     /// value is [track,sector]
@@ -72,10 +69,10 @@ pub enum Block {
 }
 
 impl Block {
-    /// At this level we can only take sectors per track, and return a track-sector list,
-    /// where a simple monotonically increasing relationship is assumed between blocks and sectors.
+    /// Get a track-sector list for this block.
+    /// At this level we can only assume a simple monotonically increasing relationship between blocks and sectors.
     /// Any further skewing must be handled by the caller.  CP/M and FAT offsets are accounted for.
-    /// CP/M logical sectors are numbered from 1.
+    /// For CP/M be sure to use 128 byte logical sectors when computing `secs_per_track`.
     pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
         match self {
             Self::D13([t,s]) => vec![[*t,*s]],

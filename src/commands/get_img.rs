@@ -13,8 +13,8 @@ use crate::STDRESULT;
 
 const RCH: &str = "unreachable was reached";
 
-fn output_get(dat: Vec<u8>,typ: ItemType,img: Box<dyn DiskImage>) {
-    if atty::is(atty::Stream::Stdout) {
+fn output_get(dat: Vec<u8>,typ: ItemType,img: Box<dyn DiskImage>,console_fmt: bool) {
+    if atty::is(atty::Stream::Stdout) || console_fmt {
         match typ {
             ItemType::Track => println!("{}",img.display_track(&dat)),
             _ => crate::display_block(0,&dat)
@@ -29,29 +29,31 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     let src_path = cmd.get_one::<String>("file").expect(RCH);
     let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
     let maybe_img_path = cmd.get_one::<String>("dimg");
+    let fmt = super::get_fmt(cmd)?;
 
     match crate::create_img_from_file_or_stdin(maybe_img_path) {
         Ok(mut img) => {
+            if let Some(fmt) = fmt {
+                img.change_format(fmt)?;
+            }
             let bytes = match typ {
                 ItemType::Sector => {
                     let mut cum: Vec<u8> = Vec::new();
-                    let sector_list = super::parse_sector_request(&src_path)?;
-                    for [cyl,head,sec] in sector_list {
-                        cum.append(&mut img.read_sector(cyl,head,sec)?);
+                    let sector_list = super::parse_sector_request(&src_path,img.motor_steps_per_cyl())?;
+                    for (tkey,skey) in sector_list {
+                        cum.append(&mut img.read_pro_sector(tkey,skey)?);
                     }
                     cum
                 },
                 ItemType::Track => {
-                    let [cyl,head] = super::parse_track_request(&src_path)?;
-                    img.get_track_nibbles(cyl, head)?
+                    img.get_pro_track_nibbles(super::parse_track_request(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 ItemType::RawTrack => {
-                    let [cyl,head] = super::parse_track_request(&src_path)?;
-                    img.get_track_buf(cyl, head)?
+                    img.get_pro_track_buf(super::parse_track_request(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 _ => panic!("{}",RCH)
             };
-            return Ok(output_get(bytes,typ,img));
+            return Ok(output_get(bytes,typ,img,cmd.get_flag("console")));
         },
         Err(e) => return Err(e)
     }

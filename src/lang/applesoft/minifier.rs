@@ -24,7 +24,8 @@ const FORBIDS_COMBINING_ANY: [&str;2] = [
 	"tok_list",
 ];
 
-const FORBIDS_COMBINING_NEXT: [&str;9] = [
+const FORBIDS_COMBINING_NEXT: [&str;10] = [
+	"tok_rem",
 	"tok_data",
 	"tok_end",
 	"tok_goto",
@@ -53,6 +54,7 @@ pub struct Minifier
 	ends_with_str: bool,
 	forbids_combining_next: HashSet<usize>,
 	linenum_refs: HashSet<usize>,
+	external_refs: HashSet<usize>,
 	forbids_combining_any: bool
 }
 
@@ -90,7 +92,8 @@ impl Minifier
 			ends_with_str: false,
 			forbids_combining_any: false,
 			forbids_combining_next: HashSet::new(),
-			linenum_refs: HashSet::new()
+			linenum_refs: HashSet::new(),
+			external_refs: HashSet::new()
 		}
     }
 	/// figure out if the short name needs to be guarded against forming a hidden token
@@ -126,6 +129,7 @@ impl Minifier
 				curr_val = self.all_lines[curr_idx];
 			}
 			self.line_map.insert(*deleted,curr_val);
+			// line references will be updated later as they are replaced
 		}
 		Ok(())
 	}
@@ -148,6 +152,12 @@ impl Minifier
 			self.flags |= FLAG_COMBINE_LINES;
 		}
 		self.flags
+	}
+	pub fn set_external_refs(&mut self,externals: Vec<usize>) {
+        self.external_refs = HashSet::new();
+		for linnum in externals {
+			self.external_refs.insert(linnum);
+		}
 	}
 
 	/// The first pass makes intra-line transformations, which may include deleting the line.
@@ -218,13 +228,19 @@ impl Minifier
 						}
 					}
 					// if no previous statement we keep token, or delete line
-					if self.flags & FLAG_DEL_LINES > 0 && self.curr_linenum.is_some() {
-						self.minified_line = String::new();
-						self.deleted_lines.push(self.curr_linenum.unwrap());
-						return Ok(Navigation::Exit);
-					} else {
-						self.minified_line += "REM";
-						return Ok(Navigation::GotoSibling);
+					match (self.flags & FLAG_DEL_LINES > 0, self.curr_linenum) {
+						(true,Some(linenum)) if !self.external_refs.contains(&linenum) => {
+							self.minified_line = String::new();
+							self.deleted_lines.push(linenum);
+							return Ok(Navigation::Exit);
+						},
+						_ => {
+							self.minified_line += "REM";
+							if let Some(linenum) = self.curr_linenum {
+								self.forbids_combining_next.insert(linenum);
+							}
+							return Ok(Navigation::GotoSibling);
+						}
 					}
 				}
 				// for DATA always keep everything
@@ -312,6 +328,8 @@ impl Minifier
 					// this is a secondary
 					if let Some(num) = lang::node_integer::<usize>(&curs.node(), &self.line) {
 						if let Some(new_num) = self.line_map.get(&num) {
+							self.linenum_refs.remove(&num); // assume if it was changed it was changed everywhere
+							self.linenum_refs.insert(*new_num);
 							self.minified_line += &self.line[self.write_curs..curs.node().byte_range().start];
 							self.minified_line += &new_num.to_string();
 							self.write_curs = curs.node().byte_range().end;
@@ -438,7 +456,8 @@ impl Minifier
 			self.ends_with_str = false;
 			self.walk(&tree)?;
 			let still_combining = partial_line.len() + line.len() <= max_len &&
-				!self.linenum_refs.contains(&self.curr_linenum.unwrap_or(usize::MAX));
+				!self.linenum_refs.contains(&self.curr_linenum.unwrap_or(usize::MAX)) &&
+				!self.external_refs.contains(&self.curr_linenum.unwrap_or(usize::MAX));
 			if combining && still_combining {
 				if last_line_ends_with_str {
 					partial_line += "\"";

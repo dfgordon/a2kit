@@ -1,2 +1,4 @@
 target
 Cargo.lock
+**/special/*.woz
+**/special/scratch.json

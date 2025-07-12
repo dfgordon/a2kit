@@ -5,9 +5,8 @@ use tree_sitter_applesoft;
 use lsp_types::{Range,Position,TextEdit};
 use crate::lang;
 use crate::lang::Navigate;
-#[allow(deprecated)]
-use crate::lang::linenum::{LabelInformation,Renumber,LineNumberTool};
-use std::collections::BTreeMap;
+use crate::lang::linenum::{LabelInformation,Renumber};
+use std::collections::{HashSet,BTreeMap};
 use log::{error,debug};
 use crate::{STDRESULT,DYNERR};
 
@@ -23,7 +22,8 @@ pub struct Renumberer {
     line: String,
     info: BTreeMap<usize,Vec<LabelInformation>>,
     primaries: bool,
-    secondaries: bool
+    secondaries: bool,
+    external_refs: HashSet<usize>
 }
 
 impl Navigate for Renumberer {
@@ -43,14 +43,6 @@ impl Navigate for Renumberer {
             }
         }
         return Ok(lang::Navigation::GotoChild);
-    }
-}
-
-// only here to prevent breaking dependent's builds, do not use
-#[allow(deprecated)]
-impl LineNumberTool for Renumberer {
-    fn gather(&mut self,_source: &str, _row: isize, _primaries: bool, _secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR> {
-        Err(Box::new(crate::lang::Error::LineNumber))
     }
 }
 
@@ -106,7 +98,8 @@ impl Renumberer {
             line: String::new(),
             info: BTreeMap::new(),
             primaries: true,
-            secondaries: true
+            secondaries: true,
+            external_refs: HashSet::new()
         }
     }
     fn push_linenum(&mut self,curs: &tree_sitter::TreeCursor) -> STDRESULT {
@@ -127,12 +120,18 @@ impl Renumberer {
     pub fn set_flags(&mut self,flags:u64) {
         self.flags = flags;
     }
+	pub fn set_external_refs(&mut self,externals: Vec<usize>) {
+        self.external_refs = HashSet::new();
+		for linnum in externals {
+			self.external_refs.insert(linnum);
+		}
+	}
     /// Get edits for LSP, this simply wraps the trait default
     pub fn get_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str)
     -> Result<Vec<TextEdit>,String> {
         self.build_edits(all_txt,ext_sel,start,step,
             self.flags & flags::PASS_OVER_REFS == 0,
-            self.flags & flags::REORDER > 0, 0, 63999)
+            self.flags & flags::REORDER > 0, 0, 63999, self.external_refs.clone())
     }
     /// Renumber all lines with number >= beg && number < end, as [start,start+step,...].
     /// References are updated globally.
@@ -164,7 +163,7 @@ impl Renumberer {
             &first.to_string(),
             &step.to_string(),
             self.flags & flags::PASS_OVER_REFS == 0,
-            self.flags & flags::REORDER > 0, 0, 63999) {
+            self.flags & flags::REORDER > 0, 0, 63999, self.external_refs.clone()) {
             Ok(edits) => {
                 debug!("apply the main edits");
                 match lang::apply_edits(source, &edits, 0) {

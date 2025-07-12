@@ -105,7 +105,7 @@ impl img::DiskImage for Img {
         }
     }
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        let track = self.ch_2_track([cyl, head]);
+        let track = self.get_track(super::TrackKey::CH((cyl, head)))?;
         trace!("reading {}/{}/{}",cyl,head,sec);
         if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
             error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
@@ -115,7 +115,7 @@ impl img::DiskImage for Img {
         Ok(self.data[offset..offset+self.sec_size].to_vec())
     }
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
-        let track = self.ch_2_track([cyl, head]);
+        let track = self.get_track(super::TrackKey::CH((cyl, head)))?;
         trace!("writing {}/{}/{}",cyl,head,sec);
         if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
             error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
@@ -189,7 +189,7 @@ impl img::DiskImage for Img {
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        let [cylinder,head] = self.track_2_ch(trk);
+        let [cylinder,head] = self.get_rz(super::TrackKey::Track(trk))?;
         let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..self.sectors {
             chss_map.push([cylinder,head,i,self.sec_size]);
@@ -202,9 +202,11 @@ impl img::DiskImage for Img {
         };
         return Ok(Some(img::TrackSolution {
             cylinder,
+            fraction: [0,1],
             head,
             flux_code,
-            nib_code: img::NibbleCode::None,
+            addr_code: img::FieldCode::None,
+            data_code: img::FieldCode::None,
             chss_map
         }));
     }

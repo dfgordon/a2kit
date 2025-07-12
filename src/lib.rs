@@ -1,19 +1,6 @@
 //! # `a2kit` main library
 //! 
-//! This library manipulates disk images suitable for emulators, with emphasis on Apple II.
-//! Manipulations can be done at a level as low as track bits, or as high as language files.
-//! 
-//! ## Architecture
-//! 
-//! Disk image operations are built around three trait objects:
-//! * `img::DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
-//! * `fs::DiskFS` imposes a file system on the already decoded track data
-//!     - don't confuse `std::fs` and `a2kit::fs`
-//! * `fs::FileImage` provides a representation of a file that can be restored to a disk image
-//! 
-//! When a `DiskFS` object is created it takes ownership of some `DiskImage`.
-//! It then uses this owned image as storage.  Any changes are not permanent until the
-//! image is saved to whatever file system is hosting a2kit.
+//! This library manipulates retro language files and disk images, with emphasis on Apple II.
 //! 
 //! ## Language Services
 //! 
@@ -27,7 +14,19 @@
 //! The language servers are in `bin` and compile to separate executables.  The language servers
 //! and CLI both depend on `lang`, but do not depend on each other.
 //! 
-//! ## File Systems
+//! ## Disk Images
+//! 
+//! Disk image operations are built around three trait objects:
+//! * `img::DiskImage` encodes/decodes disk tracks, does not try to interpret a file system
+//! * `fs::DiskFS` imposes a file system on the already decoded track data
+//!     - don't confuse `std::fs` and `a2kit::fs`
+//! * `fs::FileImage` provides a representation of a file that can be restored to a disk image
+//! 
+//! When a `DiskFS` object is created it takes ownership of some `DiskImage`.
+//! It then uses this owned image as storage.  Any changes are not permanent until the
+//! image is saved to whatever file system is hosting a2kit.
+//! 
+//! ### File Systems
 //! 
 //! In order to manipulate files, `a2kit` must understand the file system it finds on the disk image.
 //! As of this writing `a2kit` supports
@@ -45,7 +44,7 @@
 //! let text = disk.read_text("README")?;
 //! ```
 //! 
-//! ## Disk Images
+//! ### Tracks and Sectors
 //! 
 //! In order to manipulate tracks and sectors, `a2kit` must understand the way the track data is packed
 //! into a disk image.  As of this writing `a2kit` supports
@@ -74,10 +73,10 @@
 //! a2kit::save_img(&mut img,"disk.woz")?;
 //! ```
 //!
-//! ## Disk Kinds
+//! ### Disk Kinds
 //! 
-//! A disk image can typically represent some number of disk kinds (defined by mechanical and
-//! encoding characteristics).  The kinds `a2kit` supports include
+//! Disk kinds are a classification scheme wherein each kind represents the set of all formats
+//! that can be handled by a specific hardware or emulation subsystem.  The kinds `a2kit` supports include
 //! * Logical ProDOS volumes
 //! * 3 inch CP/M formats (Amstrad 184K)
 //! * 3.5 inch Apple formats (400K/800K)
@@ -86,6 +85,19 @@
 //! * 5.25 inch IBM formats (160K through 1200K)
 //! * 5.25 inch CP/M formats (Osborne 100K/200K, Kaypro 200K/400K)
 //! * 8 inch CP/M formats (IBM 250K, Nabu 1M, TRS-80 600K)
+//! 
+//! The way a disk kind is identified is by looking for matches to
+//! the physical package and track layout, e.g.:
+//! ```rs
+//! fn test_disk(kind: DiskKind) {
+//!     match kind {
+//!         DiskKind::D3(_) => panic!("not looking for 3 inch disks"),
+//!         DiskKind::D35(_) => panic!("not looking for 3.5 inch disks"),
+//!         DiskKind::D525(layout) => println!("layout of 5.25 inch disk is {}",layout),
+//!         _ => panic!("something else")
+//!     };
+//! }
+//! ```
 
 pub mod fs;
 pub mod lang;
@@ -94,6 +106,7 @@ pub mod img;
 pub mod commands;
 
 use img::DiskImage;
+use img::tracks::DiskFormat;
 use fs::DiskFS;
 use std::io::Read;
 use std::fmt::Write;
@@ -117,7 +130,10 @@ pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
 /// If the file system cannot be identified we have `Ok(None)`.
 /// If the file system is identified, but broken, we have `Err(_)`.
 /// If `Ok(Some(_))`, the file system takes ownership of the disk image.
-fn try_img(mut img: Box<dyn DiskImage>) -> Result<Option<Box<dyn DiskFS>>,DYNERR> {
+fn try_img(mut img: Box<dyn DiskImage>,mabye_fmt: Option<&DiskFormat>) -> Result<Option<Box<dyn DiskFS>>,DYNERR> {
+    if let Some(fmt) = mabye_fmt {
+        img.change_format(fmt.clone())?;
+    }
     if fs::dos3x::Disk::test_img(&mut img) {
         info!("identified DOS 3.x file system");
         return Ok(Some(Box::new(fs::dos3x::Disk::from_img(img)?)));
@@ -162,7 +178,8 @@ fn try_img(mut img: Box<dyn DiskImage>) -> Result<Option<Box<dyn DiskFS>>,DYNERR
 
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
 /// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
-pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskFS>,DYNERR> {
+/// Optional `maybe_fmt` can be used to specify a proprietary format (if `None` standard formats will be tried).
+fn create_fs_from_bytestream_pro(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
     let ext = match maybe_ext {
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
@@ -174,7 +191,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::imd::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::imd::Imd::from_bytes(disk_img_data) {
             info!("identified IMD image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -182,7 +199,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::woz1::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::woz1::Woz1::from_bytes(disk_img_data) {
             info!("identified woz1 image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -190,7 +207,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::woz2::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::woz2::Woz2::from_bytes(disk_img_data) {
             info!("identified woz2 image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -198,7 +215,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dot2mg::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dot2mg::Dot2mg::from_bytes(disk_img_data) {
             info!("identified 2mg image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -206,7 +223,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::td0::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::td0::Td0::from_bytes(disk_img_data) {
             info!("identified td0 image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -214,7 +231,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::nib::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::nib::Nib::from_bytes(disk_img_data) {
             info!("Possible nib/nb2 image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -222,7 +239,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dsk_d13::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dsk_d13::D13::from_bytes(disk_img_data) {
             info!("Possible D13 image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -230,7 +247,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dsk_do::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dsk_do::DO::from_bytes(disk_img_data) {
             info!("Possible DO image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -238,7 +255,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
             info!("Possible PO image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
@@ -246,13 +263,19 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     if img::dsk_img::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dsk_img::Img::from_bytes(disk_img_data) {
             info!("Possible IMG image");
-            if let Some(disk) = try_img(Box::new(img))? {
+            if let Some(disk) = try_img(Box::new(img),maybe_fmt)? {
                 return Ok(disk);
             }
         }
     }
     warn!("cannot match any file system");
     return Err(Box::new(fs::Error::FileSystemMismatch));
+}
+
+/// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
+/// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    create_fs_from_bytestream_pro(disk_img_data,maybe_ext,None)
 }
 
 /// Given a bytestream return a disk image without any file system.
@@ -317,7 +340,7 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
             if ext=="do" {
                 return Ok(Box::new(img));
             }
-            if let Ok(Some(_)) = try_img(Box::new(img)) {
+            if let Ok(Some(_)) = try_img(Box::new(img),None) {
                 if let Ok(copy) = img::dsk_do::DO::from_bytes(disk_img_data) {
                     return Ok(Box::new(copy));
                 }
@@ -343,16 +366,14 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
 
 /// buffer a file if its EOF < `max`, otherwise return an error
 fn buffer_file(path: &str,max: u64) -> Result<Vec<u8>,DYNERR> {
-    match std::fs::OpenOptions::new().read(true).open(path) {
-        Ok(mut f) => match f.metadata()?.len() <= max {
-            true => {
-                let mut buf = Vec::new();
-                f.read_to_end(&mut buf)?;
-                Ok(buf)
-            },
-            false => Err(Box::new(img::Error::ImageSizeMismatch))
+    let mut f = std::fs::OpenOptions::new().read(true).open(path)?;
+    match f.metadata()?.len() <= max {
+        true => {
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf)?;
+            Ok(buf)
         },
-        Err(e) => Err(Box::new(e))
+        false => Err(Box::new(img::Error::ImageSizeMismatch))
     }
 }
 
@@ -364,10 +385,8 @@ pub fn create_img_from_stdin() -> Result<Box<dyn DiskImage>,DYNERR> {
         error!("pipe a disk image or use `-d` option");
         return Err(Box::new(commands::CommandError::InvalidCommand));
     }
-    match std::io::stdin().read_to_end(&mut disk_img_data) {
-        Ok(_n) => create_img_from_bytestream(&disk_img_data,None),
-        Err(e) => Err(Box::new(e))
-    }
+    std::io::stdin().read_to_end(&mut disk_img_data)?;
+    create_img_from_bytestream(&disk_img_data,None)
 }
 
 /// Calls `create_img_from_bytestream` getting the bytes from a file.
@@ -375,18 +394,12 @@ pub fn create_img_from_stdin() -> Result<Box<dyn DiskImage>,DYNERR> {
 /// File extension will be used to restrict image types that are tried,
 /// unless the extension is unknown, in which case all will be tried.
 pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR> {
-    match buffer_file(img_path,MAX_FILE_SIZE) {
-        Ok(disk_img_data) => {
-            let mut maybe_ext = img_path.split('.').last();
-            if let Some(ext) = maybe_ext {
-                if !KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) {
-                    maybe_ext = None;
-                }
-            }
-            create_img_from_bytestream(&disk_img_data,maybe_ext)
-        },
-        Err(e) => Err(e)
-    }
+    let disk_img_data = buffer_file(img_path,MAX_FILE_SIZE)?;
+    let maybe_ext = match img_path.split('.').last() {
+        Some(ext) if KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) => Some(ext),
+        _ => None
+    };
+    create_img_from_bytestream(&disk_img_data,maybe_ext)
 }
 
 pub fn create_img_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
@@ -396,18 +409,29 @@ pub fn create_img_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<
     }
 }
 
-/// Calls `create_fs_from_bytestream` getting the bytes from stdin.
-/// All image types and file systems will be tried heuristically.
-pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
+fn create_fs_from_stdin_pro(maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
     let mut disk_img_data = Vec::new();
     if atty::is(atty::Stream::Stdin) {
         error!("pipe a disk image or use `-d` option");
         return Err(Box::new(commands::CommandError::InvalidCommand));
     }
-    match std::io::stdin().read_to_end(&mut disk_img_data) {
-        Ok(_n) => create_fs_from_bytestream(&disk_img_data,None),
-        Err(e) => Err(Box::new(e))
-    }
+    std::io::stdin().read_to_end(&mut disk_img_data)?;
+    create_fs_from_bytestream_pro(&disk_img_data, None, maybe_fmt)
+}
+
+/// Calls `create_fs_from_bytestream` getting the bytes from stdin.
+/// All image types and file systems will be tried heuristically.
+pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
+    create_fs_from_stdin_pro(None)
+}
+
+fn create_fs_from_file_pro(img_path: &str,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    let disk_img_data = buffer_file(img_path,MAX_FILE_SIZE)?;
+    let maybe_ext = match img_path.split('.').last() {
+        Some(ext) if KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) => Some(ext),
+        _ => None
+    };
+    create_fs_from_bytestream_pro(&disk_img_data,maybe_ext,maybe_fmt)
 }
 
 /// Calls `create_fs_from_bytestream` getting the bytes from a file.
@@ -415,17 +439,13 @@ pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
 /// File extension will be used to restrict image types that are tried,
 /// unless the extension is unknown, in which case all will be tried.
 pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
-    match buffer_file(img_path,MAX_FILE_SIZE) {
-        Ok(disk_img_data) => {
-            let mut maybe_ext = img_path.split('.').last();
-            if let Some(ext) = maybe_ext {
-                if !KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) {
-                    maybe_ext = None;
-                }
-            }
-            create_fs_from_bytestream(&disk_img_data,maybe_ext)
-        },
-        Err(e) => Err(e)
+    create_fs_from_file_pro(img_path,None)
+}
+
+fn create_fs_from_file_or_stdin_pro(maybe_img_path: Option<&String>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    match maybe_img_path {
+        Some(img_path) => create_fs_from_file_pro(img_path,maybe_fmt),
+        None => create_fs_from_stdin_pro(maybe_fmt)
     }
 }
 

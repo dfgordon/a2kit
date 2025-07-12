@@ -46,7 +46,7 @@ impl FileImage {
     pub fn get_aux(&self) -> usize {
         Self::usize_from_truncated_le_bytes(&self.aux)
     }
-    /// do the chunk numbers increase from 0 without any gaps
+    /// does the chunk sequence have any gaps or fail to start at zero
     pub fn is_sparse(&self) -> bool {
         let mut test = 0;
         for i in self.ordered_indices() {

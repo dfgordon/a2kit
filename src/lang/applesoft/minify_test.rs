@@ -8,6 +8,14 @@ fn test_minify(test_code: &str,expected: &str,level: usize) {
 	assert_eq!(actual,String::from(expected)+"\n");
 }
 
+fn test_minify_ext(test_code: &str,expected: &str,level: usize,externals: Vec<usize>) {
+	let mut minifier = minifier::Minifier::new();
+	minifier.set_level(level);
+	minifier.set_external_refs(externals);
+	let actual = minifier.minify(test_code).expect("minify failed");
+	assert_eq!(actual,String::from(expected)+"\n");
+}
+
 mod minify_vars {
     #[test]
 	fn lower_case_long_var() {
@@ -233,6 +241,12 @@ mod minify_rem {
 		let expected = "20x=x+1\n30goto20:goto20\n50printx\n60goto50\n70end";
 		super::test_minify(test_code, expected, 2);
 	}
+	#[test]
+	fn rem_with_ext() {
+		let test_code = "10 rem 1\n11 rem 2\n20 x = x + 1\n30 goto 10: goto 11\n40 rem 3\n50 print x\n60 goto 40\n70 end";
+		let expected = "20x=x+1\n30goto20:goto20\n40REM\n50printx\n60goto40\n70end";
+		super::test_minify_ext(test_code, expected, 2, vec![3,500,40,32]);
+	}
 }
 
 mod combine {
@@ -265,5 +279,17 @@ mod combine {
 		let test_code = "10 rem testing\n20 print\n30 print\n40 input a$\n50 on x goto 10,40";
 		let expected = "20print:print\n40inputa$:onxgoto20,40";
 		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn maintain_fwd_refs() {
+		let test_code = "10 goto 40\n20 print\n30 print\n40 rem testing\n50 print";
+		let expected = "10goto50\n20print:print\n50print";
+		super::test_minify(test_code, expected, 3);
+	}
+	#[test]
+	fn maintain_fwd_refs_with_ext() {
+		let test_code = "10 goto 40\n20 print\n30 print\n40 rem testing\n50 print";
+		let expected = "10goto40\n20print\n30print\n40REM\n50print";
+		super::test_minify_ext(test_code, expected, 3,vec![30,40,50]);
 	}
 }

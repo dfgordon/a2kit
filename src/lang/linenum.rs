@@ -6,7 +6,7 @@
 use tree_sitter;
 use lsp_types::{TextEdit,Range,Position};
 use crate::lang;
-use std::collections::BTreeMap;
+use std::collections::{HashSet,BTreeMap};
 use log::{trace,debug};
 use crate::DYNERR;
 
@@ -23,18 +23,6 @@ fn apply_mapping(new_num: usize,info: &LabelInformation) -> TextEdit {
     fmt_num += &new_num.to_string();
     fmt_num += &" ".repeat(info.trailing_space);
     TextEdit::new(info.rng,fmt_num)
-}
-
-#[deprecated(since="3.2.0", note="use `Renumber` trait instead")]
-pub trait LineNumberTool {
-    fn get_info(_curs: &tree_sitter::TreeCursor,_source: &str,_row: isize) -> Result<(usize,LabelInformation),DYNERR> {
-        Err(Box::new(lang::Error::Syntax))
-    }
-    fn gather(&mut self,source: &str, row: isize, primaries: bool, secondaries: bool) -> Result<BTreeMap<usize,LabelInformation>,DYNERR>;
-    fn renumber_edits(&mut self,_all_txt: &str, _ext_sel: Option<Range>, _start: &str, _step: &str, _update_refs: bool, _allow_move: bool, _min_num: usize, _max_num: usize)
-        -> Result<Vec<TextEdit>,String> {
-        Err("unable to renumber".to_string())
-    }
 }
 
 pub trait Renumber {
@@ -63,9 +51,9 @@ pub trait Renumber {
     /// If the result would lead to interleaving of selected and unselected lines, an error is returned.
     /// If `allow_move`, the lines will be re-ordered as necessary.
     /// If `!allow_move` and the lines need to be re-ordered, an error is returned.
-    fn build_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str, update_refs: bool, allow_move: bool, min_num: usize, max_num: usize)
+    fn build_edits(&mut self,all_txt: &str, ext_sel: Option<Range>, start: &str, step: &str, update_refs: bool, allow_move: bool, min_num: usize, max_num: usize,
+        external_refs: HashSet<usize>)
         -> Result<Vec<TextEdit>,String> {
-
         let line_sep = match all_txt.lines().count() == all_txt.split("\r\n").count() {
             true => "\r\n",
             false => "\n"
@@ -119,15 +107,41 @@ pub trait Renumber {
             Ok(result) => result,
             Err(_) => return Err("unable to gather secondaries".to_string())
         };
-
-        // check for errors
         if sel_primaries.len()<1 {
             return Err("no primaries to change".to_string());
         }
-        let ln = l0 + dl*(sel_primaries.len()-1);
-        if ln > max_num {
-            return Err(format!("upper bound of {} exceeded",max_num));
+
+        // build new primaries and mapping
+        let mut mapping = BTreeMap::new();
+        let mut new_primaries = Vec::new();
+        for (primary,info) in &sel_primaries {
+            if info.len() != 1 {
+                return Err(format!("duplicated primary line number {}",primary));
+            }
+            if new_primaries.len() == 0 {
+                if external_refs.contains(primary) && *primary != l0 {
+                    return Err("proposed renumbering would change an external reference".to_string());
+                }
+                new_primaries.push(l0);
+                mapping.insert(*primary,l0);
+            } else {
+                if external_refs.contains(primary) {
+                    new_primaries.push(*primary);
+                    mapping.insert(*primary,*primary);
+                } else {
+                    let prev = *new_primaries.last().unwrap();
+                    new_primaries.push(prev + dl);
+                    mapping.insert(*primary,prev+dl);
+                }
+            }
         }
+        let ln = match new_primaries.last() {
+            Some(l) if *l <= max_num => *l,
+            Some(_) => return Err(format!("upper bound of {} exceeded",max_num)),
+            None => return Err("renumber failed with no new primaries - this is a bug".to_string())
+        };
+
+        // find the insertion point
         let mut insert_pos = Position::new(0,0);
         for (primary,info) in &all_primaries {
             if info.len() != 1 {
@@ -144,6 +158,7 @@ pub trait Renumber {
                 return Err(format!("existing line {} is within proposed range",*primary));
             }
         }
+
         // if there are blank lines we need to push forward the insert position past them
         for (row,line) in all_txt.lines().enumerate() {
             if insert_pos.line as usize == row && line.trim_start().len()==0 {
@@ -152,14 +167,6 @@ pub trait Renumber {
         }
         if !allow_move && insert_pos.line != sel.start.line {
             return Err("renumber parameters would require a move".to_string());
-        }
-
-        // setup the mapping from old to new line numbers
-        let mut mapping = BTreeMap::new();
-        let mut label_now = l0;
-        for primary in sel_primaries.keys() {
-            mapping.insert(*primary,label_now);
-            label_now += dl;
         }
 
         // build edits within the selection only

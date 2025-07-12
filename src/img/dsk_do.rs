@@ -192,7 +192,7 @@ impl img::DiskImage for DO {
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        let [c,h] = self.track_2_ch(trk);
+        let [c,h] = self.get_rz(super::TrackKey::Track(trk))?;
         let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..16 {
             chss_map.push([c,h,i,256]);
@@ -200,8 +200,10 @@ impl img::DiskImage for DO {
         return Ok(Some(img::TrackSolution {
             cylinder: c,
             head: h,
+            fraction: [0,4],
             flux_code: img::FluxCode::GCR,
-            nib_code: img::NibbleCode::N62,
+            addr_code: img::FieldCode::WOZ((4,4)),
+            data_code: img::FieldCode::WOZ((6,2)),
             chss_map
         }));
     }

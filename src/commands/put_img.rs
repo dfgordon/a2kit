@@ -18,19 +18,24 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     let dest_path = cmd.get_one::<String>("file").expect(RCH);
     let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
     let img_path = cmd.get_one::<String>("dimg").expect(RCH);
+    let fmt = super::get_fmt(cmd)?;
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {
             match typ {
                 ItemType::Sector => {
+                    if let Some(fmt) = fmt {
+                        img.change_format(fmt)?;
+                    }
                     let mut ptr = 0;
-                    let sec_list = super::parse_sector_request(&dest_path)?;
-                    let mut chsl = Vec::new();
+                    let sec_list = super::parse_sector_request(&dest_path,img.motor_steps_per_cyl())?;
+                    let mut sec_len_list = Vec::new();
                     // Gather all the sector sizes, this must be done first so that
-                    // we preserve angle-order during the write phase.
-                    for [cyl,head,sec] in &sec_list {
-                        let sec_len = img.read_sector(*cyl, *head, *sec)?.len();
-                        chsl.push([*cyl,*head,*sec,sec_len]);
+                    // we preserve angle-order during the write phase. An alternative would
+                    // be to rely on the size as given by `get_chss`.
+                    for (tkey,skey) in &sec_list {
+                        let sec_len = img.read_pro_sector(tkey.clone(), skey.clone())?.len();
+                        sec_len_list.push(sec_len);
                         ptr += sec_len;
                     }
                     // If multi-sector write, demand exact size match
@@ -40,14 +45,13 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
                     }
                     // Now write the sectors
                     ptr = 0;
-                    for [cyl,head,sec,sec_len] in &chsl {
-                        img.write_sector(*cyl,*head,*sec,&dat[ptr..])?;
-                        ptr += *sec_len;
+                    for i in 0..sec_list.len() {
+                        img.write_pro_sector(sec_list[i].0.clone(),sec_list[i].1.clone(),&dat[ptr..])?;
+                        ptr += sec_len_list[i];
                     }
                 },
                 ItemType::RawTrack => {
-                    let [cyl,head] = super::parse_track_request(&dest_path)?;
-                    img.set_track_buf(cyl, head, dat)?
+                    img.set_pro_track_buf(super::parse_track_request(&dest_path,img.motor_steps_per_cyl())?,dat)?
                 },
                 ItemType::Track => {
                     error!("cannot copy nibbles, try using the raw track");

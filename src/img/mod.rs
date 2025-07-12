@@ -1,16 +1,32 @@
 //! # Disk Image Module
 //! 
-//! This is a container for disk image modules.  The disk image modules
-//! serve as the underlying storage for file system modules.
+//! Disk images are represented by objects implementing the `DiskImage` trait.
+//! The object type is usually named for the disk image type that it handles, e.g., `Woz2`.
+//! This object is perhaps best thought of as a disk plus all the hardware that runs it.
 //! 
-//! Disk images are represented by the `DiskImage` trait.  Every kind of disk image
-//! must respond to a file system's request for that file system's preferred allocation block.
-//! Certain kinds of disk images must also provide encoding and decoding of track bits.
+//! ## Basic Functions
+//! 
+//! The trait includes reading and writing tracks, sectors, and blocks.
+//! It is agnostic as to the specific manner in which tracks are represented.
+//! Creating and formatting disks is left to specific implementations.
+//! An important design element is that a disk image can refuse a request as out of scope.
+//! As an example, PO images will only handle ProDOS blocks, since the original disk
+//! geometry cannot be known (and may not even exist).
+//! 
+//! ## Relation to File Systems
+//! 
+//! The `DiskImage` trait object serves as the underlying storage for `fs` modules.
+//! The `fs` modules work by reading blocks from, or writing blocks to, the disk image.
+//! The task of mapping blocks to sectors happens in submodules of `img`, sometimes with
+//! the aid of `bios::blocks`, but never with any help from `fs`.
+//! The `fs` module will usually run heuristics on certain key blocks when a disk
+//! image is first connected.  If these fail the disk image is refused.
 //! 
 //! ## Disk Kind Patterns
 //! 
-//! There is an enumeration called `DiskKind` that can be used to make branching decisions
-//! based on parameters of a given disk.  This is intended to be used with rust's `match` statement.
+//! There is an enumeration called `DiskKind` that can be used to create a disk image.
+//! The `names` submodule contains convenient constants that can be passed to creation functions.
+//! You can also use this to make a `match` selection based on parameters of a given disk.
 //! As an example, if you want to do something only with 3.5 inch disks, you would use a pattern like
 //! `DiskKind::D35(_)`.  The embedded structure can be used to limit the pattern to specific elements
 //! of a track layout.
@@ -30,10 +46,9 @@
 //! an enumeration called `Block` which identifies a disk address in a given file system's
 //! own language.  Each disk image implementation has to provide `read_block` and `write_block`.
 //! These functions have to be able to take a `Block` and transform it into whatever disk
-//! addressing the image uses.  The tables in `bios::skew` are accessible to any image.
+//! addressing the image uses, or else refuse the block as out of scope.
+//! The tables in `bios::skew` are accessible to any image.
 
-pub mod disk35;
-pub mod disk525;
 pub mod dsk_d13;
 pub mod dsk_do;
 pub mod dsk_po;
@@ -47,12 +62,14 @@ pub mod imd;
 pub mod td0;
 pub mod names;
 pub mod meta;
+pub mod tracks;
 
 use std::str::FromStr;
 use std::fmt;
 use log::{info,error};
 use crate::fs;
 use crate::{STDRESULT,DYNERR};
+use tracks::{TrackKey,DiskFormat};
 
 use a2kit_macro::DiskStructError;
 
@@ -92,6 +109,7 @@ pub enum NibbleError {
     NibbleType
 }
 
+/// Indicates the overall scheme of a track
 #[derive(PartialEq,Eq,Clone,Copy)]
 pub enum FluxCode {
     None,
@@ -100,12 +118,15 @@ pub enum FluxCode {
     MFM
 }
 
+/// Indicates the encoding of a disk field, this is
+/// only necessary for GCR tracks (evidently), for
+/// others set to None.
 #[derive(PartialEq,Eq,Clone,Copy)]
-pub enum NibbleCode {
+pub enum FieldCode {
     None,
-    N44,
-    N53,
-    N62
+    WOZ((usize,usize)),
+    G64((usize,usize)),
+    IBM((usize,usize))
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]
@@ -122,14 +143,25 @@ pub struct BlockLayout {
     block_count: usize
 }
 
+/// Detailed layout of a single track, allows for
+/// heterogeneous sector layouts. This is intended as an
+/// output rather than a control knob.  For the latter see the
+/// `pro` module.
 pub struct TrackSolution {
     cylinder: usize,
+    fraction: [usize;2],
     head: usize,
     flux_code: FluxCode,
-    nib_code: NibbleCode,
+    addr_code: FieldCode,
+    data_code: FieldCode,
     chss_map: Vec<[usize;4]>
 }
 
+/// Fixed size representation of how all the tracks on a disk
+/// are layed out.  The simplifying assumptions are
+/// * at most 5 zones on the disk
+/// * every track in a zone is laid out the same
+/// * every sector on a track is laid out the same
 #[derive(PartialEq,Eq,Clone,Copy)]
 pub struct TrackLayout {
     cylinders: [usize;5],
@@ -137,10 +169,15 @@ pub struct TrackLayout {
     sectors: [usize;5],
     sector_size: [usize;5],
     flux_code: [FluxCode;5],
-    nib_code: [NibbleCode;5],
+    addr_code: [FieldCode;5],
+    data_code: [FieldCode;5],
     data_rate: [DataRate;5]
 }
 
+/// This enumeration is often used in a match arm to take different
+/// actions depending on the kind of disk.  It is in the form
+/// package(layout), where the layout is a fixed size representation
+/// of the track details that can be efficiently pattern matched.
 #[derive(PartialEq,Eq,Clone,Copy)]
 pub enum DiskKind {
     Unknown,
@@ -206,6 +243,10 @@ impl TrackLayout {
         }
         ans
     }
+    // fn sector_bytes(&self,track: usize) -> usize {
+    //     let zone = self.zone(track);
+    //     self.sector_size[zone]
+    // }
 }
 
 /// Allows the track layout to be displayed to the console using `println!`.  This also
@@ -240,13 +281,41 @@ impl fmt::Display for DiskKind {
     }
 }
 
-impl fmt::Display for NibbleCode {
+impl fmt::Display for FieldCode {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            NibbleCode::N44 => write!(f,"4&4"),
-            NibbleCode::N53 => write!(f,"5&3"),
-            NibbleCode::N62 => write!(f,"6&2"),
-            NibbleCode::None => write!(f,"none")
+            FieldCode::WOZ((x,y)) => write!(f,"{}&{}",x,y),
+            FieldCode::G64((x,y)) => write!(f,"G64-{}:{}",x,y),
+            FieldCode::IBM((x,y)) => write!(f,"IBM-{}:{}",x,y),
+            FieldCode::None => write!(f,"none")
+        }
+    }
+}
+
+impl FromStr for FieldCode {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        match s {
+            "4&4" => Ok(FieldCode::WOZ((4,4))),
+            "5&3" => Ok(FieldCode::WOZ((5,3))),
+            "6&2" => Ok(FieldCode::WOZ((6,2))),
+            "G64-5:4" => Ok(FieldCode::G64((5,4))),
+            "IBM-5:4" => Ok(FieldCode::IBM((5,4))),
+            "none" => Ok(FieldCode::None),
+            _ => Err(Error::MetadataMismatch)
+        }
+    }
+}
+
+impl FromStr for FluxCode {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        match s {
+            "FM" => Ok(FluxCode::FM),
+            "MFM" => Ok(FluxCode::MFM),
+            "GCR" => Ok(FluxCode::GCR),
+            "none" => Ok(FluxCode::None),
+            _ => Err(Error::MetadataMismatch)
         }
     }
 }
@@ -267,7 +336,7 @@ impl FromStr for DiskKind {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
-            "8in" => Ok(names::IBM_CPM1_KIND),
+            "8in" | "8in-ibm-sssd" => Ok(names::IBM_CPM1_KIND),
             "8in-trs80" => Ok(names::TRS80_M2_CPM_KIND),
             "8in-nabu" => Ok(names::NABU_CPM_KIND),
             "5.25in-ibm-ssdd8" => Ok(Self::D525(names::IBM_SSDD_8)),
@@ -282,9 +351,11 @@ impl FromStr for DiskKind {
             "5.25in-kayii" => Ok(names::KAYPROII_KIND),
             "5.25in-kay4" => Ok(names::KAYPRO4_KIND),
             "5.25in" => Ok(names::A2_DOS33_KIND), // mkdsk will change it if DOS 3.2 requested
+            "5.25in-apple-13" => Ok(names::A2_DOS32_KIND),
+            "5.25in-apple-16" => Ok(names::A2_DOS33_KIND),
             "3.5in" => Ok(names::A2_800_KIND),
-            "3.5in-ss" => Ok(names::A2_400_KIND),
-            "3.5in-ds" => Ok(names::A2_800_KIND),
+            "3.5in-ss" | "3.5in-apple-400" => Ok(names::A2_400_KIND),
+            "3.5in-ds" | "3.5in-apple-800" => Ok(names::A2_800_KIND),
             "3.5in-ibm-720" => Ok(Self::D35(names::IBM_720)),
             "3.5in-ibm-1440" => Ok(Self::D35(names::IBM_1440)),
             "3.5in-ibm-2880" => Ok(Self::D35(names::IBM_2880)),
@@ -364,42 +435,106 @@ pub trait TrackBits {
 /// Reading can mutate the object because the image may be keeping
 /// track of the head position or other status indicators.
 pub trait DiskImage {
-    fn track_count(&self) -> usize;
+    /// Get the count of formatted tracks.
+    /// For images that support blank tracks interpret with care.
+    fn track_count(&self) -> usize; // TODO: supply end_track and replace where appropriate
     fn num_heads(&self) -> usize;
-    fn track_2_ch(&self,track: usize) -> [usize;2] {
-        [track/self.num_heads(),track%self.num_heads()]
+    fn motor_steps_per_cyl(&self) ->usize {
+        1
     }
-    fn ch_2_track(&self,ch: [usize;2]) -> usize {
-        ch[0]*self.num_heads() + ch[1]
+    /// Get the geometric [cyl,head].  This is *not* in general what
+    /// would appear in the track's address fields.  Avoid using
+    /// for images with fractional tracks.
+    fn get_rz(&self,tkey: TrackKey) -> Result<[usize;2],DYNERR> {
+        let msc = self.motor_steps_per_cyl();
+        let ans = match tkey {
+            TrackKey::Track(t) => [t/self.num_heads(),t%self.num_heads()],
+            TrackKey::CH((c,h)) => [c,h],
+            TrackKey::Motor((m,h)) => [(m+msc/4)/msc,h]
+        };
+        Ok(ans)
     }
-    /// N.b. this means bytes, not nibbles, e.g., a nibble buffer will be larger
+    /// Get the geometric track.  This is *not* in general what
+    /// would appear in the track's address fields.  Avoid using
+    /// for images with fractional tracks.
+    fn get_track(&self,tkey: TrackKey) -> Result<usize,DYNERR> {
+        let msc = self.motor_steps_per_cyl();
+        let ans = match tkey {
+            TrackKey::Track(t) => t,
+            TrackKey::CH((c,h)) => c*self.num_heads() + h,
+            TrackKey::Motor((m,h)) => ((m+msc/4)/msc)*self.num_heads() + h
+        };
+        Ok(ans)
+    }
+    /// Get the integrated storage capacity of the formatted tracks.
+    /// For images that support blank tracks interpret with care.
     fn byte_capacity(&self) -> usize;
     fn what_am_i(&self) -> DiskImageType;
     fn file_extensions(&self) -> Vec<String>;
     fn kind(&self) -> DiskKind;
+    /// Change the kind of disk, but do not change the format
     fn change_kind(&mut self,kind: DiskKind);
+    fn change_format(&mut self,_fmt: DiskFormat) -> STDRESULT {
+        Err(Box::new(Error::ImageTypeMismatch))
+    }
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized;
     fn to_bytes(&mut self) -> Vec<u8>;
     /// Read a block from the image; can affect disk state
     fn read_block(&mut self,addr: fs::Block) -> Result<Vec<u8>,DYNERR>;
     /// Write a block to the image
     fn write_block(&mut self, addr: fs::Block, dat: &[u8]) -> STDRESULT;
-    /// Read a physical sector from the image; can affect disk state
+    /// Read a physical sector from the image; can affect disk state.
     fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR>;
+    /// Read a proprietary sector, allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn read_pro_sector(&mut self,tkey: TrackKey,sec: usize) -> Result<Vec<u8>,DYNERR> {
+        let [cyl,head] = self.get_rz(tkey)?;
+        self.read_sector(cyl,head,sec)
+    }
     /// Write a physical sector to the image
     fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT;
-    /// Get the track buffer exactly in the form the image stores it; for user inspection
+    /// Write a proprietary sector, allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn write_pro_sector(&mut self,tkey: TrackKey,sec: usize, dat: &[u8]) -> STDRESULT {
+        let [cyl,head] = self.get_rz(tkey)?;
+        self.write_sector(cyl,head,sec,dat)
+    }
+    /// Get the track buffer exactly in the form the image stores it
     fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
+    /// Similar to `get_track_buf`, but allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn get_pro_track_buf(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
+        let [c,h] = self.get_rz(tkey)?;
+        self.get_track_buf(c, h)
+    }
     /// Set the track buffer using another track buffer, the sizes must match
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT;
-    /// Given a track index, get the physical CH, CHSS map, flux and nibble codes for the track.
+    /// Similar to `set_track_buf`, but allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn set_pro_track_buf(&mut self,tkey: TrackKey,dat: &[u8]) -> STDRESULT {
+        let [c,h] = self.get_rz(tkey)?;
+        self.set_track_buf(c,h,dat)
+    }
+    /// Get physical CH, CHSS map, flux and nibble codes, and update internal formatting hints.
     /// Implement this at a low level, making as few assumptions as possible.
     /// The expense of this operation can vary widely depending on the image type.
     /// No solution is not an error, i.e., we can return Ok(None).
     fn get_track_solution(&mut self,track: usize) -> Result<Option<TrackSolution>,DYNERR>;
+    /// Similar to `get_track_solution`, but allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn get_pro_track_solution(&mut self,tkey: TrackKey) -> Result<Option<TrackSolution>,DYNERR> {
+        self.get_track_solution(self.get_track(tkey)?)
+    }
     /// Get the track bytes as aligned nibbles; for user inspection
     fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
-    /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`
+    /// Similar to `get_track_nibbles`, but allowing for interstitial track data.
+    /// Default will jump to a nearby standard track.
+    fn get_pro_track_nibbles(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
+        let [c,h] = self.get_rz(tkey)?;
+        self.get_track_nibbles(c,h)
+    }
+    /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`.
+    /// Any required details of the track format have to come from the internal state of the image.
     fn display_track(&self,bytes: &[u8]) -> String;
     /// Get image metadata into JSON string.
     /// Default contains only the image type.
@@ -425,50 +560,59 @@ pub trait DiskImage {
     }
     /// Write the disk geometry, including all track solutions, into a JSON string
     fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
-        let mut solved_track_count = 0;
-        let mut root = json::JsonValue::new_object();
-        root["package"] = json::JsonValue::String(package_string(&self.kind()));
-        let mut trk_ary = json::JsonValue::new_array();
+        let pkg = package_string(&self.kind());
+        let mut track_sols = Vec::new();
         for trk in 0..self.track_count() {
-            match self.get_track_solution(trk) {
-                Ok(Some(sol)) => {
-                    solved_track_count += 1;
-                    let mut trk_obj = json::JsonValue::new_object();
-                    trk_obj["cylinder"] = json::JsonValue::Number(sol.cylinder.into());
-                    trk_obj["head"] = json::JsonValue::Number(sol.head.into());
-                    trk_obj["flux_code"] = match sol.flux_code {
-                        FluxCode::None => json::JsonValue::Null,
-                        f => json::JsonValue::String(f.to_string())
-                    };
-                    trk_obj["nibble_code"] = match sol.nib_code {
-                        NibbleCode::None => json::JsonValue::Null,
-                        n => json::JsonValue::String(n.to_string())
-                    };
-                    trk_obj["chs_map"] = json::JsonValue::new_array();
-                    for chss in sol.chss_map {
-                        let mut chss_json = json::JsonValue::new_array();
-                        chss_json.push(chss[0])?;
-                        chss_json.push(chss[1])?;
-                        chss_json.push(chss[2])?;
-                        chss_json.push(chss[3])?;
-                        trk_obj["chs_map"].push(chss_json)?;
-                    }
-                    trk_ary.push(trk_obj)?;
-                },
-                Ok(None) => trk_ary.push(json::JsonValue::Null)?,
-                Err(e) => return Err(e)
+            if let Some(sol) = self.get_track_solution(trk)? {
+                track_sols.push(sol);
             }
         }
-        if solved_track_count==0 {
-            root["tracks"] = json::JsonValue::Null;
-        } else {
-            root["tracks"] = trk_ary;
+        geometry_json(pkg,track_sols,indent)
+    }
+}
+
+fn geometry_json(pkg: String,track_sols: Vec<TrackSolution>,indent: Option<u16>) -> Result<String,DYNERR> {
+    let mut root = json::JsonValue::new_object();
+    root["package"] = json::JsonValue::String(pkg);
+    let mut trk_ary = json::JsonValue::new_array();
+    let mut solved_track_count = 0;
+    for sol in track_sols {
+        solved_track_count += 1;
+        let mut trk_obj = json::JsonValue::new_object();
+        trk_obj["cylinder"] = json::JsonValue::Number((sol.cylinder as f64 + sol.fraction[0] as f64 / sol.fraction[1] as f64).into());
+        trk_obj["head"] = json::JsonValue::Number(sol.head.into());
+        trk_obj["flux_code"] = match sol.flux_code {
+            FluxCode::None => json::JsonValue::Null,
+            f => json::JsonValue::String(f.to_string())
+        };
+        trk_obj["addr_code"] = match sol.addr_code {
+            FieldCode::None => json::JsonValue::Null,
+            n => json::JsonValue::String(n.to_string())
+        };
+        trk_obj["nibble_code"] = match sol.data_code {
+            FieldCode::None => json::JsonValue::Null,
+            n => json::JsonValue::String(n.to_string())
+        };
+        trk_obj["chs_map"] = json::JsonValue::new_array();
+        for chss in sol.chss_map {
+            let mut chss_json = json::JsonValue::new_array();
+            chss_json.push(chss[0])?;
+            chss_json.push(chss[1])?;
+            chss_json.push(chss[2])?;
+            chss_json.push(chss[3])?;
+            trk_obj["chs_map"].push(chss_json)?;
         }
-        if let Some(spaces) = indent {
-            Ok(json::stringify_pretty(root,spaces))
-        } else {
-            Ok(json::stringify(root))
-        }
+        trk_ary.push(trk_obj)?;
+    }
+    if solved_track_count==0 {
+        root["tracks"] = json::JsonValue::Null;
+    } else {
+        root["tracks"] = trk_ary;
+    }
+    if let Some(spaces) = indent {
+        Ok(json::stringify_pretty(root,spaces))
+    } else {
+        Ok(json::stringify(root))
     }
 }
 

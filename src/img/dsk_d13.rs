@@ -121,16 +121,18 @@ impl img::DiskImage for D13 {
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        let [c,h] = self.track_2_ch(trk);
+        let [c,h] = self.get_rz(super::TrackKey::Track(trk))?;
         let mut chss_map: Vec<[usize;4]> = Vec::new();
         for i in 0..13 {
             chss_map.push([c,h,crate::bios::skew::DOS32_PHYSICAL[i],256]);
         }
         return Ok(Some(img::TrackSolution {
             cylinder: c,
+            fraction: [0,4],
             head: h,
             flux_code: img::FluxCode::GCR,
-            nib_code: img::NibbleCode::N53,
+            addr_code: img::FieldCode::WOZ((4,4)),
+            data_code: img::FieldCode::WOZ((5,3)),
             chss_map
         }));
     }

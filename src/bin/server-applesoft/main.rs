@@ -210,7 +210,18 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 }))
             },
             execute_command_provider: Some(lsp::ExecuteCommandOptions {
-                commands: vec![], // so far no client seems to need this
+                commands: [
+                    "applesoft.semantic.tokens",
+                    "applesoft.minify",
+                    "applesoft.tokenize",
+                    "applesoft.detokenize",
+                    "applesoft.renumber",
+                    "applesoft.move",
+                    "applesoft.disk.mount",
+                    "applesoft.disk.pick",
+                    "applesoft.disk.put",
+                    "applesoft.disk.delete",
+                ].iter().map(|x| x.to_string()).collect::<Vec<String>>(),
                 work_done_progress_options: lsp::WorkDoneProgressOptions {
                     work_done_progress: None
                 }

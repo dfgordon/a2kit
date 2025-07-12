@@ -98,7 +98,7 @@ pub struct SequentialText {
 }
 
 /// Allows the structure to be created from string slices using `from_str`.
-/// This replaces LF/CRLF with CR and flips positive ASCII. Negative ASCII is an error.
+/// This replaces LF/CR with CRLF. Negative ASCII is an error.
 impl FromStr for SequentialText {
     type Err = std::fmt::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
@@ -115,7 +115,7 @@ impl FromStr for SequentialText {
 
 /// Allows the text to be displayed to the console using `println!`.  This also
 /// derives `to_string`, so the structure can be converted to `String`.
-/// This replaces CR with LF, flips negative ASCII, and nulls positive ASCII.
+/// This disposes of CR, nulls negative ASCII, and terminates on 0x1a.
 impl fmt::Display for SequentialText {
     fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let encoder = TextConverter::new(vec![]);

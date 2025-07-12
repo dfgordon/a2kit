@@ -139,7 +139,7 @@ pub struct ImageHeader {
     signature: [u8;2],
     sequence: u8, // usually 0, could increment for each disk in a set
     check_sequence: u8, // id for a set of disks?
-    version: u8, // major version in high nibble, minor version in low nibble
+    version: u8, // express as decimal, then digits are major and minor version number, not identical with creator's version number
     data_rate: u8, // 0=250kpbs,1=300kpbs,2=500kpbs, high bit off=MFM, high bit on=FM
     drive_type: u8, // see DriveType enum
     stepping: u8, // see Stepping enum, high bit indicates comment block
@@ -609,17 +609,6 @@ impl img::DiskImage for Td0 {
     fn num_heads(&self) -> usize {
         self.heads
     }
-    fn track_2_ch(&self,track: usize) -> [usize;2] {
-        [self.tracks[track].header.cylinder as usize,(self.tracks[track].header.head & HEAD_MASK) as usize]
-    }
-    fn ch_2_track(&self,ch: [usize;2]) -> usize {
-        for i in 0..self.tracks.len() {
-            if self.tracks[i].header.cylinder as usize==ch[0] && (self.tracks[i].header.head & HEAD_MASK) as usize==ch[1] {
-                return i
-            }
-        }
-        panic!("cylinder {}, head {} does not exist",ch[0],ch[1]);
-    }
     fn byte_capacity(&self) -> usize {
         let mut ans = 0;
         for trk in &self.tracks {
@@ -944,9 +933,11 @@ impl img::DiskImage for Td0 {
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.header.cylinder as usize,
+            fraction: [0,1],
             head: (trk_obj.header.head & HEAD_MASK) as usize,
             flux_code,
-            nib_code: img::NibbleCode::None,
+            addr_code: img::FieldCode::None,
+            data_code: img::FieldCode::None,
             chss_map
         }))
     }

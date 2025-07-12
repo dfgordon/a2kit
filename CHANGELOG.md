@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixes
+
+* fix an issue where minifier level 3 could break valid code
+* fix some issues with handling of unusual WOZ tracks
+* correct various docstrings and log strings
+* register LSP commands (will be required by Neovim 0.13)
+
+### New Features
+
+* create, read, and write with proprietary formats
+    - from CLI use `--pro` argument with any disk image subcommand
+* minify and renumber can be guarded by external references
+* CLI `mkdsk` supports creating blank or empty disks (issue #3)
+* support for quarter tracks
+    - from the CLI just use decimals, e.g. `17.25..19.25` selects two quarter tracks
+* WOZ fake bits are produced as appropriate
+* add long help for certain CLI arguments
+* CLI `geometry` output is enhanced
+    - adds the `addr_code` key (nibble code used in address fields)
+    - will return fractional cylinder numbers if necessary
+* CLI `get` can be coerced into formatting output for the console
+
+### Breaking Changes
+
+* modules `disk35` and `disk525` are eliminated
+* various public entities are eliminated from `img::woz`
+* changes to `DiskImage`
+    - eliminated `track-2ch`, `ch_2_track`
+* enumeration `img::NibbleCode` is eliminated 
+* removed functions `lang::merlin::eval_if`, `img::imd::cpm_blocking`
+* trait function args changed: `Renumber::build_edits`
+
 ## [3.7.0] - 2025-03-22
 
 ### Fixes

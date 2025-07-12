@@ -129,8 +129,9 @@ impl Disk
     /// Test an image to see if it already contains DOS 3.x.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         let tlen = img.track_count();
-        if tlen!=35 {
-            log::debug!("track count is unexpected");
+        // TODO: track count check should depend on whether we have a user-format or not
+        if tlen < 35 || tlen > 40 {
+            log::debug!("track count {} is unexpected",tlen);
             return false;
         }
         let old_kind = img.kind();
@@ -156,7 +157,10 @@ impl Disk
                 // We can use physical addressing for either DOS if sector = 0
                 let buf = self.img.read_sector(VTOC_TRACK as usize, 0, 0)?;
                 self.maybe_vtoc = match VTOC::from_bytes(&buf) {
-                    Ok(vtoc) => Some(vtoc),
+                    Ok(vtoc) => {
+                        log::debug!("vtoc tracks {} sectors {} version {}",vtoc.tracks,vtoc.sectors,vtoc.version);
+                        Some(vtoc)
+                    },
                     Err(e) => return Err(Box::new(e))
                 };
                 Ok(())

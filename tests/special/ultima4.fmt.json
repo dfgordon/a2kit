@@ -1,0 +1,43 @@
+{
+	"a2kit_type": "format",
+	"version": "1.0.0",
+	"zones": [
+		{
+			"flux_code": "GCR",
+			"addr_nibs": "4&4",
+			"data_nibs": "6&2",
+			"motor_range": [0,128,4],
+			"heads": [0],
+			"addr_fmt_expr": ["vol","cyl","sec","vol^cyl^sec"],
+			"addr_seek_expr": ["a0","cyl","sec","a0^a1^a2"],
+			"data_expr": ["dat"],
+			"markers": ["d5aa96","afffff","d5aab5","deaaeb"],
+			"marker_masks": ["f0fff0","ff0000","ffff20","ffff00"],
+			"sync_trk_beg": [["1111111100",40]],
+			"sync_sec_end": [["1111111100",10]],
+			"sync_dat_end": [["1111111100",20]],
+			"capacity": [[256,16]],
+			"chs_extract_expr": ["a1","0","a2"],
+			"swap_nibs": [["d5","9b"]]
+		},
+		{
+			"flux_code": "GCR",
+			"addr_nibs": "4&4",
+			"data_nibs": "6&2",
+			"motor_range": [128,140,4],
+			"heads": [0],
+			"addr_fmt_expr": ["vol","cyl","sec","vol^cyl^sec"],
+			"addr_seek_expr": ["a0","cyl","sec","a0^a1^a2"],
+			"data_expr": ["dat"],
+			"markers": ["f5aab6","afffff","d5aab5","deaaeb"],
+			"marker_masks": ["f0fff0","ff0000","ffff20","ffff00"],
+			"sync_trk_beg": [["1111111100",40]],
+			"sync_sec_end": [["1111111100",10]],
+			"sync_dat_end": [["1111111100",20]],
+			"capacity": [[256,16]],
+			"chs_extract_expr": ["a1","0","a2"],
+			"swap_nibs": [["d5","9b"]]
+		}
+	]
+}
+

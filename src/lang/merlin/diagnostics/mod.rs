@@ -16,7 +16,6 @@ use crate::lang::{Navigate,Navigation,Document,lsp_range};
 use crate::lang::merlin::context::Context;
 use crate::lang::server::{Analysis,basic_diag};
 use crate::{DYNERR, STDRESULT};
-use log::{info,trace};
 
 pub mod macros;
 mod pass1;
@@ -158,7 +157,7 @@ pub struct Analyzer {
     /// Scope of this set is a master and its includes.
     folding_set: HashMap<String,Vec<FoldingRange>>,
     /// Folding ranges for the document currently being analyzed.
-    /// This is a temporary that will be moved into diagnostic_set.
+    /// This is a temporary that will be moved into folding_set.
     folding: Vec<FoldingRange>,
     /// Map from URI's to their preferred master URI's
     preferred_masters: HashMap<String,String>,
@@ -297,7 +296,7 @@ impl Analyzer {
         self.folding = Vec::new();
         self.ctx.enter_source(typ,Arc::clone(&doc));
         for line in doc.text.lines() {
-            trace!("analyze row {}",self.ctx.row());
+            log::trace!("analyze row {}",self.ctx.row());
             self.pull_triggers();
             if line.trim_start().len()==0 {
                 self.ctx.next_row();
@@ -325,9 +324,9 @@ impl Navigate for Analyzer {
 	/// * returns where to go when we return to master
     fn descend(&mut self, curs: &TreeCursor) -> Result<Navigation,DYNERR> {
 		if let Some((typ,include)) = self.ctx.prepare_to_descend(curs,self.scanner.get_workspace()) {
-            trace!("descending into include {}",include.uri.as_str());
+            log::trace!("descending into include {}",include.uri.as_str());
             self.analyze_recursively(typ,include)?;
-            trace!("ascending out of include");
+            log::trace!("ascending out of include");
             if self.pass == 1 {
                 self.ctx.trigs.checkpoint_vars = true;
             }
@@ -358,7 +357,7 @@ impl Analysis for Analyzer {
         let ws = self.scanner.get_workspace();
         self.symbols.display_doc_type = ws.source_type(&doc.uri, self.ctx.linker_threshold());
         if self.symbols.display_doc_type == super::SourceType::Linker {
-            info!("skipping linker file {}",doc.uri.to_string());
+            log::info!("skipping linker file {}",doc.uri.to_string());
             return Ok(());
         }
         let preferred = self.preferred_masters.get(&doc.uri.to_string()).cloned();
@@ -367,7 +366,7 @@ impl Analysis for Analyzer {
         self.symbols.display_doc_uri = doc.uri.to_string();
         self.symbols.assembler = self.ctx.merlin_version();
         self.symbols.processor = self.ctx.curr_proc();
-        info!("Use master {}",master.uri.to_string());
+        log::info!("Use master {}",master.uri.to_string());
         for pass in 1..4 {
             log::debug!("ANALYSIS PASS {}",pass);
             self.pass = pass;
@@ -379,11 +378,11 @@ impl Analysis for Analyzer {
             // clean up any residual scope (this is a must for global scopes)
             self.ctx.exit_scope(&mut self.symbols);
         }
-        info!("Assembler: {}",self.symbols.assembler);
-        info!("Processor: {}",self.symbols.processor);
-        info!("Globals: {}",self.symbols.globals.len());
-        info!("Macros: {}",self.symbols.macros.len());
-        info!("Variables: {}",self.symbols.vars.len());
+        log::info!("Assembler: {}",self.symbols.assembler);
+        log::info!("Processor: {}",self.symbols.processor);
+        log::info!("Globals: {}",self.symbols.globals.len());
+        log::info!("Macros: {}",self.symbols.macros.len());
+        log::info!("Variables: {}",self.symbols.vars.len());
         Ok(())
     }
     fn update_config(&mut self,json_str: &str) -> STDRESULT {

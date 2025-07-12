@@ -87,6 +87,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
         log::error!("put did not receive any data from previous node");
         return Err(Box::new(CommandError::InvalidCommand));
     }
+    let fmt = super::get_fmt(cmd)?;
 
     match (maybe_typ,maybe_img,maybe_dest_path) {
         
@@ -103,7 +104,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
                 Some(a) => Some(usize::from_str(a)?),
                 _ => None
             };
-            let mut disk = crate::create_fs_from_file(img_path)?;
+            let mut disk = crate::create_fs_from_file_pro(img_path,fmt.as_ref())?;
 
             // Handle block ranges
             if typ == ItemType::Block {
@@ -181,8 +182,9 @@ pub fn mput(cmd: &clap::ArgMatches) -> STDRESULT {
     }
     let maybe_dest_path = cmd.get_one::<String>("file");
     let path_to_img = cmd.get_one::<String>("dimg").unwrap();
+    let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
-    let mut disk = crate::create_fs_from_file(&path_to_img)?;
+    let mut disk = crate::create_fs_from_file_pro(&path_to_img,fmt.as_ref())?;
 
     for fimg_value in json_list.members() {
         let mut fimg = FileImage::from_json(&fimg_value.to_string())?;

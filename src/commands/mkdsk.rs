@@ -5,6 +5,7 @@ use crate::bios::{bpb,dpb};
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal,fat};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType,names};
+use crate::img::tracks::DiskFormat;
 use super::CommandError;
 use crate::{STDRESULT,DYNERR};
 
@@ -41,9 +42,7 @@ macro_rules! cpm_patterns {
     };
 }
 
-/// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
-/// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,maybe_wrap: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
+fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap: Option<&String>) -> Result<u8,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -63,6 +62,12 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }
+    Ok(vol)
+}
+
+/// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
+/// return an error.  N.b. there is no file system selection whatever at this point.
+fn mkimage_std(img_typ: &DiskImageType,maybe_wrap: Option<&String>,vol: u8,kind: &DiskKind) -> Result<Box<dyn DiskImage>,DYNERR> {
     return match (img_typ,*kind) {
         (DiskImageType::D13,names::A2_DOS32_KIND) => Ok(Box::new(img::dsk_d13::D13::create(35))),
         (DiskImageType::DO,names::A2_DOS33_KIND) => Ok(Box::new(img::dsk_do::DO::create(35,16))),
@@ -80,8 +85,8 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::DOT2MG,names::A2_400_KIND) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
         (DiskImageType::DOT2MG,names::A2_800_KIND) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
         (DiskImageType::DOT2MG,names::A2_HD_MAX) => img::dot2mg::Dot2mg::create(vol,*kind,maybe_wrap),
-        (DiskImageType::NIB,names::A2_DOS32_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
-        (DiskImageType::NIB,names::A2_DOS33_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind))),
+        (DiskImageType::NIB,names::A2_DOS32_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind)?)),
+        (DiskImageType::NIB,names::A2_DOS33_KIND) => Ok(Box::new(img::nib::Nib::create(vol,*kind)?)),
         (DiskImageType::IMD,cpm_patterns!()) => Ok(Box::new(img::imd::Imd::create(*kind))),
         (DiskImageType::TD0,cpm_patterns!()) => Ok(Box::new(img::td0::Td0::create(*kind))),
         (DiskImageType::IMD,ibm_patterns!()) => Ok(Box::new(img::imd::Imd::create(*kind))),
@@ -89,6 +94,44 @@ fn mkimage(img_typ: &DiskImageType,kind: &DiskKind,maybe_vol: Option<&String>,ma
         (DiskImageType::IMG,ibm_patterns!()) => Ok(Box::new(img::dsk_img::Img::create(*kind))),
         _ => {
             error!("pairing of image type and disk kind is not supported");
+            Err(Box::new(CommandError::UnsupportedItemType))
+        }
+    };
+}
+
+fn mkimage_pro(img_typ: &DiskImageType,vol: u8,kind: &DiskKind,fmt: DiskFormat) -> Result<Box<dyn DiskImage>,DYNERR> {
+    return match (img_typ,*kind) {
+        (DiskImageType::WOZ1,names::A2_DOS32_KIND) => Ok(Box::new(img::woz1::Woz1::create_pro(vol,*kind,fmt)?)),
+        (DiskImageType::WOZ1,names::A2_DOS33_KIND) => Ok(Box::new(img::woz1::Woz1::create_pro(vol,*kind,fmt)?)),
+        (DiskImageType::WOZ2,names::A2_DOS32_KIND) => Ok(Box::new(img::woz2::Woz2::create_pro(vol,*kind,fmt)?)),
+        (DiskImageType::WOZ2,names::A2_DOS33_KIND) => Ok(Box::new(img::woz2::Woz2::create_pro(vol,*kind,fmt)?)),
+        _ => {
+            error!("proprietary formatting not supported for this image type");
+            Err(Box::new(CommandError::UnsupportedItemType))
+        }
+    };
+}
+
+fn mkimage(img_typ: &DiskImageType,maybe_wrap: Option<&String>,maybe_vol: Option<&String>,kind: &DiskKind,fmt: Option<DiskFormat>) -> Result<Box<dyn DiskImage>,DYNERR> {
+    let vol = verify_mkimage(img_typ,maybe_vol,maybe_wrap)?;
+    match fmt {
+        Some(fmt) => mkimage_pro(img_typ,vol,kind,fmt),
+        None => mkimage_std(img_typ,maybe_wrap,vol,kind)
+    }
+}
+
+/// Create a blank disk where all tracks are pristine media.
+/// This only makes sense for certain kinds of images.
+fn mkblank(img_typ: &DiskImageType,kind: &DiskKind,_maybe_wrap: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
+    return match (img_typ,*kind) {
+        (DiskImageType::WOZ1,names::A2_DOS32_KIND) => Ok(Box::new(img::woz1::Woz1::blank(*kind))),
+        (DiskImageType::WOZ1,names::A2_DOS33_KIND) => Ok(Box::new(img::woz1::Woz1::blank(*kind))),
+        (DiskImageType::WOZ2,names::A2_DOS32_KIND) => Ok(Box::new(img::woz2::Woz2::blank(*kind))),
+        (DiskImageType::WOZ2,names::A2_DOS33_KIND) => Ok(Box::new(img::woz2::Woz2::blank(*kind))),
+        (DiskImageType::WOZ2,names::A2_400_KIND) => Ok(Box::new(img::woz2::Woz2::blank(*kind))),
+        (DiskImageType::WOZ2,names::A2_800_KIND) => Ok(Box::new(img::woz2::Woz2::blank(*kind))),
+        _ => {
+            error!("this type of image cannot be blank, maybe you want empty");
             Err(Box::new(CommandError::UnsupportedItemType))
         }
     };
@@ -216,12 +259,8 @@ fn mkfat(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<
 }
 
 pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
-    let dest_path= cmd.get_one::<String>("dimg").expect(RCH);
-    let which_fs = cmd.get_one::<String>("os").expect(RCH);
-    if !["cpm2","cpm3","dos32","dos33","prodos","pascal","fat"].contains(&which_fs.as_str()) {
-        return Err(Box::new(CommandError::UnknownItemType));
-    }
     // First make sure destination is OK
+    let dest_path= cmd.get_one::<String>("dimg").expect(RCH);
     let dest_path_abstract = std::path::Path::new(dest_path);
     if let Some(parent) = std::path::Path::parent(dest_path_abstract) {
         if parent.to_string_lossy().len()>0 {
@@ -249,49 +288,55 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
             return Err(Box::new(e))
         }
     }
+    // Next see if the pro sector file is needed and OK
+    let fmt = super::get_fmt(cmd)?;
     // Destination is OK, proceed
-    let maybe_vol = cmd.get_one::<String>("volume");
-    let mut kind = DiskKind::from_str(cmd.get_one::<String>("kind").expect(RCH)).unwrap();
+    let kind_str = cmd.get_one::<String>("kind").expect(RCH);
+    let mut kind = DiskKind::from_str(kind_str).unwrap();
     let img_typ = DiskImageType::from_str(cmd.get_one::<String>("type").expect(RCH)).unwrap();
+    let maybe_vol = cmd.get_one::<String>("volume");
     let maybe_wrap = cmd.get_one::<String>("wrap");
-    // Refine disk kind based on combined inputs
-    if kind==names::A2_DOS33_KIND && which_fs=="dos32" {
-        kind = names::A2_DOS32_KIND;
-    }
+    let maybe_os = cmd.get_one::<String>("os");
     let boot = cmd.get_flag("bootable");
     if boot {
         info!("bootable requested");
     }
-    match mkimage(&img_typ,&kind,maybe_vol,maybe_wrap) {
-        Ok(img) => {
-            if let Some(fext) = dest_path.split(".").last() {
-                if !img.file_extensions().contains(&fext.to_string().to_lowercase()) {
-                    error!("Extension was {}, should be {:?}",fext,img.file_extensions());
-                    return Err(Box::new(CommandError::InvalidCommand));
-                }
-            } else {
-                error!("Extension missing, should be {:?}",img.file_extensions());
-                return Err(Box::new(CommandError::InvalidCommand));
-            }
-            let result = match which_fs.as_str() {
-                "cpm2" => mkcpm(maybe_vol,boot,&kind,img,2),
-                "cpm3" => mkcpm(maybe_vol,boot,&kind,img,3),
-                "dos32" => mkdos3x(maybe_vol,boot,img),
-                "dos33" => mkdos3x(maybe_vol,boot,img),
-                "prodos" => mkprodos(maybe_vol,boot,img),
-                "pascal" => mkpascal(maybe_vol,boot,img),
-                "fat" => mkfat(maybe_vol,boot,img),
-                _ => panic!("unreachable")
-            };
-            match result {
-                Ok(buf) => {
-                    eprintln!("writing {} bytes",buf.len());
-                    std::fs::write(&dest_path,&buf).expect("could not write data to disk");
-                    Ok(())
-                },
-                Err(e) => Err(e)
-            }
-        },
-        Err(e) => Err(e)
+    // Refine disk kind based on combined inputs
+    // TODO: this is not needed if we dispose of the ambiguous "5.25in" kind, but, what we might do is
+    // not require a disk kind at all, and if it is missing, deduce it from the os.
+    if let Some(os) = maybe_os {
+        if kind_str=="5.25in" && os=="dos32" {
+            kind = names::A2_DOS32_KIND;
+        }
     }
+    // Make an image without any file system
+    let mut img = match cmd.get_flag("blank") {
+        true => mkblank(&img_typ,&kind,maybe_wrap)?,
+        false => mkimage(&img_typ,maybe_wrap,maybe_vol,&kind,fmt)?, // either --os or --empty
+    };
+    if let Some(fext) = dest_path.split(".").last() {
+        if !img.file_extensions().contains(&fext.to_string().to_lowercase()) {
+            error!("Extension was {}, should be {:?}",fext,img.file_extensions());
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+    } else {
+        error!("Extension missing, should be {:?}",img.file_extensions());
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
+    // add file system, or not
+    let buf = match maybe_os {
+        Some(os) => match os.as_str() {
+            "cpm2" => mkcpm(maybe_vol,boot,&kind,img,2)?,
+            "cpm3" => mkcpm(maybe_vol,boot,&kind,img,3)?,
+            "dos32" => mkdos3x(maybe_vol,boot,img)?,
+            "dos33" => mkdos3x(maybe_vol,boot,img)?,
+            "prodos" => mkprodos(maybe_vol,boot,img)?,
+            "pascal" => mkpascal(maybe_vol,boot,img)?,
+            "fat" => mkfat(maybe_vol,boot,img)?,
+            _ => panic!("{}",RCH)
+        },
+        None => img.to_bytes() // either --blank or --empty
+    };
+    eprintln!("writing {} bytes",buf.len());
+    Ok(std::fs::write(&dest_path,&buf)?)
 }

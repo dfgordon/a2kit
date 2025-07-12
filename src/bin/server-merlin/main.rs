@@ -295,7 +295,22 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 }))
             },
             execute_command_provider: Some(lsp::ExecuteCommandOptions {
-                commands: vec![], // so far no client seems to need this
+                commands: [
+                    "merlin6502.getMasterList",
+                    "merlin6502.selectMaster",
+                    "merlin6502.rescan",
+                    "merlin6502.activeEditorChanged",
+                    "merlin6502.semantic.tokens",
+                    "merlin6502.pasteFormat",
+                    "merlin6502.detokenize",
+                    "merlin6502.disassemble",
+                    "merlin6502.toData",
+                    "merlin6502.toCode",
+                    "merlin6502.disk.mount",
+                    "merlin6502.disk.pick",
+                    "merlin6502.disk.put",
+                    "merlin6502.disk.delete",
+                ].iter().map(|x| x.to_string()).collect::<Vec<String>>(),
                 work_done_progress_options: lsp::WorkDoneProgressOptions {
                     work_done_progress: None
                 }

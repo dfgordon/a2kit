@@ -269,6 +269,7 @@ fn rename_delete() {
 fn read_big_woz1() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests the same file system information used for read_big and write_big.
+    // An important wrinkle is the volume in the sector address fields is 1 rather than the usual 254.
 
     let buf = Path::new("tests").join("prodos-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");

@@ -7,7 +7,7 @@
 //! a disk.  It should not be confused with a file system.  For example,
 //! the DOS33 kind could (and did) contain ProDOS, CP/M, or Pascal.
 
-use super::{DiskKind,TrackLayout,BlockLayout,NibbleCode,FluxCode,DataRate};
+use super::{DiskKind,TrackLayout,BlockLayout,FieldCode,FluxCode,DataRate};
 
 macro_rules! uni {
     ($x:expr) => {
@@ -21,7 +21,8 @@ pub const A2_DOS32: TrackLayout = TrackLayout {
     sectors: uni!(13),
     sector_size: uni!(256),
     flux_code: [FluxCode::GCR;5],
-    nib_code: [NibbleCode::N53;5],
+    addr_code: [FieldCode::WOZ((4,4));5],
+    data_code: [FieldCode::WOZ((5,3));5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -31,7 +32,8 @@ pub const A2_DOS33: TrackLayout = TrackLayout {
     sectors: uni!(16),
     sector_size: uni!(256),
     flux_code: [FluxCode::GCR;5],
-    nib_code: [NibbleCode::N62;5],
+    addr_code: [FieldCode::WOZ((4,4));5],
+    data_code: [FieldCode::WOZ((6,2));5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -41,7 +43,8 @@ pub const A2_400: TrackLayout = TrackLayout {
     sector_size: [524,524,524,524,524],
     sectors: [12,11,10,9,8],
     flux_code: [FluxCode::GCR;5],
-    nib_code: [NibbleCode::N62;5],
+    addr_code: [FieldCode::WOZ((6,2));5],
+    data_code: [FieldCode::WOZ((6,2));5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -51,7 +54,8 @@ pub const A2_800: TrackLayout = TrackLayout {
     sector_size: [524,524,524,524,524],
     sectors: [12,11,10,9,8],
     flux_code: [FluxCode::GCR;5],
-    nib_code: [NibbleCode::N62;5],
+    addr_code: [FieldCode::WOZ((6,2));5],
+    data_code: [FieldCode::WOZ((6,2));5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -61,7 +65,8 @@ pub const CPM_1: TrackLayout = TrackLayout {
     sector_size: uni!(128),
     sectors: uni!(26),
     flux_code: [FluxCode::FM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -71,7 +76,8 @@ pub const DSDD_77: TrackLayout = TrackLayout {
     sector_size: uni!(1024),
     sectors: uni!(8),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -81,7 +87,8 @@ pub const AMSTRAD_SS: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(9),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -91,7 +98,8 @@ pub const OSBORNE1_SD: TrackLayout = TrackLayout {
     sector_size: uni!(256),
     sectors: uni!(10),
     flux_code: [FluxCode::FM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -101,7 +109,8 @@ pub const OSBORNE1_DD: TrackLayout = TrackLayout {
     sector_size: uni!(1024),
     sectors: uni!(5),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -111,7 +120,8 @@ pub const TRS80_M2_CPM: TrackLayout = TrackLayout {
     sector_size: [128,512,0,0,0],
     sectors: [26,16,0,0,0],
     flux_code: [FluxCode::FM,FluxCode::MFM,FluxCode::None,FluxCode::None,FluxCode::None],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -121,7 +131,8 @@ pub const NABU_CPM: TrackLayout = TrackLayout {
     sector_size: [128,256,0,0,0],
     sectors: [26,26,0,0,0],
     flux_code: [FluxCode::FM,FluxCode::MFM,FluxCode::None,FluxCode::None,FluxCode::None],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -131,7 +142,8 @@ pub const KAYPROII: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(10),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -141,7 +153,8 @@ pub const KAYPRO4: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(10),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -153,7 +166,8 @@ pub const IBM_SSDD_8: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(8),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -163,7 +177,8 @@ pub const IBM_DSDD_8: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(8),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -173,7 +188,8 @@ pub const IBM_SSDD_9: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(9),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -183,7 +199,8 @@ pub const IBM_DSDD_9: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(9),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -193,7 +210,8 @@ pub const IBM_SSQD: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(8),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -203,7 +221,8 @@ pub const IBM_DSQD: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(8),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -213,7 +232,8 @@ pub const IBM_DSHD: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(15),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -223,7 +243,8 @@ pub const IBM_720: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(9),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R250Kbps;5]
 };
 
@@ -233,7 +254,8 @@ pub const IBM_1440: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(18),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -243,7 +265,8 @@ pub const IBM_1680: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(21),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -253,7 +276,8 @@ pub const IBM_1720: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(21),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R500Kbps;5]
 };
 
@@ -263,7 +287,8 @@ pub const IBM_2880: TrackLayout = TrackLayout {
     sector_size: uni!(512),
     sectors: uni!(36),
     flux_code: [FluxCode::MFM;5],
-    nib_code: [NibbleCode::None;5],
+    addr_code: [FieldCode::None;5],
+    data_code: [FieldCode::None;5],
     data_rate: [DataRate::R1000Kbps;5]
 };
 

@@ -7,8 +7,8 @@ use super::{ItemType,CommandError};
 use crate::fs::{FileImage,UnpackedData};
 use crate::{DYNERR,STDRESULT};
 
-fn output_get(result: UnpackedData, load_addr: usize) -> STDRESULT {
-    match (result,atty::is(atty::Stream::Stdout)) {
+fn output_get(result: UnpackedData, load_addr: usize, console_fmt: bool) -> STDRESULT {
+    match (result,atty::is(atty::Stream::Stdout) || console_fmt) {
         (UnpackedData::Text(txt),_) => {
             print!("{}",txt);
             std::io::stdout().flush()?;
@@ -59,7 +59,7 @@ pub fn unpack(cmd: &clap::ArgMatches) -> STDRESULT {
     let json_str = String::from_utf8(dat)?;
     let fimg = FileImage::from_json(&json_str)?;
     let result = unpack_primitive(&fimg, typ, rec_len, trunc, cmd.get_one::<u16>("indent").copied())?;
-    output_get(result, fimg.get_load_address() as usize)
+    output_get(result, fimg.get_load_address() as usize, cmd.get_flag("console"))
 }
 
 pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
@@ -69,10 +69,12 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     let maybe_img = cmd.get_one::<String>("dimg");
     let pipe_or_img = !atty::is(atty::Stream::Stdin) || maybe_img.is_some();
     let trunc = cmd.get_flag("trunc");
+    let console_fmt = cmd.get_flag("console");
     let rec_len = match cmd.get_one::<String>("len") {
         Some(s) => Some(usize::from_str(s)?),
         None => None
     };
+    let fmt = super::get_fmt(cmd)?;
 
     match (maybe_typ, pipe_or_img, maybe_src_path) {
 
@@ -93,18 +95,18 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
             }
-            let mut disk = crate::create_fs_from_file_or_stdin(maybe_img)?;
+            let mut disk = crate::create_fs_from_file_or_stdin_pro(maybe_img,fmt.as_ref())?;
             if typ == ItemType::Block {
                 let mut cum: Vec<u8> = Vec::new();
                 let blocks = super::parse_block_request(&src_path)?;
                 for b in blocks {
                     cum.append(&mut disk.read_block(&b.to_string())?);
                 }
-                return output_get(UnpackedData::Binary(cum),0);
+                return output_get(UnpackedData::Binary(cum),0,console_fmt);
             }
             let fimg = disk.get(&src_path)?;
             let result = unpack_primitive(&fimg, typ, rec_len, trunc, cmd.get_one::<u16>("indent").copied())?;
-            return output_get(result,fimg.get_load_address() as usize);
+            return output_get(result,fimg.get_load_address() as usize,console_fmt);
         },
 
         // this pattern can be used for metadata only
@@ -149,8 +151,9 @@ pub fn mget(cmd: &clap::ArgMatches) -> STDRESULT {
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let path_to_img = cmd.get_one::<String>("dimg").unwrap();
+    let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
-    let mut disk = crate::create_fs_from_file(&path_to_img)?;
+    let mut disk = crate::create_fs_from_file_pro(&path_to_img,fmt.as_ref())?;
 
     let mut ans = json::array![];
     for path in json_list.members() {

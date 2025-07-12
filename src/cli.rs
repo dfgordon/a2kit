@@ -1,8 +1,48 @@
-use clap::{arg, value_parser, crate_version, Arg, ArgAction, ArgGroup, Command, ValueHint};
+use clap::{value_parser, crate_version, Arg, ArgAction, ArgGroup, Command, ValueHint};
 
 const RNG_HELP: &str = "some types support ranges using `..` and `,,` separators,
 e.g., `1..4,,7..10` would mean 1,2,3,7,8,9";
 const IN_HELP: &str = "if disk image is piped, omit `--dimg` option";
+const WOZ_HELP: &str = "for WOZ you can use quarter-decimals for cylinder numbers";
+const F_LONG_HELP: &str = "interpretation depends on type, for files this is
+the usual notion of a path, for disk regions it is a numerical address,
+for metadata it is a key path";
+const T_LONG_HELP: &str = "Types are broadly separated into file, disk region, and metadata categories.
+The `any` type is a generalized representation of a file that works with all supported file systems.
+The `auto` type will try to heuristically select a type using file system hints and content.";
+const PRO_LONG_HELP: &str = "Use the proprietary track format that is described in the file at PATH.
+The file should contain a JSON string describing a GCR, FM, or MFM soft sectoring scheme.";
+
+fn file_arg(help: &'static str, req: bool, shell_hint: bool) -> Arg {
+    let ans = Arg::new("file").short('f').long("file").value_name("PATH").required(req).help(help);
+    if shell_hint {
+        ans.value_hint(ValueHint::FilePath)
+    } else {
+        ans
+    }
+}
+
+fn pro_arg() -> Arg {
+    Arg::new("pro").long("pro").value_name("PATH").help("use proprietary track format")
+                .long_help(PRO_LONG_HELP)
+                .value_hint(ValueHint::FilePath)
+                .required(false)
+}
+
+fn extern_arg() -> Arg {
+    Arg::new("extern").long("extern").value_name("LIST").help("external references")
+        .required(false)
+        .value_delimiter(',')
+        .value_parser(0..0xffff)
+        .long_help("comma delimited list of line numbers that are referenced externally")
+}
+
+fn console_arg() -> Arg {
+    Arg::new("console").long("console").help("format for console unconditionally")
+        .required(false)
+        .action(ArgAction::SetTrue)
+        .long_help("even if the output context is a file or pipe, format it for the console")
+}
 
 pub fn build_cli() -> Command {
     let long_help = "a2kit is always invoked with exactly one of several subcommands.
@@ -26,11 +66,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
     ];
     let wrap_types = ["do", "po", "nib"];
     let os_names = ["cpm2", "cpm3", "dos32", "dos33", "prodos", "pascal", "fat"];
-    let disk_kinds = [
+    let disk_kinds = [ // TODO: make all of these follow the pattern
         "8in",
+        "8in-ibm-sssd",
         "8in-trs80",
         "8in-nabu",
         "5.25in",
+        "5.25in-apple-13",
+        "5.25in-apple-16",
         "5.25in-ibm-ssdd8",
         "5.25in-ibm-ssdd9",
         "5.25in-ibm-dsdd8",
@@ -45,6 +88,8 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         "3.5in",
         "3.5in-ss",
         "3.5in-ds",
+        "3.5in-apple-400",
+        "3.5in-apple-800",
         "3.5in-ibm-720",
         "3.5in-ibm-1440",
         "3.5in-ibm-2880",
@@ -101,11 +146,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     main_cmd = main_cmd.subcommand(
         Command::new("get")
-            .arg(Arg::new("file").long("file").short('f').help("path, key, or address, maybe inside disk image")
-                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
-            )
+            .arg(file_arg("path, key, or address, maybe inside disk image",false,true).long_help(F_LONG_HELP))
             .arg(Arg::new("type").long("type").short('t').help("type of the item")
-                .value_name("TYPE").required(false).value_parser(get_put_types)
+                .value_name("TYPE").required(false).value_parser(get_put_types).long_help(T_LONG_HELP)
             )
             .arg(dimg_arg_opt.clone())
             .arg(indent_arg.clone())
@@ -113,43 +156,42 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 .value_name("LENGTH").required(false)
             )
             .arg(Arg::new("trunc").long("trunc").help("truncate raw at EOF if possible").action(ArgAction::SetTrue))
+            .arg(pro_arg())
+            .arg(console_arg())
             .about("read from stdin, local, or disk image, write to stdout")
-            .after_help(RNG_HELP.to_string() + "\n\n" + IN_HELP)
+            .after_help([RNG_HELP,"\n\n",WOZ_HELP,"\n\n",IN_HELP].concat())
     );
     main_cmd = main_cmd.subcommand(
         Command::new("put")
-            .arg(Arg::new("file").long("file").short('f').help("path, key, or address, maybe inside disk image")
-                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
-            )
+            .arg(file_arg("path, key, or address, maybe inside disk image",false,true).long_help(F_LONG_HELP))
             .arg(Arg::new("type").long("type").short('t').help("type of the item")
-                .value_name("TYPE").required(false).value_parser(get_put_types)
+                .value_name("TYPE").required(false).value_parser(get_put_types).long_help(T_LONG_HELP)
             )
             .arg(dimg_arg_opt.clone())
             .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
+            .arg(pro_arg())
             .about("read from stdin, write to local or disk image")
-            .after_help(RNG_HELP)
+            .after_help([RNG_HELP,"\n\n",WOZ_HELP].concat())
     );
     main_cmd = main_cmd.subcommand(
         Command::new("mget")
             .arg(dimg_arg_req.clone())
             .arg(indent_arg.clone())
+            .arg(pro_arg())
             .about("read list of paths from stdin, get files from disk image, write file images to stdout")
             .after_help("this can take `a2kit glob` as a piped input")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("mput")
             .arg(dimg_arg_req.clone())
-            .arg(Arg::new("file").long("file").short('f').help("override target paths")
-                .value_name("PATH").value_hint(ValueHint::FilePath).required(false)
-            )
+            .arg(file_arg("override target paths",false,false))
+            .arg(pro_arg())
             .about("read list of file images from stdin, restore files to a disk image")
             .after_help("for CP/M the user number can be overridden using `-f <num>:`")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("pack")
-            .arg(Arg::new("file").long("file").short('f').help("target path for this file image")
-                .value_name("PATH").value_hint(ValueHint::FilePath).required(true)
-            )
+            .arg(file_arg("target path for this file image",true,false))
             .arg(Arg::new("type").long("type").short('t').help("type of the item")
                 .value_name("TYPE").required(true).value_parser(pack_unpack_types)
             )
@@ -175,159 +217,171 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("len").long("len").short('l').help("length of record in DOS 3.3 random access text file")
                 .value_name("LENGTH").required(false)
             )
+            .arg(console_arg())
             .about("unpack data from a file image")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("mkdsk")
-            .arg(arg!(-v --volume <VOLUME> "volume name or number").required(false))
-            .arg(
-                arg!(-t --type <TYPE> "type of disk image to create")
+            .arg(Arg::new("volume").long("volume").short('v').value_name("VOLUME").help("volume name or number")
+                .required(false))
+            .arg(Arg::new("type").long("type").short('t').value_name("TYPE").help("type of disk image to create")
+                .required(true)
+                .value_parser(img_types),
+            )
+            .arg(Arg::new("os").long("os").short('o').value_name("OS").help("operating system format")
+                .required(false)
+                .value_parser(os_names),
+            )
+            .arg(Arg::new("empty").long("empty").help("wipe all sectors").action(ArgAction::SetTrue))
+            .arg(Arg::new("blank").long("blank").help("medium is pristine").action(ArgAction::SetTrue))
+            .arg(Arg::new("bootable").long("bootable").short('b').help("make disk bootable").action(ArgAction::SetTrue))
+            .arg(Arg::new("kind").long("kind").short('k').value_name("PKG-VEND-FMT").help("kind of disk")
+                .value_parser(disk_kinds)
+                .required(false)
+                .default_value("5.25in")
+            )
+            .arg(Arg::new("dimg").long("dimg").short('d').value_name("PATH").help("disk image path to create")
+                .value_hint(ValueHint::FilePath)
+                .required(true),
+            )
+            .arg(Arg::new("wrap").long("wrap").short('w').value_name("TYPE").help("type of disk image to wrap")
+                .value_parser(wrap_types)
+                .required(false),
+            )
+            .arg(pro_arg())
+            .group(
+                ArgGroup::new("contents")
                     .required(true)
-                    .value_parser(img_types),
+                    .multiple(false)
+                    .args(["os", "empty", "blank"]),
             )
-            .arg(
-                arg!(-o --os <OS> "operating system format")
-                    .required(true)
-                    .value_parser(os_names),
-            )
-            .arg(arg!(-b --bootable "make disk bootable").action(ArgAction::SetTrue))
-            .arg(
-                arg!(-k --kind <SIZE> "kind of disk")
-                    .value_parser(disk_kinds)
-                    .required(false)
-                    .default_value("5.25in"),
-            )
-            .arg(
-                arg!(-d --dimg <PATH> "disk image path to create")
-                    .value_hint(ValueHint::FilePath)
-                    .required(true),
-            )
-            .arg(
-                arg!(-w --wrap <TYPE> "type of disk image to wrap")
-                    .value_parser(wrap_types)
-                    .required(false),
-            )
-            .about("write a blank disk image to the given path")
+            .visible_alias("mkimg")
+            .about("write a new disk image to the given path")
+            .after_help("disk aliases (such as using `5.25in` in place of `5.25in-apple-16`) are deprecated")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("mkdir")
-            .arg(arg!(-f --file <PATH> "path inside disk image of new directory").required(true))
+            .arg(file_arg("path inside disk image of new directory",true,false))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .about("create a new directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("delete")
-            .arg(arg!(-f --file <PATH> "path inside disk image to delete").required(true))
+            .arg(file_arg("path inside disk image to delete",true,false))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .visible_alias("del")
             .visible_alias("era")
             .about("delete a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("protect")
-            .arg(arg!(-f --file <PATH> "path inside disk image to protect").required(true))
+            .arg(file_arg("path inside disk image to protect",true,false))
             .arg(dimg_arg_req.clone())
-            .arg(arg!(-p --password <PASSWORD> "password to assign").required(true))
-            .arg(arg!(--read "protect read").action(ArgAction::SetTrue))
-            .arg(arg!(--write "protect write").action(ArgAction::SetTrue))
-            .arg(arg!(--delete "protect delete").action(ArgAction::SetTrue))
+            .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("password to assign").required(true))
+            .arg(Arg::new("read").help("protect read").action(ArgAction::SetTrue))
+            .arg(Arg::new("write").help("protect write").action(ArgAction::SetTrue))
+            .arg(Arg::new("delete").help("protect delete").action(ArgAction::SetTrue))
+            .arg(pro_arg())
             .about("password protect a disk or file"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("unprotect")
-            .arg(arg!(-f --file <PATH> "path inside disk image to unprotect").required(true))
+            .arg(file_arg("path inside disk image to unprotect",true,false))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .about("remove password protection from a disk or file"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("lock")
-            .arg(arg!(-f --file <PATH> "path inside disk image to lock").required(true))
+            .arg(file_arg("path inside disk image to lock",true,false))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .about("write protect a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("unlock")
-            .arg(arg!(-f --file <PATH> "path inside disk image to unlock").required(true))
+            .arg(file_arg("path inside disk image to unlock",true,false))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .about("remove write protection from a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("rename")
-            .arg(arg!(-f --file <PATH> "path inside disk image to rename").required(true))
-            .arg(arg!(-n --name <NAME> "new name").required(true))
+            .arg(file_arg("path inside disk image to rename",true,false))
+            .arg(Arg::new("name").long("name").short('n').value_name("NAME").help("new name").required(true))
             .arg(dimg_arg_req.clone())
+            .arg(pro_arg())
             .about("rename a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("retype")
-            .arg(arg!(-f --file <PATH> "path inside disk image to retype").required(true))
-            .arg(arg!(-t --type <TYPE> "file system type, code or mnemonic").required(true))
-            .arg(arg!(-a --aux <AUX> "file system auxiliary metadata").required(true))
+            .arg(file_arg("path inside disk image to retype",true,false))
+            .arg(Arg::new("type").long("type").short('t').value_name("TYPE").help("file system type, code or mnemonic").required(true))
+            .arg(Arg::new("aux").long("aux").short('a').value_name("AUX").help("file system auxiliary metadata").required(true))
             .arg(dimg_arg_req)
+            .arg(pro_arg())
             .about("change file type inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("verify")
-            .arg(
-                arg!(-t --type <TYPE> "type of the file")
+            .arg(Arg::new("type").long("type").short('t').value_name("TYPE").help("type of the file")
                     .required(true)
                     .value_parser(["atxt", "itxt", "mtxt"]),
             )
-            .arg(
-                arg!(-s --sexpr "write S-expressions to stderr").action(ArgAction::SetTrue)
+            .arg(Arg::new("sexpr").long("sexpr").short('s').help("write S-expressions to stderr").action(ArgAction::SetTrue))
+            .arg(Arg::new("config").long("config").short('c').value_name("JSON").help("modify diagnostic configuration")
+                .required(false)
+                .default_value(""),
             )
-            .arg(
-                arg!(-c --config <JSON> "modify diagnostic configuration")
-                    .required(false)
-                    .default_value(""),
-            )
-            .arg(
-                arg!(-w --workspace <PATH> "workspace directory")
-                    .required(false)
+            .arg(Arg::new("workspace").long("workspace").short('w').value_name("PATH").help("workspace directory")
+                .value_hint(ValueHint::FilePath)
+                .required(false)
             )
             .about("read from stdin and perform language analysis"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("minify")
-            .arg(
-                arg!(-t --type <TYPE> "type of the file")
-                    .required(true)
-                    .value_parser(["atxt"]),
+            .arg(Arg::new("type").long("type").short('t').value_name("TYPE").help("type of the file")
+                .required(true)
+                .value_parser(["atxt"])
             )
-            .arg(
-                arg!(--level <LEVEL> "set minification level")
-                    .value_parser(["0", "1", "2", "3"])
-                    .default_value("1"),
+            .arg(Arg::new("level").long("level").value_name("LEVEL").help("set minification level")
+                .value_parser(["0", "1", "2", "3"])
+                .default_value("1")
             )
-            .arg(arg!(--flags <VAL> "set minification flags").default_value("1"))
+            .arg(Arg::new("flags").long("flags").value_name("VAL").help("set minification flags").default_value("1"))
+            .arg(extern_arg())
             .group(
                 ArgGroup::new("opt")
                     .required(false)
                     .multiple(false)
-                    .args(["level", "flags"]),
+                    .args(["level", "flags"])
             )
             .about("reduce program size")
             .after_help("level 0=identity, 1=intra-line, 2=delete, 3=combine"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("renumber")
-            .arg(
-                arg!(-t --type <TYPE> "type of the file")
+            .arg(Arg::new("type").long("type").short('t').value_name("TYPE").help("type of the file")
                     .required(true)
                     .value_parser(["atxt","itxt"]),
             )
-            .arg(arg!(-b --beg <NUM> "lowest number to renumber").required(true))
-            .arg(arg!(-e --end <NUM> "highest number to renumber plus 1").required(true))
-            .arg(arg!(-f --first <NUM> "first number").required(true))
-            .arg(arg!(-s --step <NUM> "step between numbers").required(true))
-            .arg(arg!(-r --reorder "allow reordering of lines").action(ArgAction::SetTrue))
+            .arg(Arg::new("beg").long("beg").short('b').value_name("NUM").help("lowest number to renumber").required(true))
+            .arg(Arg::new("end").long("end").short('e').value_name("NUM").help("highest number to renumber plus 1").required(true))
+            .arg(Arg::new("first").long("first").short('f').value_name("NUM").help("first number").required(true))
+            .arg(Arg::new("step").long("step").short('s').value_name("NUM").help("step between numbers").required(true))
+            .arg(Arg::new("reorder").long("reorder").short('r').help("allow reordering of lines").action(ArgAction::SetTrue))
+            .arg(extern_arg())
             .about("renumber BASIC program lines"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("catalog")
-            .arg(arg!(-f --file <PATH> "path of directory inside disk image").required(false))
-            .arg(arg!(--generic "use generic output format").action(ArgAction::SetTrue))
+            .arg(file_arg("path of directory inside disk image",false,false))
+            .arg(Arg::new("generic").long("generic").help("use generic output format").action(ArgAction::SetTrue))
             .arg(dimg_arg_opt.clone())
+            .arg(pro_arg())
             .visible_alias("cat")
             .visible_alias("dir")
             .visible_alias("ls")
@@ -339,6 +393,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg_opt.clone())
             .arg(Arg::new("meta").long("meta").help("include metadata").action(ArgAction::SetTrue))
             .arg(indent_arg.clone())
+            .arg(pro_arg())
             .about("write directory tree as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -346,6 +401,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         Command::new("stat")
             .arg(dimg_arg_opt.clone())
             .arg(indent_arg.clone())
+            .arg(pro_arg())
             .about("write FS statistics as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -353,6 +409,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         Command::new("geometry")
             .arg(dimg_arg_opt.clone())
             .arg(indent_arg.clone())
+            .arg(pro_arg())
             .about("write disk geometry as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -367,6 +424,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true)
                     .value_parser(["atxt", "itxt", "mtxt"]),
             )
+            .arg(console_arg())
             .visible_alias("tok")
             .about("read from stdin, tokenize, write to stdout"),
     );
@@ -395,6 +453,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(
                 Arg::new("literals").long("literals").help("assign values to disassembled hex labels").action(ArgAction::SetTrue)
             )
+            .arg(console_arg())
             .about("read from stdin, assemble, write to stdout")
             .after_help("At present this is limited, it will error out if program counter or symbol value cannot be determined.")
     );
@@ -425,6 +484,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true),
             )
             .arg(indent_arg.clone())
+            .arg(pro_arg())
             .about("write JSON list of matching paths to stdout")
             .after_help("the pattern may need to be quoted depending on shell\n\n".to_string() + IN_HELP)
     );

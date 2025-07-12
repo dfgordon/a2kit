@@ -220,11 +220,6 @@ pub fn eval_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
     eval_any_expr(start_node, source, pc, symbols, scope, false)
 }
 
-#[deprecated(since="3.6.0", note="use eval_conditional instead")]
-pub fn eval_if(start_node: &tree_sitter::Node, source: &str) -> Result<i64,DYNERR> {
-    eval_conditional(start_node,source,None,&Symbols::new(),None)
-}
-
 /// Evaluate IF or DO argument, start node can be `psop_if`, `psop_do`, `arg_if` or `arg_do`.
 pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>, symbols: &Symbols, scope: Option<&Symbol>) -> Result<i64,DYNERR> {
     let arg_node = match start_node.kind() {

@@ -64,14 +64,6 @@ pub fn is_slice_uniform(slice: &[u8]) -> bool {
     true
 }
 
-#[deprecated="use equivalent function in bios::skew"]
-pub fn cpm_blocking(ts_list: Vec<[usize;2]>,sec_shift: u8,heads: usize) -> Result<Vec<[usize;3]>,img::Error> {
-    match skew::cpm_blocking(ts_list, sec_shift, heads) {
-        Ok(ans) => Ok(ans),
-        Err(_) => Err(img::Error::SectorAccess)
-    }
-}
-
 pub struct Track {
     mode: u8,
     cylinder: u8,
@@ -417,17 +409,6 @@ impl img::DiskImage for Imd {
     fn num_heads(&self) -> usize {
         self.heads
     }
-    fn track_2_ch(&self,track: usize) -> [usize;2] {
-        [self.tracks[track].cylinder as usize,(self.tracks[track].head & HEAD_MASK) as usize]
-    }
-    fn ch_2_track(&self,ch: [usize;2]) -> usize {
-        for i in 0..self.tracks.len() {
-            if self.tracks[i].cylinder as usize==ch[0] && (self.tracks[i].head & HEAD_MASK) as usize==ch[1] {
-                return i
-            }
-        }
-        panic!("cylinder {}, head {} does not exist",ch[0],ch[1]);
-    }
     fn byte_capacity(&self) -> usize {
         let mut ans = 0;
         for trk in &self.tracks {
@@ -702,9 +683,11 @@ impl img::DiskImage for Imd {
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.cylinder as usize,
+            fraction: [0,1],
             head: phys_head,
             flux_code,
-            nib_code: img::NibbleCode::None,
+            addr_code: img::FieldCode::None,
+            data_code: img::FieldCode::None,
             chss_map
         }))
     }

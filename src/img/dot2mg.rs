@@ -75,7 +75,7 @@ impl Dot2mg {
         };
         let raw_img: Box<dyn img::DiskImage> = match (kind,wrap) {
             (img::names::A2_DOS33_KIND,Some(img::DiskImageType::DO)) => Box::new(img::dsk_do::DO::create(35,16)),
-            (img::names::A2_DOS33_KIND,Some(img::DiskImageType::NIB)) => Box::new(img::nib::Nib::create(vol,kind)),
+            (img::names::A2_DOS33_KIND,Some(img::DiskImageType::NIB)) => Box::new(img::nib::Nib::create(vol,kind)?),
             (img::names::A2_400_KIND,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(800)),
             (img::names::A2_800_KIND,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(1600)),
             (img::names::A2_HD_MAX,Some(img::DiskImageType::PO)) => Box::new(img::dsk_po::PO::create(65535)),

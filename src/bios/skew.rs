@@ -7,7 +7,6 @@
 //! submodules of either can use the same tables.
 
 use log::{trace,debug,info,error};
-use crate::img::disk35;
 use crate::img::{names,DiskKind};
 use crate::DYNERR;
 
@@ -64,6 +63,10 @@ pub fn prodos_block_from_ts(track: usize,sector: usize) -> Result<(usize,usize),
 /// The returned vector is arranged in order.
 /// Works for either 5.25 inch (two pairs) or 3.5 inch (one pair) disks.
 pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2]>,DYNERR> {
+    const ZONED_SECS_PER_TRACK: [usize;5] = [12,11,10,9,8];
+    // number of blocks occuring prior to start of zone; last element marks the end of disk.
+    const ZONE_BOUNDS_1: [usize;6] = [0,192,368,528,672,800];
+    const ZONE_BOUNDS_2: [usize;6] = [0,384,736,1056,1344,1600];
     match *kind {
         DiskKind::LogicalSectors(names::A2_DOS33) | names::A2_DOS33_KIND => {
             let sector1: [usize;8] = [0,13,11,9,7,5,3,1];
@@ -74,15 +77,15 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2
         },
         names::A2_400_KIND => {
             let zone = match block {
-                x if x<disk35::ZONE_BOUNDS_1[1] => 0,
-                x if x<disk35::ZONE_BOUNDS_1[2] => 1,
-                x if x<disk35::ZONE_BOUNDS_1[3] => 2,
-                x if x<disk35::ZONE_BOUNDS_1[4] => 3,
-                x if x<disk35::ZONE_BOUNDS_1[5] => 4,
+                x if x<ZONE_BOUNDS_1[1] => 0,
+                x if x<ZONE_BOUNDS_1[2] => 1,
+                x if x<ZONE_BOUNDS_1[3] => 2,
+                x if x<ZONE_BOUNDS_1[4] => 3,
+                x if x<ZONE_BOUNDS_1[5] => 4,
                 _ => panic!("illegal block request")
             };
-            let rel_block = block - disk35::ZONE_BOUNDS_1[zone];
-            let secs_per_track = disk35::ZONED_SECS_PER_TRACK[zone];
+            let rel_block = block - ZONE_BOUNDS_1[zone];
+            let secs_per_track = ZONED_SECS_PER_TRACK[zone];
             let track = 16 * zone + rel_block/secs_per_track;
             let sector = rel_block%secs_per_track;
             trace!("locate block for 3.5 inch disk: track {}, sector {}",track,sector);
@@ -90,15 +93,15 @@ pub fn ts_from_prodos_block(block: usize,kind: &DiskKind) -> Result<Vec<[usize;2
         },
         names::A2_800_KIND => {
             let zone = match block {
-                x if x<disk35::ZONE_BOUNDS_2[1] => 0,
-                x if x<disk35::ZONE_BOUNDS_2[2] => 1,
-                x if x<disk35::ZONE_BOUNDS_2[3] => 2,
-                x if x<disk35::ZONE_BOUNDS_2[4] => 3,
-                x if x<disk35::ZONE_BOUNDS_2[5] => 4,
+                x if x<ZONE_BOUNDS_2[1] => 0,
+                x if x<ZONE_BOUNDS_2[2] => 1,
+                x if x<ZONE_BOUNDS_2[3] => 2,
+                x if x<ZONE_BOUNDS_2[4] => 3,
+                x if x<ZONE_BOUNDS_2[5] => 4,
                 _ => panic!("illegal block request")
             };
-            let rel_block = block - disk35::ZONE_BOUNDS_2[zone];
-            let secs_per_track = disk35::ZONED_SECS_PER_TRACK[zone];
+            let rel_block = block - ZONE_BOUNDS_2[zone];
+            let secs_per_track = ZONED_SECS_PER_TRACK[zone];
             let track = 32 * zone + rel_block/secs_per_track;
             let sector = rel_block%secs_per_track;
             trace!("locate block for 3.5 inch disk: track {}, sector {}",track,sector);
