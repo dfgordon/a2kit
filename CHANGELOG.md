@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixes
 
 * fix an issue where minifier level 3 could break valid code
-* fix some issues with handling of unusual WOZ tracks
+* fix some issues with handling of unusual WOZ layouts
 * correct various docstrings and log strings
 * register LSP commands (will be required by Neovim 0.13)
 
@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * create, read, and write with proprietary formats
     - from CLI use `--pro` argument with any disk image subcommand
+* support AppleSingle format (PR #2)
 * minify and renumber can be guarded by external references
 * CLI `mkdsk` supports creating blank or empty disks (issue #3)
 * support for quarter tracks
@@ -33,11 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * modules `disk35` and `disk525` are eliminated
 * various public entities are eliminated from `img::woz`
-* changes to `DiskImage`
+* changes to `DiskImage` trait
     - eliminated `track-2ch`, `ch_2_track`
 * enumeration `img::NibbleCode` is eliminated 
 * removed functions `lang::merlin::eval_if`, `img::imd::cpm_blocking`
-* trait function args changed: `Renumber::build_edits`
+* trait function args or return values changed: `Renumber::build_edits`, `Packing::get_load_address`
 
 ## [3.7.0] - 2025-03-22
 

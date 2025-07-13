@@ -52,7 +52,7 @@ pub enum CommandError {
     #[error("File not found")]
     FileNotFound,
     #[error("Key not found")]
-    KeyNotFound
+    KeyNotFound,
 }
 
 /// Types of files that may be distinguished by the file system or a2kit.
@@ -60,11 +60,13 @@ pub enum CommandError {
 /// in order to obtain the binary type code.
 #[derive(PartialEq,Clone,Copy)]
 pub enum ItemType {
+    FileImage,
+    Automatic,
+    AppleSingle,
     Raw,
     Binary,
     Text,
     Records,
-    FileImage,
     ApplesoftText,
     IntegerText,
     MerlinText,
@@ -79,18 +81,19 @@ pub enum ItemType {
     RawTrack,
     System,
     Metadata,
-    Automatic
 }
 
 impl FromStr for ItemType {
     type Err = CommandError;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
+            "any" => Ok(Self::FileImage),
+            "auto" => Ok(Self::Automatic),
+            "as" => Ok(Self::AppleSingle),
             "raw" => Ok(Self::Raw),
             "bin" => Ok(Self::Binary),
             "txt" => Ok(Self::Text),
             "rec" => Ok(Self::Records),
-            "any" => Ok(Self::FileImage),
             "atxt" => Ok(Self::ApplesoftText),
             "itxt" => Ok(Self::IntegerText),
             "mtxt" => Ok(Self::MerlinText),
@@ -105,7 +108,6 @@ impl FromStr for ItemType {
             "sec" => Ok(Self::Sector),
             "sys" => Ok(Self::System),
             "meta" => Ok(Self::Metadata),
-            "auto" => Ok(Self::Automatic),
             _ => Err(CommandError::UnknownItemType)
         }
     }

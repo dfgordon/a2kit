@@ -225,7 +225,7 @@ impl Packing for Packer {
         }
     }
     
-    fn get_load_address(&self,_fimg: &FileImage) -> u16 {
+    fn get_load_address(&self,_fimg: &FileImage) -> usize {
         0
     }
 

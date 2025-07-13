@@ -116,7 +116,7 @@ impl Packing for Packer {
             Err(Box::new(Error::BadFormat))
         }
     }
-    fn get_load_address(&self,_fimg: &FileImage) -> u16 {
+    fn get_load_address(&self,_fimg: &FileImage) -> usize {
         0
     }
     fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {

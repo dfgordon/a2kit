@@ -28,6 +28,7 @@ fn unpack_primitive(fimg: &FileImage,typ: ItemType,rec_len: Option<usize>,trunc:
     match typ {
         ItemType::Automatic => fimg.unpack(),
         ItemType::FileImage => Ok(UnpackedData::Text(fimg.to_json(indent))),
+        ItemType::AppleSingle => Ok(UnpackedData::Binary(fimg.unpack_apple_single()?)),
         ItemType::Records => Ok(UnpackedData::Text(fimg.unpack_rec_str(rec_len,indent)?)),
         ItemType::ApplesoftTokens => Ok(UnpackedData::Binary(fimg.unpack_tok()?)),
         ItemType::IntegerTokens => Ok(UnpackedData::Binary(fimg.unpack_tok()?)),
