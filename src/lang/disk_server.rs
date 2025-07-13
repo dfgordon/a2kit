@@ -14,7 +14,7 @@ pub struct DiskServer {
 pub struct SimpleFileImage {
     pub file_system: String,
     pub fs_type: Vec<u8>,
-    pub load_addr: u16,
+    pub load_addr: usize,
     pub data: Vec<u8>
 }
 

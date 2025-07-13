@@ -1,10 +1,10 @@
 //! # File System Module
 //! 
 //! File system modules handle interactions with directories and files.  There is a sub-module for
-//! each supported file system.
+//! each supported file system.  File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
+//! some disk image, which it uses as storage.
 //! 
-//! File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
-//! some disk image, which it uses as storage.  Files are represented by a `FileImage`
+//! Files are represented by a `FileImage`
 //! object.  This is a low level representation of the file that works for any of the supported
 //! file systems.  File image data is processed through the `Packing` trait.  There are
 //! convenience functions in `DiskFS` such as `read_text`, which gets a file image and unpacks it
@@ -171,13 +171,15 @@ pub trait TextConversion {
     }
 }
 
-/// This is an abstraction of a sparse file and its metadata.
-/// Sequential files are a special case.  Metadata items are represented by a Vec<u8>
+/// This is an abstraction of a file that must work for any supported file system.
+/// In particular, it needs to capture all possible attibutes of a file, such
+/// as sparse structure and metadata.  Metadata items are represented by a Vec<u8>
 /// that contains the same byte ordering that is stored on disk.  In the JSON representation
 /// these become hex strings.  The `DiskFS` is responsible for further interpretation.
 /// The data itself is stored in a map with a numerical chunk id as the key, and a Vec<u8>
 /// as the chunk data.  The JSON representation uses decimal strings for the key and hex
-/// strings for the data.  *Beware of sorting routines that put "10" before "9"*.
+/// strings for the data.  If it is important to sort the chunk map, don't forget to convert
+/// the decimal strings to number types first.
 /// 
 /// Each `DiskFS` trait object provides its own routine for creating an empty file image.
 /// Buffer sizes should be set as appropriate for that FS.
@@ -220,7 +222,12 @@ pub trait Packing {
     /// Check syntax and set the path for this file image
     fn set_path(&self,fimg: &mut FileImage,path: &str) -> STDRESULT;
     /// Get load address for this file image, if applicable.
-    fn get_load_address(&self,fimg: &FileImage) -> u16;
+    fn get_load_address(&self,fimg: &FileImage) -> usize;
+    /// automatically select a packing strategy by analyzing the data
+    fn pack(&self,_fimg: &mut FileImage, _dat: &[u8], _load_addr: Option<usize>) -> STDRESULT {
+        log::error!("could not automatically pack");
+        Err(Box::new(crate::fs::Error::FileFormat))
+    }
     /// automatically select an unpacking strategy based on the file image metadata
     fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR>;
     /// Pack raw byte stream into file image.
@@ -254,6 +261,16 @@ pub trait Packing {
     fn pack_rec(&self, fimg: &mut FileImage, recs: &Records) -> STDRESULT;
     /// turn the file image into random access text records
     fn unpack_rec(&self,fimg: &FileImage,rec_len: Option<usize>) -> Result<Records,DYNERR>;
+    /// turn an AppleSingle file image into a native file image
+    fn pack_apple_single(&self,_fimg: &mut FileImage, _dat: &[u8], _load_addr: Option<usize>) -> STDRESULT {
+        log::error!("AppleSingle is not supported for this file system");
+        Err(Box::new(Error::FileSystemMismatch))
+    }
+    /// turn the native file image into an AppleSingle file image
+    fn unpack_apple_single(&self,_fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        log::error!("AppleSingle is not supported for this file system");
+        Err(Box::new(Error::FileSystemMismatch))
+    }
 }
 
 /// This is an abstraction used in handling random access text files.

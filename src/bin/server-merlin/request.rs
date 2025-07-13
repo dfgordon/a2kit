@@ -304,8 +304,9 @@ pub fn handle_request(
                                 resp = match item {
                                     disk_server::SelectionResult::Directory(dir) => Response::new_ok(req.id,serde_json::to_value(dir).expect("json")),
                                     disk_server::SelectionResult::FileData(mut sfimg) => {
-                                        // encode the load address in first two bytes
-                                        let mut ans = u16::to_le_bytes(sfimg.load_addr).to_vec();
+                                        // encode the load address in first two bytes, if there is a bank byte it is ignored
+                                        let addr16 = (sfimg.load_addr & 0xffff) as u16;
+                                        let mut ans = u16::to_le_bytes(addr16).to_vec();
                                         ans.append(&mut sfimg.data);
                                         Response::new_ok(req.id, serde_json::to_value(ans).expect("json"))
                                     }

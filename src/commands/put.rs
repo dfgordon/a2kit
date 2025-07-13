@@ -1,7 +1,7 @@
 use clap;
 use std::io::Read;
 use std::str::FromStr;
-use super::{ItemType,CommandError};
+use super::{ItemType, CommandError};
 use crate::fs::FileImage;
 use crate::STDRESULT;
 
@@ -10,20 +10,22 @@ const RANGED_ACCESS: &str =
 
 fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, typ: ItemType) -> STDRESULT {
     match typ {
-        ItemType::Raw => fimg.pack_raw(&dat),
-        ItemType::Binary => fimg.pack_bin(&dat,load_addr,None),
-        ItemType::ApplesoftTokens => fimg.pack_tok(&dat,ItemType::ApplesoftTokens,None),
-        ItemType::IntegerTokens => fimg.pack_tok(&dat,ItemType::IntegerTokens,None),
-        ItemType::MerlinTokens => fimg.pack_raw(&dat),
+        ItemType::Automatic => fimg.pack(dat,load_addr),
+        ItemType::AppleSingle => fimg.pack_apple_single(dat, load_addr),
+        ItemType::Raw => fimg.pack_raw(dat),
+        ItemType::Binary => fimg.pack_bin(dat,load_addr,None),
+        ItemType::ApplesoftTokens => fimg.pack_tok(dat,ItemType::ApplesoftTokens,None),
+        ItemType::IntegerTokens => fimg.pack_tok(dat,ItemType::IntegerTokens,None),
+        ItemType::MerlinTokens => fimg.pack_raw(dat),
         ItemType::Text => {
-            let txt = std::str::from_utf8(&dat)?;
+            let txt = std::str::from_utf8(dat)?;
             fimg.pack_txt(txt)
         },
         ItemType::Records => {
-            let json_str = std::str::from_utf8(&dat)?;
+            let json_str = std::str::from_utf8(dat)?;
             fimg.pack_rec_str(json_str)
         },
-        _ => return Err(Box::new(CommandError::UnsupportedItemType))
+        _ => Err(Box::new(CommandError::UnsupportedItemType))
     }
 }
 

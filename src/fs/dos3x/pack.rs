@@ -68,13 +68,13 @@ impl Packing for Packer {
             Err(Box::new(Error::SyntaxError))
         }
     }
-    fn get_load_address(&self,fimg: &FileImage) -> u16 {
+    fn get_load_address(&self,fimg: &FileImage) -> usize {
         match FileType::from_u8(fimg.fs_type[0] & 0x7f) {
             Some(FileType::Integer) => 0,
             Some(FileType::Applesoft) => {
                 match fimg.chunks.get(&0) {
                     Some(chunk) => match chunk.len()>2 {
-                        true => crate::lang::applesoft::deduce_address(&chunk[2..]),
+                        true => crate::lang::applesoft::deduce_address(&chunk[2..]) as usize,
                         false => 0
                     },
                     None => 0
@@ -83,7 +83,7 @@ impl Packing for Packer {
             Some(FileType::Binary) => {
                 match fimg.chunks.get(&0) {
                     Some(chunk) => match chunk.len()>2 {
-                        true => u16::from_le_bytes([chunk[0],chunk[1]]),
+                        true => u16::from_le_bytes([chunk[0],chunk[1]]) as usize,
                         false => 0
                     },
                     None => 0

@@ -1,10 +1,28 @@
 
+//! # File Image Module
+//! 
+//! This module is concerned with universal representations of a file that work across
+//! multiple file systems.  We refer to this concept as a "file image."
+//! 
+//! The native file image used by `a2kit` is the `FileImage` trait object.
+//! All data must be packed as a `FileImage` before being written to a disk image.
+//! All data read from a disk image will be initially in the form of a `FileImage`.
+//! `FileImage` data can be unpacked into a form suitable for ordinary consumers.
+//! If the data is not unpacked, the user will receive the `FileImage` as a JSON string.
+//! 
+//! There are other "file image" formats that have been developed over the years.
+//! For example, the AppleSingle format is a kind of file image that is geared toward
+//! handling resource forks (but it does not handle sparse files).
+//! Such formats are handled by converting to and from `FileImage` before other operations.
+
 use std::str::FromStr;
 use std::collections::{BTreeMap,HashMap};
 use super::{FileImage,Packing,UnpackedData,Records,Error};
 use super::{cpm,dos3x,fat,pascal,prodos};
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
+
+pub mod r#as;
 
 const A2_DOS: &str = "a2 dos";
 const A2_PASCAL: &str = "a2 pascal";
@@ -262,8 +280,11 @@ impl FileImage {
         self.packer().set_path(self,path)
     }
     /// Get load address for this file image, if applicable.
-    pub fn get_load_address(&self) -> u16 {
+    pub fn get_load_address(&self) -> usize {
         self.packer().get_load_address(self)
+    }
+    pub fn pack(&mut self, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+        self.packer().pack(self, dat, load_addr)
     }
     /// automatically select an unpacking strategy based on the file image metadata
     pub fn unpack(&self) -> Result<UnpackedData,DYNERR> {
@@ -323,5 +344,13 @@ impl FileImage {
     /// get random access text records
     pub fn unpack_rec(&self,rec_len: Option<usize>) -> Result<Records,DYNERR> {
         self.packer().unpack_rec(self,rec_len)
+    }
+    /// convert an AppleSingle file image into a native file image
+    pub fn pack_apple_single(&mut self, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+        self.packer().pack_apple_single(self, dat, load_addr)
+    }
+    /// convert the native file image into an AppleSingle file image
+    pub fn unpack_apple_single(&self) -> Result<Vec<u8>,DYNERR> {
+        self.packer().unpack_apple_single(self)
     }
 }
