@@ -695,7 +695,7 @@ impl Symbols {
 impl MerlinParser {
     pub fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_merlin6502::language()).expect(RCH);
+        parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()).expect(RCH);
         Self {
             parser,
             op_book: handbook::operations::OperationHandbook::new(),

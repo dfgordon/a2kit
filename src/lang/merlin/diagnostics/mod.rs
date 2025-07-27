@@ -396,7 +396,7 @@ impl Analysis for Analyzer {
     }
     fn read_stdin(&self) -> String {
         if atty::is(atty::Stream::Stdin) {
-            return crate::lang::line_entry(tree_sitter_merlin6502::language(), ":");
+            return crate::lang::line_entry(tree_sitter_merlin6502::LANGUAGE.into(), ":");
         }
         let mut program = String::new();
         io::stdin().read_to_string(&mut program).expect("failed to read stdin");
@@ -431,7 +431,7 @@ impl Analysis for Analyzer {
         [err,warn,info]
     }
     fn eprint_lines_sexpr(&self,program: &str) {
-        crate::lang::eprint_lines_sexpr(tree_sitter_merlin6502::language(), program,1);
+        crate::lang::eprint_lines_sexpr(tree_sitter_merlin6502::LANGUAGE.into(), program,1);
     }
 }
 

@@ -64,19 +64,12 @@ impl Ptr {
 
 impl PartialOrd for Ptr {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.unwrap().partial_cmp(&other.unwrap())
-    }
-    fn ge(&self, other: &Self) -> bool {
-        self.unwrap().ge(&other.unwrap())
-    }
-    fn gt(&self, other: &Self) -> bool {
-        self.unwrap().gt(&other.unwrap())
-    }
-    fn le(&self, other: &Self) -> bool {
-        self.unwrap().le(&other.unwrap())
-    }
-    fn lt(&self, other: &Self) -> bool {
-        self.unwrap().lt(&other.unwrap())
+        match (self,other) {
+            (Self::Entry(x),Self::Entry(y)) => x.partial_cmp(y),
+            (Self::Cluster(x),Self::Cluster(y)) => x.partial_cmp(y),
+            (Self::LogicalSector(x),Self::LogicalSector(y)) => x.partial_cmp(y),
+            _ => None
+        }
     }
 }
 

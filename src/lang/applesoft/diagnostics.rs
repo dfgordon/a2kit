@@ -131,7 +131,7 @@ impl Analysis for Analyzer {
         self.fcollisions = HashMap::new();
         self.vcollisions = HashMap::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_applesoft::language())?;
+		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into())?;
         for pass in 1..3 {
             self.last_good_line_number = -1;
             self.row = 0;
@@ -169,7 +169,7 @@ impl Analysis for Analyzer {
     }
     fn read_stdin(&self) -> String {
         if atty::is(atty::Stream::Stdin) {
-            return crate::lang::line_entry(tree_sitter_applesoft::language(), "]");
+            return crate::lang::line_entry(tree_sitter_applesoft::LANGUAGE.into(), "]");
         }
         let mut program = String::new();
         io::stdin().read_to_string(&mut program).expect("failed to read stdin");
@@ -196,7 +196,7 @@ impl Analysis for Analyzer {
         [err,warn,info]
     }
     fn eprint_lines_sexpr(&self,program: &str) {
-        crate::lang::eprint_lines_sexpr(tree_sitter_applesoft::language(), program,1);
+        crate::lang::eprint_lines_sexpr(tree_sitter_applesoft::LANGUAGE.into(), program,1);
     }
 }
 

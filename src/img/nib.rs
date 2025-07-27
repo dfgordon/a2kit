@@ -7,7 +7,8 @@
 
 use a2kit_macro::DiskStructError;
 use crate::img;
-use crate::img::tracks::{SectorKey,TrackKey};
+use crate::img::tracks::{SectorKey,TrackKey,Method,FluxCells};
+use crate::img::tracks::gcr::TrackEngine;
 use crate::{STDRESULT,DYNERR};
 
 pub const TRACK_BYTE_CAPACITY_NIB: usize = 6656;
@@ -23,10 +24,12 @@ pub struct Nib {
     tracks: usize,
     trk_cap: usize,
     data: Vec<u8>,
+    /// state: controller
+    engine: TrackEngine,
+    /// state: current track data and angle
+    cells: FluxCells,
     /// state: current track
     track_pos: usize,
-    /// state: current angle
-    bit_pos: usize
 }
 
 impl Nib {
@@ -42,10 +45,16 @@ impl Nib {
             }
         };
         let mut data: Vec<u8> = Vec::new();
+        let mut init_cells = None;
+        let mut engine = TrackEngine::create(Method::Edit,true);
         for track in 0..35 {
             let skey = SectorKey::a2_525(vol, track);
             let zfmt = fmt.get_zone_fmt(0, 0)?;
-            let (mut buf,_) = img::tracks::gcr::format_track(skey, TRACK_BYTE_CAPACITY_NIB,&zfmt,true)?;
+            let cells = engine.format_track(skey, TRACK_BYTE_CAPACITY_NIB,&zfmt)?;
+            let mut buf = cells.to_woz_buf(TRACK_BYTE_CAPACITY_NIB,0xff);
+            if track==0 {
+                init_cells = Some(cells);
+            }
             data.append(&mut buf);
         }
         Ok(Self {
@@ -54,8 +63,9 @@ impl Nib {
             tracks: 35,
             trk_cap: TRACK_BYTE_CAPACITY_NIB,
             data,
-            track_pos: usize::MAX,
-            bit_pos: 0
+            engine,
+            cells: init_cells.unwrap(),
+            track_pos: 0,
         })
     }
     fn try_track(&self,tkey: TrackKey) -> Result<usize,DYNERR> {
@@ -79,15 +89,22 @@ impl Nib {
         let track = self.try_track(tkey)?;
         Ok(&mut self.data[track * self.trk_cap..(track+1) * self.trk_cap])
     }
-    /// Create a lightweight object to read/write the bits and update the state of the head position
-    fn new_rw_obj(&mut self,tkey: TrackKey) -> Result<img::tracks::gcr::TrackEngine,DYNERR> {
-        let track = self.try_track(tkey)?;
+    /// Save changes to the track
+    fn write_back_track(&mut self) {
+        let track = self.track_pos;
+        self.data[track * self.trk_cap..(track+1) * self.trk_cap].copy_from_slice(&self.cells.to_woz_buf(self.trk_cap,0xff));
+    }
+    /// Goto track and extract FluxCells if necessary, returns [motor,head,width]
+    fn goto_track(&mut self,tkey: TrackKey) -> Result<[usize;3],DYNERR> {
+        let track = self.try_track(tkey.clone())?;
         if self.track_pos != track {
             log::debug!("goto track {} of {}",track,self.kind);
+            self.write_back_track();
             self.track_pos = track;
+            let bit_count = self.trk_cap * 8;
+            self.cells = FluxCells::create_woz_bits(bit_count,self.get_trk_bits_ref(tkey.clone())?);
         }
-        let bit_count = self.trk_cap * 8;
-        Ok(img::tracks::gcr::TrackEngine::create(bit_count,self.bit_pos,true))
+        img::woz::get_motor_pos(tkey, &self.kind)
     }
 }
 
@@ -134,39 +151,39 @@ impl img::DiskImage for Nib {
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let mut reader = self.new_rw_obj(tkey.clone())?;
+        self.goto_track(tkey.clone())?;
         let [motor,head,_] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?;
         let skey = SectorKey::a2_525(254, u8::try_from((motor+1)/4)?);
-        let ans = reader.read_sector(self.get_trk_bits_ref(tkey)?,&skey,u8::try_from(sec)?,zfmt)?;
-        self.bit_pos = reader.get_bit_ptr();
+        let ans = self.engine.read_sector(&mut self.cells,&skey,u8::try_from(sec)?,zfmt)?;
         Ok(ans)
     }
     fn write_pro_sector(&mut self,tkey: TrackKey,sec: usize,dat: &[u8]) -> Result<(),DYNERR> {
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let mut writer = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,_] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,_] = self.goto_track(tkey.clone())?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?.clone();
         let skey = SectorKey::a2_525(254, u8::try_from((motor+1)/4)?);
-        writer.write_sector(self.get_trk_bits_mut(tkey)?,dat,&skey,u8::try_from(sec)?,&zfmt)?;
-        self.bit_pos = writer.get_bit_ptr();
+        self.engine.write_sector(&mut self.cells,dat,&skey,u8::try_from(sec)?,&zfmt)?;
         Ok(())
     }
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
         match buf.len() {
             l if l==35*TRACK_BYTE_CAPACITY_NIB => {
+                let data = buf.to_vec();
+                let cells = FluxCells::create_woz_bits(TRACK_BYTE_CAPACITY_NIB*8, &data[0..TRACK_BYTE_CAPACITY_NIB]);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NIB,
-                    data: buf.to_vec(),
-                    track_pos: usize::MAX,
-                    bit_pos: 0
+                    data,
+                    engine: TrackEngine::create(Method::Edit, true),
+                    cells,
+                    track_pos: 0,
                 };
                 if let Ok(Some(_sol)) = disk.get_track_solution(0) {
                     log::debug!("setting disk kind to {}",disk.kind);
@@ -177,14 +194,17 @@ impl img::DiskImage for Nib {
                 }
             },
             l if l==35*TRACK_BYTE_CAPACITY_NB2 => {
+                let data = buf.to_vec();
+                let cells = FluxCells::create_woz_bits(TRACK_BYTE_CAPACITY_NB2*8, &data[0..TRACK_BYTE_CAPACITY_NB2]);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NB2,
-                    data: buf.to_vec(),
-                    track_pos: usize::MAX,
-                    bit_pos: 0
+                    data,
+                    engine: TrackEngine::create(Method::Edit, true),
+                    cells,
+                    track_pos: usize::MAX
                 };
                 if let Ok(Some(_sol)) = disk.get_track_solution(0) {
                     log::debug!("setting disk kind to {}",disk.kind);
@@ -201,6 +221,7 @@ impl img::DiskImage for Nib {
         }
     }
     fn to_bytes(&mut self) -> Vec<u8> {
+        self.write_back_track();
         self.data.clone()
     }
     fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
@@ -225,13 +246,12 @@ impl img::DiskImage for Nib {
         self.get_pro_track_solution(TrackKey::Track(track))
     }
     fn get_pro_track_solution(&mut self,tkey: TrackKey) -> Result<Option<img::TrackSolution>,DYNERR> {
-        let mut reader = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,width] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,width] = self.goto_track(tkey.clone())?;
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey.clone())?,zfmt) {
+            if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
                 return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
             }
         }
@@ -240,7 +260,7 @@ impl img::DiskImage for Nib {
         self.kind = img::names::A2_DOS32_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey.clone())?,zfmt) {
+        if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
             if chss_map.len()==13 {
                 return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
             }
@@ -249,7 +269,7 @@ impl img::DiskImage for Nib {
         self.kind = img::names::A2_DOS33_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-        if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey)?,zfmt) {
+        if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
             if chss_map.len()==16 {
                 return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
             }
@@ -272,10 +292,9 @@ impl img::DiskImage for Nib {
         self.get_pro_track_nibbles(TrackKey::CH((cyl,head)))
     }
     fn get_pro_track_nibbles(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
-        let mut reader = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,_] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,_] = self.goto_track(tkey.clone())?;
         let zfmt = img::tracks::get_zone_fmt(motor, head, &self.fmt)?;
-        Ok(reader.to_nibbles(self.get_trk_bits_ref(tkey)?, zfmt))
+        Ok(self.engine.to_nibbles(&mut self.cells, zfmt))
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         let tkey = TrackKey::Track(self.track_pos);

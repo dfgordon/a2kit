@@ -37,13 +37,12 @@ pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
     return [days[0],days[1],hours as u8,minutes as u8];
 }
 
-// TODO: return an option
-pub fn unpack_date(cpm_date: [u8;4]) -> chrono::NaiveDateTime {
+pub fn unpack_date(cpm_date: [u8;4]) -> Option<chrono::NaiveDateTime> {
     let ref_date = chrono::NaiveDate::from_ymd_opt(1978, 1, 1).unwrap();
     let now = ref_date + Duration::days(u16::from_le_bytes([cpm_date[0],cpm_date[1]]) as i64 - 1);
     let hours = (cpm_date[2] & 0x0f) + 10*(cpm_date[2] >> 4);
     let minutes = (cpm_date[3] & 0x0f) + 10*(cpm_date[3] >> 4);
-    return now.and_hms_opt(hours.into(), minutes.into(), 0).unwrap();
+    return now.and_hms_opt(hours.into(), minutes.into(), 0);
 }
 
 /// Take string such as `2:USER2.TXT` and return (2,"USER2.TXT")

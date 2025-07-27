@@ -159,7 +159,7 @@ pub struct WorkspaceScanner {
 impl WorkspaceScanner {
     pub fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_merlin6502::language()).expect(RCH);
+        parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()).expect(RCH);
         Self {
             parser,
             line: String::new(),

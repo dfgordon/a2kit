@@ -242,7 +242,7 @@ pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option
         return if txt.starts_with("MX") {
             // Important to reparse the whole arg_if node in order to handle operator precedence.
             let mut parser = tree_sitter::Parser::new();
-            parser.set_language(&tree_sitter_merlin6502::language()).expect("failed to load language");
+            parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()).expect("failed to load language");
             let dummy_code = [" lda ",txt,"\n"].concat();
             if let Some(tree) = parser.parse(&dummy_code,None) {
                 let mut curs = tree.root_node().walk();
@@ -297,7 +297,7 @@ impl Assembler {
 	pub fn new() -> Self
 	{
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_merlin6502::language()).expect("failed to load language");
+        parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()).expect("failed to load language");
         Self {
             parser,
             row: 0,

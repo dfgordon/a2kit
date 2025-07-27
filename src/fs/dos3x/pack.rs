@@ -1,6 +1,8 @@
 use num_traits::FromPrimitive;
 use std::str::FromStr;
 use a2kit_macro::DiskStruct;
+use super::super::fimg::r#as::AppleSingleFile;
+use binrw::{BinRead,BinWrite};
 use super::types::*;
 use super::{Packer,Error};
 use super::super::{Packing,TextConversion,FileImage,UnpackedData,Records};
@@ -200,5 +202,62 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         let recs = self.unpack_rec(fimg,rec_len)?;
         Ok(recs.to_json(indent))
+    }
+    fn pack_apple_single(&self,fimg: &mut FileImage, dat: &[u8], new_load_addr: Option<usize>) -> STDRESULT {
+        let apple_single = AppleSingleFile::read(&mut std::io::Cursor::new(dat))?;
+        let dat = apple_single.get_data_fork()?;
+        match apple_single.get_dos3x_info() {
+            Some((typ,aux)) => {
+                let load_addr = match new_load_addr {
+                    Some(a) => a,
+                    None => aux as usize
+                };
+                match FileType::from_u8(typ) {
+                    Some(FileType::Text) => self.pack_raw(fimg,&dat)?,
+                    Some(FileType::Applesoft) => self.pack_tok(fimg,&dat,ItemType::ApplesoftTokens,None)?,
+                    Some(FileType::Integer) => self.pack_tok(fimg,&dat,ItemType::IntegerTokens,None)?,
+                    Some(FileType::Binary) => self.pack_bin(fimg,&dat,Some(load_addr),None)?,
+                    _ => {
+                        log::warn!("unknown file type being treated as binary");
+                        self.pack_bin(fimg,&dat,Some(load_addr),None)?
+                    }
+                };
+                // Only use the AppleSingle name if the FileImage name is empty; the
+                // command line name is loaded into the FileImage before we get here.
+                if fimg.full_path.len() == 0 {
+                    fimg.full_path = apple_single.get_real_name();
+                }
+                Ok(())
+            },
+            None => {
+                log::error!("AppleSingle is missing ProDOS information");
+                Err(Box::new(crate::fs::Error::FileSystemMismatch))
+            }
+        }
+    }
+    fn unpack_apple_single(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        if fimg.fs_type.len() != 1 {
+            log::error!("unexpected file type in file image");
+            return Err(Box::new(crate::fs::Error::FileImageFormat));
+        }
+
+        let dat = match FileType::from_u8(fimg.fs_type[0]) {
+            Some(FileType::Text) => self.unpack_txt(fimg)?.as_bytes().to_vec(),
+            Some(FileType::Applesoft) => self.unpack_tok(fimg)?,
+            Some(FileType::Integer) => self.unpack_tok(fimg)?,
+            Some(FileType::Binary) => self.unpack_bin(fimg)?,
+            _ => {
+                log::warn!("unknown file type being treated as binary");
+                self.unpack_bin(fimg)?
+            }
+        };
+
+        let mut apple_single = AppleSingleFile::new();
+        apple_single.add_real_name(&fimg.full_path);
+        apple_single.add_dos3x_info(fimg.get_ftype() as u8,fimg.get_aux() as u16);
+        apple_single.add_data_fork(&dat);
+        let mut ans = std::io::Cursor::new(Vec::new());
+        AppleSingleFile::write(&mut apple_single,&mut ans)?;
+        Ok(ans.into_inner())
     }
 }

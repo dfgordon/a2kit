@@ -46,7 +46,7 @@ impl Analysis for Analyzer {
         self.diagnostics = Vec::new();
         self.symbols = super::Symbols::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_integerbasic::language())?;
+		parser.set_language(&tree_sitter_integerbasic::LANGUAGE.into())?;
         for pass in 1..3 {
             self.last_good_line_number = -1;
             self.saved_depth = 0;
@@ -81,7 +81,7 @@ impl Analysis for Analyzer {
     }
     fn read_stdin(&self) -> String {
         if atty::is(atty::Stream::Stdin) {
-            return crate::lang::line_entry(tree_sitter_integerbasic::language(), ">");
+            return crate::lang::line_entry(tree_sitter_integerbasic::LANGUAGE.into(), ">");
         }
         let mut program = String::new();
         io::stdin().read_to_string(&mut program).expect("failed to read stdin");
@@ -108,7 +108,7 @@ impl Analysis for Analyzer {
         [err,warn,info]
     }
     fn eprint_lines_sexpr(&self,program: &str) {
-        crate::lang::eprint_lines_sexpr(tree_sitter_integerbasic::language(), program,1);
+        crate::lang::eprint_lines_sexpr(tree_sitter_integerbasic::LANGUAGE.into(), program,1);
     }
 }
 

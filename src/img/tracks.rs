@@ -19,6 +19,7 @@ use crate::img;
 use crate::DYNERR;
 use crate::STDRESULT;
 use std::fmt;
+use std::str::FromStr;
 use std::collections::HashMap;
 use math_parse::MathParse;
 use bit_vec::BitVec;
@@ -49,6 +50,169 @@ fn eval_u8(expr: &str,ctx: &std::collections::HashMap<String,String>) -> Result<
         Err(e) => {
             log::error!("problem parsing {}: {}",expr,e);
             Err(Box::new(img::Error::MetadataMismatch))
+        }
+    }
+}
+
+#[derive(Clone,PartialEq)]
+pub enum Method {
+    Analyze,
+    Edit,
+    Emulate,
+}
+
+impl FromStr for Method {
+    type Err = super::Error;
+    fn from_str(s: &str) -> Result<Self,Self::Err> {
+        match s {
+            "analyze" => Ok(Method::Analyze),
+            "edit" => Ok(Method::Edit),
+            "emulate" => Ok(Method::Emulate),
+            _ => Err(super::Error::MetadataMismatch)
+        }
+    }
+}
+
+/// While this object is in the form of flux cells, it can actually be used for
+/// any form of track data: flux streams, bit streams, or nibble streams.
+/// Each bit in the stream represents a flux-cell where there may be a flux transition.
+/// If `fshift < bshift`, we have a flux stream.
+/// If `fshift == bshift`, we have a bit stream.
+/// If uniform-length nibbles are tightly packed, we have a nibble stream.
+pub struct FluxCells {
+    /// each bit represents a window of time, bit value indicates whether there is a transition
+    stream: BitVec,
+    /// current location in the flux stream in units of ticks
+    ptr: usize,
+    /// one revolution in units of ticks
+    revolution: usize,
+    /// defines a tick, fixing the basis of time in picoseconds
+    tick_ps: usize,
+    /// `1 << fshift` is length of a flux cell in ticks
+    fshift: usize,
+    /// `ptr & fmask == 0` indicates start of flux cell
+    fmask: usize,
+    /// `1 << bshift` is length of a bit cell in ticks
+    bshift: usize,
+    /// `ptr & bmask == 0` indicates start of bit cell
+    bmask: usize,
+}
+
+impl FluxCells {
+    /// Create a NIB or WOZ bitstream with 4 microsecond bit cells
+    fn new_woz_bits(ptr: usize,stream: BitVec) -> Self {
+        let revolution = stream.len() << 5;
+        Self {
+            stream,
+            ptr,
+            revolution,
+            tick_ps: 125000,
+            fshift: 5,
+            fmask: 32 - 1,
+            bshift: 5,
+            bmask: 32 - 1,
+        }
+    }
+    /// Create a WOZ fluxstream with 500 ns flux cells
+    fn new_woz_flux(ptr: usize,stream: BitVec) -> Self {
+        let revolution = stream.len() << 2;
+        Self {
+            stream,
+            ptr,
+            revolution,
+            tick_ps: 125000,
+            fshift: 2,
+            fmask: 4 - 1,
+            bshift: 5,
+            bmask: 32 - 1,
+        }
+    }
+    /// Create cells from a track buffer in the form of a nibble stream or bit stream, assuming 4 microsecond bit cells
+    pub fn create_woz_bits(cell_count: usize,buf: &[u8]) -> Self {
+        let mut stream = BitVec::from_bytes(buf);
+        stream.truncate(cell_count);
+        Self::new_woz_bits(0,stream)
+    }
+    /// Create cells from a WOZ flux track buffer, the flux cells will
+    /// be set to 500 ns.  The slice argument should omit the track buffer's padding.
+    pub fn create_woz_flux(buf: &[u8]) -> Self {
+        let mut stream = BitVec::new();
+        let mut write = |carryover0: &mut usize, carryover1: &mut usize| {
+            let ticks = *carryover0 + *carryover1;
+            let cells = ticks / 4; // 500 ns cell
+            for j in 0..cells {
+                stream.push(j==0 && *carryover1 > 0 || j==cells-1);
+            }
+            *carryover0 = (cells>0) as usize * (ticks % 4);
+            *carryover1 = (cells==0) as usize * (ticks % 4);
+        };
+        let mut carryover0 = 0;
+        let mut carryover1 = 0;
+        for segment in buf {
+            carryover0 += *segment as usize;
+            if *segment!=255 {
+                write(&mut carryover0,&mut carryover1);
+            }
+        }
+        write(&mut carryover0,&mut carryover1);
+        Self::new_woz_flux(0,stream)
+    }
+    /// Convert the cells to the native WOZ or NIB track buffer, works
+    /// for any kind of cell
+    pub fn to_woz_buf(&self,padded_len: usize,padded_val: u8) -> Vec<u8> {
+        if self.fshift==self.bshift {
+            let mut ans = self.stream.to_bytes();
+            if ans.len() < padded_len {
+                ans.append(&mut vec![padded_val;padded_len-ans.len()]);
+            }
+            return ans;
+        } else {
+            panic!("need to implement flux track restoration");
+        }
+    }
+    /// Get a pointer that will synchronize the next track
+    pub fn sync_next_track(&self,new_cell_count: usize) -> usize {
+        let old_ptr = self.ptr;
+        let old_cell_count = self.stream.len();
+        old_ptr * new_cell_count / old_cell_count
+    }
+    /// How many cells are on this track
+    pub fn count(&self) -> usize {
+        self.stream.len()
+    }
+    pub fn set_ptr(&mut self,ticks: usize) {
+        self.ptr = ticks;
+    }
+    pub fn fwd(&mut self,ticks: usize) {
+        self.ptr = (self.ptr + ticks) % self.revolution;
+    }
+    pub fn rev(&mut self,ticks: usize) {
+        self.ptr = (self.ptr + self.revolution - ticks) % self.revolution
+    }
+    /// ticks since the reference tick, accounting for single wrap around
+    pub fn since(&self,ref_tick: usize) -> usize {
+        if self.ptr >= ref_tick {
+            self.ptr - ref_tick
+        } else {
+            self.ptr + self.revolution - ref_tick
+        }
+    }
+    /// emit a pulse from the current bit cell and advance
+    pub fn read_bit(&mut self) -> bool {
+        let cells_per_bit = 1 << self.bshift >> self.fshift;
+        let mut ans = false;
+        for _ in 0..cells_per_bit {
+            ans |= self.stream.get(self.ptr >> self.fshift).unwrap();
+            self.fwd(1 << self.fshift);
+        }
+        ans
+    }
+    /// write a pulse to the current bit cell and advance
+    pub fn write_bit(&mut self,pulse: bool) {
+        let cells_per_bit = 1 << self.bshift >> self.fshift;
+        for _ in 0..cells_per_bit {
+            self.stream.set(self.ptr >> self.fshift,pulse && self.ptr&self.fmask==0);
+            self.fwd(1 << self.fshift);
         }
     }
 }

@@ -90,7 +90,7 @@ impl Renumber for Renumberer {
 impl Renumberer {
     pub fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_applesoft::language()).expect("could not load TS language");
+        parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("could not load TS language");
         Self {
             flags: 0,
             parser,

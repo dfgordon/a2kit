@@ -27,9 +27,9 @@ pub fn unpack_time(prodos_date_time: [u8;4]) -> Option<chrono::NaiveDateTime> {
     let date = u16::from_le_bytes([prodos_date_time[0],prodos_date_time[1]]);
     let time = u16::from_le_bytes([prodos_date_time[2],prodos_date_time[3]]);
     let yearmod100 = date >> 9;
-    // Suppose the earliest date stamp we can find originates from the year before
-    // SOS was released, i.e., 1979.  Use this to help decide the century.
-    // This scheme will work until 2079.
+    // There is a Y2K scheme in ProDOS tech-note #28 with valid range 1940-2039.
+    // Our scheme is compatible where it likely matters and allows the range 1979-2078.
+    // The notion here is to start 1 year before SOS was released.
     let year = match yearmod100 < 79 {
         true => 2000 + yearmod100,
         false => 1900 + yearmod100

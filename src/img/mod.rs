@@ -86,8 +86,12 @@ pub enum Error {
 	ImageSizeMismatch,
     #[error("image type not compatible with request")]
     ImageTypeMismatch,
+    #[error("error while accessing internal structures")]
+    InternalStructureAccess,
     #[error("unable to access sector")]
     SectorAccess,
+    #[error("unable to access track")]
+    TrackAccess,
     #[error("metadata mismatch")]
     MetadataMismatch
 }
@@ -336,9 +340,9 @@ impl FromStr for DiskKind {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
-            "8in" | "8in-ibm-sssd" => Ok(names::IBM_CPM1_KIND),
-            "8in-trs80" => Ok(names::TRS80_M2_CPM_KIND),
-            "8in-nabu" => Ok(names::NABU_CPM_KIND),
+            "8in-ibm-sssd" => Ok(names::IBM_CPM1_KIND),
+            "8in-trs80-ssdd" => Ok(names::TRS80_M2_CPM_KIND),
+            "8in-nabu-dsdd" => Ok(names::NABU_CPM_KIND),
             "5.25in-ibm-ssdd8" => Ok(Self::D525(names::IBM_SSDD_8)),
             "5.25in-ibm-ssdd9" => Ok(Self::D525(names::IBM_SSDD_9)),
             "5.25in-ibm-dsdd8" => Ok(Self::D525(names::IBM_DSDD_8)),
@@ -346,20 +350,18 @@ impl FromStr for DiskKind {
             "5.25in-ibm-ssqd" => Ok(Self::D525(names::IBM_SSQD)),
             "5.25in-ibm-dsqd" => Ok(Self::D525(names::IBM_DSQD)),
             "5.25in-ibm-dshd" => Ok(Self::D525(names::IBM_DSHD)),
-            "5.25in-osb-sd" => Ok(names::OSBORNE1_SD_KIND),
-            "5.25in-osb-dd" => Ok(names::OSBORNE1_DD_KIND),
-            "5.25in-kayii" => Ok(names::KAYPROII_KIND),
-            "5.25in-kay4" => Ok(names::KAYPRO4_KIND),
-            "5.25in" => Ok(names::A2_DOS33_KIND), // mkdsk will change it if DOS 3.2 requested
+            "5.25in-osb-sssd" => Ok(names::OSBORNE1_SD_KIND),
+            "5.25in-osb-ssdd" => Ok(names::OSBORNE1_DD_KIND),
+            "5.25in-kay-ssdd" => Ok(names::KAYPROII_KIND),
+            "5.25in-kay-dsdd" => Ok(names::KAYPRO4_KIND),
             "5.25in-apple-13" => Ok(names::A2_DOS32_KIND),
             "5.25in-apple-16" => Ok(names::A2_DOS33_KIND),
-            "3.5in" => Ok(names::A2_800_KIND),
-            "3.5in-ss" | "3.5in-apple-400" => Ok(names::A2_400_KIND),
-            "3.5in-ds" | "3.5in-apple-800" => Ok(names::A2_800_KIND),
+            "3.5in-apple-400" => Ok(names::A2_400_KIND),
+            "3.5in-apple-800" => Ok(names::A2_800_KIND),
             "3.5in-ibm-720" => Ok(Self::D35(names::IBM_720)),
             "3.5in-ibm-1440" => Ok(Self::D35(names::IBM_1440)),
             "3.5in-ibm-2880" => Ok(Self::D35(names::IBM_2880)),
-            "3in-amstrad" => Ok(names::AMSTRAD_SS_KIND),
+            "3in-amstrad-ssdd" => Ok(names::AMSTRAD_SS_KIND),
             "hdmax" => Ok(names::A2_HD_MAX),
             _ => Err(Error::UnknownDiskKind)
         }
@@ -401,33 +403,6 @@ impl fmt::Display for DiskImageType {
             Self::TD0 => write!(f,"td0")
         }
     }
-}
-
-/// Lightweight trait object for reading and writing track bits.
-/// The track buffer is borrowed.
-pub trait TrackBits {
-    /// get id of the track, usually sequence indexed from 0
-    fn id(&self) -> usize;
-    /// Bits actually on the track
-    fn bit_count(&self) -> usize;
-    /// Rotate the disk to the reference bit
-    fn reset(&mut self);
-    /// Get the current displacement from the reference bit
-    fn get_bit_ptr(&self) -> usize;
-    /// Set the current displacement from the reference bit
-    fn set_bit_ptr(&mut self,displ: usize);
-    /// Write physical sector (as identified by address field)
-    fn write_sector(&mut self,bits: &mut [u8],dat: &[u8],track: u8,sector: u8) -> Result<(),NibbleError>;
-    /// Read physical sector (as identified by address field)
-    fn read_sector(&mut self,bits: &[u8],track: u8,sector: u8) -> Result<Vec<u8>,NibbleError>;
-    /// Get aligned track nibbles; n.b. head position will move.
-    fn to_nibbles(&mut self,bits: &[u8]) -> Vec<u8>;
-    /// Get [cyl,head,sec] in time order, or return an error.  Head position will move.
-    /// This can also be used to determine if the assumed encoding is valid.
-    fn chs_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;3]>,NibbleError>;
-    /// Get [cyl,head,sec,size] in time order, or return an error.  Head position will move.
-    /// This can also be used to determine if the assumed encoding is valid.
-    fn chss_map(&mut self,bits: &[u8]) -> Result<Vec<[usize;4]>,NibbleError>;
 }
 
 /// The main trait for working with any kind of disk image.
@@ -474,8 +449,14 @@ pub trait DiskImage {
     fn kind(&self) -> DiskKind;
     /// Change the kind of disk, but do not change the format
     fn change_kind(&mut self,kind: DiskKind);
+    /// Change details of how sectors are identified and decoded
     fn change_format(&mut self,_fmt: DiskFormat) -> STDRESULT {
         Err(Box::new(Error::ImageTypeMismatch))
+    }
+    /// Change the broad method by which nibbles are extracted from a track.
+    /// `Emulate` will try to produce nibbles just as the hardware would.
+    /// `Edit` and `Analyze` will show something more idealized.
+    fn change_method(&mut self,_method: tracks::Method) {
     }
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized;
     fn to_bytes(&mut self) -> Vec<u8>;

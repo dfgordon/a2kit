@@ -68,11 +68,12 @@ use super::tracks::{TrackKey,SectorKey,DiskFormat,ZoneFormat};
 use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
-pub const INFO_ID: u32 = 0x4f464e49;
-pub const TMAP_ID: u32 = 0x50414d54;
-pub const TRKS_ID: u32 = 0x534b5254;
-pub const WRIT_ID: u32 = 0x54495257;
-pub const META_ID: u32 = 0x4154454D;
+pub const INFO_ID: u32 = u32::from_le_bytes(*b"INFO");
+pub const TMAP_ID: u32 = u32::from_le_bytes(*b"TMAP");
+pub const TRKS_ID: u32 = u32::from_le_bytes(*b"TRKS");
+pub const FLUX_ID: u32 = u32::from_le_bytes(*b"FLUX");
+pub const WRIT_ID: u32 = u32::from_le_bytes(*b"WRIT");
+pub const META_ID: u32 = u32::from_le_bytes(*b"META");
 pub const ALLOWED_TRACKS_525: [usize;1] = [35];
 
 const CRC32_TAB: [u32;256] = [
@@ -158,7 +159,7 @@ pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
 		log::debug!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
 	}
 	match id {
-		INFO_ID | TMAP_ID | TRKS_ID | WRIT_ID | META_ID => {
+		INFO_ID | TMAP_ID | TRKS_ID | FLUX_ID | WRIT_ID | META_ID => {
 			// found something
 			return (next,id,Some(buf[ptr..end].to_vec()));
 		}

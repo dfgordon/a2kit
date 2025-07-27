@@ -142,7 +142,7 @@ impl Tokenizer
 	pub fn tokenize(&mut self,program: String) -> Result<Vec<u8>,DYNERR> {
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_integerbasic::language()).expect("error loading integer grammar");
+		parser.set_language(&tree_sitter_integerbasic::LANGUAGE.into()).expect("error loading integer grammar");
 		for line in program.lines() {
 			if line.trim().len()==0 {
 				continue;

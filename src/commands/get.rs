@@ -76,6 +76,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         None => None
     };
     let fmt = super::get_fmt(cmd)?;
+    let method = crate::img::tracks::Method::from_str(cmd.get_one::<String>("method").unwrap())?;
 
     match (maybe_typ, pipe_or_img, maybe_src_path) {
 
@@ -97,6 +98,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                 }
             }
             let mut disk = crate::create_fs_from_file_or_stdin_pro(maybe_img,fmt.as_ref())?;
+            disk.get_img().change_method(method);
             if typ == ItemType::Block {
                 let mut cum: Vec<u8> = Vec::new();
                 let blocks = super::parse_block_request(&src_path)?;

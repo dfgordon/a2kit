@@ -13,6 +13,8 @@ use crate::bios::dpb::DiskParameterBlock;
 use super::types;
 use crate::{DYNERR,STDRESULT};
 
+const CPM3_TIME_FMT: &str = "%m/%d/%y %H:%M";
+
 /// Advance cursor through string slice, return error when end is reached.
 /// In honor of Applesoft CHRGET.
 fn chrget(curs: &mut usize,vals: &str) -> STDRESULT {
@@ -20,6 +22,16 @@ fn chrget(curs: &mut usize,vals: &str) -> STDRESULT {
     match *curs < vals.len() {
         true => Ok(()),
         false => Err(Box::new(types::Error::BadFormat))
+    }
+}
+
+fn time_string(cpm_date: [u8;4],time_fmt: &str) -> String {
+    if cpm_date == [0,0,0,0] {
+        return "".to_string();
+    }
+    match unpack_date(cpm_date) {
+        Some(dt) => dt.format(time_fmt).to_string(),
+        None => "".to_string()
     }
 }
 
@@ -379,13 +391,11 @@ fn dir_first40(dir: &directory::Directory,finfo: &directory::FileInfo,stats: &mu
 fn dir_last40(finfo: &directory::FileInfo) {
     let mut access_create_data = String::new();
     access_create_data += &match finfo.access_time {
-        Some([0,0,0,0]) => "".to_string(),
-        Some(t) => unpack_date(t).format("%m/%d/%y %H:%M").to_string(),
+        Some(t) => time_string(t,CPM3_TIME_FMT),
         None => "".to_string()
     };
     access_create_data += &match finfo.create_time {
-        Some([0,0,0,0]) => "".to_string(),
-        Some(t) => unpack_date(t).format("%m/%d/%y %H:%M").to_string(),
+        Some(t) => time_string(t,CPM3_TIME_FMT),
         None => "".to_string()
     };
     let mut prot = String::new();
@@ -398,8 +408,7 @@ fn dir_last40(finfo: &directory::FileInfo) {
             _ => &prot
         },
         match finfo.update_time {
-            Some([0,0,0,0]) => "".to_string(),
-            Some(t) => unpack_date(t).format("%m/%d/%y %H:%M").to_string(),
+            Some(t) => time_string(t,CPM3_TIME_FMT),
             None => "".to_string()
         },
         access_create_data
@@ -419,8 +428,8 @@ pub fn show_label(lab: &directory::Label) {
         match lab.is_protected() { true => "on", false => "off" },
         match lab.is_timestamped_creation() || lab.is_timestamped_access() { true => "on", false => "off" },
         match lab.is_timestamped_update() { true => "on", false => "off" },
-        unpack_date(lab.get_create_time()).format("%m/%d/%y %H:%M"),
-        unpack_date(lab.get_update_time()).format("%m/%d/%y %H:%M")
+        time_string(lab.get_create_time(),CPM3_TIME_FMT),
+        time_string(lab.get_update_time(),CPM3_TIME_FMT)
     );
 }
 
@@ -563,7 +572,7 @@ pub fn dir(dir: &directory::Directory,dpb: &DiskParameterBlock,opt: &str) -> STD
             let mut used_entries = 0;
             for i in 0..dir.num_entries() {
                 used_entries += match dir.get_type(&types::Ptr::ExtentEntry(i)) {
-                    types::ExtentType::Deleted => 0,
+                    types::EntryType::Deleted => 0,
                     _ => 1
                 };
             }
@@ -597,13 +606,13 @@ pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bo
         tree["label"]["name"] = json::JsonValue::String([bas,".".to_string(),typ].concat());
         tree["label"]["protected"] = json::JsonValue::Boolean(lab.is_protected());
         if lab.is_timestamped_creation() {
-            tree["label"]["time_created"] = json::JsonValue::String(unpack_date(lab.get_create_time()).format(TIME_FMT).to_string());
+            tree["label"]["time_created"] = json::JsonValue::String(time_string(lab.get_create_time(),TIME_FMT));
         }
         if lab.is_timestamped_access() {
-            tree["label"]["time_accessed"] = json::JsonValue::String(unpack_date(lab.get_create_time()).format(TIME_FMT).to_string());
+            tree["label"]["time_accessed"] = json::JsonValue::String(time_string(lab.get_create_time(),TIME_FMT));
         }
         if lab.is_timestamped_update() {
-            tree["label"]["time_modified"] = json::JsonValue::String(unpack_date(lab.get_update_time()).format(TIME_FMT).to_string());
+            tree["label"]["time_modified"] = json::JsonValue::String(time_string(lab.get_update_time(),TIME_FMT));
         }
     }
     if let Ok(sorted) = dir.build_files(dpb,[3,1,0]) {
@@ -628,13 +637,13 @@ pub fn tree(dir: &directory::Directory,dpb: &DiskParameterBlock,include_meta: bo
                 meta["type"] = json::JsonValue::String(finfo.typ.clone());
                 meta["eof"] = json::JsonValue::Number(bytes.into());
                 if let Some(created) = finfo.create_time {
-                    meta["time_created"] = json::JsonValue::String(unpack_date(created).format(TIME_FMT).to_string());
+                    meta["time_created"] = json::JsonValue::String(time_string(created,TIME_FMT));
                 }
                 if let Some(accessed) = finfo.access_time {
-                    meta["time_accessed"] = json::JsonValue::String(unpack_date(accessed).format(TIME_FMT).to_string());
+                    meta["time_accessed"] = json::JsonValue::String(time_string(accessed,TIME_FMT));
                 }
                 if let Some(modified) = finfo.update_time {
-                    meta["time_modified"] = json::JsonValue::String(unpack_date(modified).format(TIME_FMT).to_string());
+                    meta["time_modified"] = json::JsonValue::String(time_string(modified,TIME_FMT));
                 }
                 meta["read_only"] = json::JsonValue::Boolean(finfo.read_only);
                 meta["system"] = json::JsonValue::Boolean(finfo.system);

@@ -52,6 +52,8 @@ use super::tokenizer::Tokenizer;
 
 #[cfg(test)]
 fn test_tokenizer(test_code: &str,expected: &str) {
+	// we need to test explicitly for syntax errors, sometimes tokenizer can succeed despite them
+	super::super::verify_str(tree_sitter_integerbasic::LANGUAGE.into(),test_code).expect("syntax error while tokenizing");
 	let mut tokenizer = Tokenizer::new();
 	// get actual into hex string
 	let bytes = tokenizer.tokenize(test_code.to_string()).expect("tokenizer failed");

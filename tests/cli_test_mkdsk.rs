@@ -105,7 +105,7 @@ fn mk_cpm_osb() -> STDRESULT {
     let dimg_path = dir.path().join("osb.imd");
     cmd.arg("mkdsk")
         .arg("-t").arg("imd").arg("-o").arg("cpm2")
-        .arg("-k").arg("5.25in-osb-sd")
+        .arg("-k").arg("5.25in-osb-sssd")
         .arg("-d").arg(dimg_path)
         .assert()
         .success();
@@ -119,7 +119,7 @@ fn mk_pascal() -> STDRESULT {
     let dimg_path = dir.path().join("pasc.dsk");
     cmd.arg("mkdsk")
         .arg("-v").arg("myvol").arg("-t").arg("do").arg("-o").arg("pascal")
-        .arg("-k").arg("5.25in")
+        .arg("-k").arg("5.25in-apple-16")
         .arg("-d").arg(dimg_path)
         .assert()
         .success();

@@ -1,6 +1,6 @@
 [package]
 name = "a2kit"
-version = "4.0.0-beta2"
+version = "4.0.0-beta3"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -19,10 +19,10 @@ bit-vec = "0.6.3"
 env_logger = "0.11.3"
 hex = "0.4.3"
 a2-memory-map = "1.0.4"
-tree-sitter = "0.22.4"
-tree-sitter-applesoft = "4.0.0"
-tree-sitter-integerbasic = "2.0.0"
-tree-sitter-merlin6502 = "3.0.0"
+tree-sitter = "0.25.8"
+tree-sitter-applesoft = {path="../tree-sitter-applesoft"}
+tree-sitter-integerbasic = {path="../tree-sitter-integerbasic"}
+tree-sitter-merlin6502 = {path="../tree-sitter-merlin6502"}
 lsp-types = "0.95.0"
 lsp-server = "0.7.6"
 clap = {version="4.5.4",features=["cargo"]}

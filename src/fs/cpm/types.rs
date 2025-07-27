@@ -52,8 +52,8 @@ pub enum Error {
 }
 
 #[derive(PartialEq)]
-pub enum ExtentType {
-    File,
+pub enum EntryType {
+    FileExtent,
     Label,
     Password,
     Timestamp,
@@ -62,8 +62,7 @@ pub enum ExtentType {
 }
 
 /// Pointers to the various levels of CP/M disk structures.
-/// This is supposed to help us distinguish "extent as directory entry" from "extent as data."
-/// We should probably abolish all conflating of "extent" with "entry" (TODO).
+/// These just wrap integers and are supposed to help identify what is being indexed.
 #[derive(PartialEq,Eq,Copy,Clone)]
 pub enum Ptr {
     /// Index to the extent's metadata, ordering its appearance in the directory
@@ -87,19 +86,12 @@ impl Ptr {
 
 impl PartialOrd for Ptr {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.unwrap().partial_cmp(&other.unwrap())
-    }
-    fn ge(&self, other: &Self) -> bool {
-        self.unwrap().ge(&other.unwrap())
-    }
-    fn gt(&self, other: &Self) -> bool {
-        self.unwrap().gt(&other.unwrap())
-    }
-    fn le(&self, other: &Self) -> bool {
-        self.unwrap().le(&other.unwrap())
-    }
-    fn lt(&self, other: &Self) -> bool {
-        self.unwrap().lt(&other.unwrap())
+        match (self,other) {
+            (Self::Block(x),Self::Block(y)) => x.partial_cmp(y),
+            (Self::ExtentData(x),Self::ExtentData(y)) => x.partial_cmp(y),
+            (Self::ExtentEntry(x),Self::ExtentEntry(y)) => x.partial_cmp(y),
+            _ => None
+        }
     }
 }
 

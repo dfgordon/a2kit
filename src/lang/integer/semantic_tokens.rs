@@ -15,7 +15,7 @@ pub struct SemanticTokensProvider {
 impl SemanticTokensProvider {
 	pub fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_integerbasic::language()).expect("could not start parser");
+        parser.set_language(&tree_sitter_integerbasic::LANGUAGE.into()).expect("could not start parser");
 		Self {
 			parser,
 			row: 0,

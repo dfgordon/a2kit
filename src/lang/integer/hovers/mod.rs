@@ -49,7 +49,7 @@ impl HoverProvider {
     pub fn new() -> Self {
         let zero = lsp::Position::new(0,0);
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_integerbasic::language()).expect("could not start Integer parser");
+        parser.set_language(&tree_sitter_integerbasic::LANGUAGE.into()).expect("could not start Integer parser");
         Self {
             config: Settings::new(),
             parser,

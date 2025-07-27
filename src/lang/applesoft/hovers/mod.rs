@@ -40,7 +40,7 @@ impl HoverProvider {
     pub fn new() -> Self {
         let zero = lsp::Position::new(0,0);
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_applesoft::language()).expect("could not start Applesoft parser");
+        parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("could not start Applesoft parser");
         Self {
             config: Settings::new(),
             parser,

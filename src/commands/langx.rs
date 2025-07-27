@@ -87,7 +87,7 @@ pub fn minify(cmd: &clap::ArgMatches) -> STDRESULT {
     return match typ
     {
         Ok(ItemType::ApplesoftText) => {
-            lang::verify_str(tree_sitter_applesoft::language(),&program)?;
+            lang::verify_str(tree_sitter_applesoft::LANGUAGE.into(),&program)?;
             let mut minifier = applesoft::minifier::Minifier::new();
             minifier.set_external_refs(externals);
             if cmd.value_source("level").unwrap()==ValueSource::CommandLine {
@@ -138,7 +138,7 @@ pub fn renumber(cmd: &clap::ArgMatches) -> STDRESULT {
     return match typ
     {
         Ok(ItemType::ApplesoftText) => {
-            lang::verify_str(tree_sitter_applesoft::language(),&program)?;
+            lang::verify_str(tree_sitter_applesoft::LANGUAGE.into(),&program)?;
             let mut renumberer = applesoft::renumber::Renumberer::new();
             renumberer.set_external_refs(externals);
             renumberer.set_flags(match reorder {true => 1, false => 0});
@@ -147,7 +147,7 @@ pub fn renumber(cmd: &clap::ArgMatches) -> STDRESULT {
             Ok(())
         },
         Ok(ItemType::IntegerText) => {
-            lang::verify_str(tree_sitter_integerbasic::language(), &program)?;
+            lang::verify_str(tree_sitter_integerbasic::LANGUAGE.into(), &program)?;
             let mut renumberer = integer::renumber::Renumberer::new();
             renumberer.set_external_refs(externals);
             renumberer.set_flags(match reorder {true => 1, false => 0});
@@ -182,7 +182,7 @@ pub fn tokenize(cmd: &clap::ArgMatches) -> STDRESULT {
     return match typ
     {
         Ok(ItemType::ApplesoftText) => {
-            lang::verify_str(tree_sitter_applesoft::language(),&program)?;
+            lang::verify_str(tree_sitter_applesoft::LANGUAGE.into(),&program)?;
             if addr_opt==None {
                 log::error!("address needed to tokenize Applesoft");
                 return Err(Box::new(CommandError::InvalidCommand));
@@ -200,7 +200,7 @@ pub fn tokenize(cmd: &clap::ArgMatches) -> STDRESULT {
             Err(Box::new(CommandError::OutOfRange))
         },
         Ok(ItemType::IntegerText) => {
-            lang::verify_str(tree_sitter_integerbasic::language(),&program)?;
+            lang::verify_str(tree_sitter_integerbasic::LANGUAGE.into(),&program)?;
             if let Some(_addr) = addr_opt {
                 log::error!("unnecessary address argument");
                 return Err(Box::new(CommandError::InvalidCommand));
@@ -215,7 +215,7 @@ pub fn tokenize(cmd: &clap::ArgMatches) -> STDRESULT {
             Ok(())
         },
         Ok(ItemType::MerlinText) => {
-            lang::verify_str(tree_sitter_merlin6502::language(),&program)?;
+            lang::verify_str(tree_sitter_merlin6502::LANGUAGE.into(),&program)?;
             if let Some(_addr) = addr_opt {
                 log::error!("unnecessary address argument");
                 return Err(Box::new(CommandError::InvalidCommand));

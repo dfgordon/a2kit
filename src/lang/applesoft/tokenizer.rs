@@ -139,7 +139,7 @@ impl Tokenizer
 		self.curr_addr = start_addr;
 		self.tokenized_program = Vec::new();
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.trim_start().len()==0 {
 				continue;

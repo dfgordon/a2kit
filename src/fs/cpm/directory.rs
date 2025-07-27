@@ -71,7 +71,7 @@ pub trait DirectoryEntry {
 /// The extents are indexed by counting logical extents.
 #[derive(DiskStruct,Copy,Clone,PartialEq)]
 pub struct Extent {
-    /// value 0-15 identifies this as a file extent.  value 0xe5 means unused or deleted.
+    /// value 0-15 identifies this as a file extent.
     pub user: u8,
     /// positive ASCII; high bits are used as attributes in some specific implementations.
     name: [u8;8],
@@ -97,11 +97,11 @@ pub struct Extent {
     pub block_list: [u8;16]
 }
 
-/// Password extents can appear anywhere in the directory.
+/// Password entries can appear anywhere in the directory.
 /// Requires CP/M v3 or higher.
 #[derive(DiskStruct)]
 pub struct Password {
-    pub user: u8, // 16-31 means this is a password extent, value is user number + 16
+    pub user: u8, // 16-31 means this is a password entry, value is user number + 16
     pub name: [u8;8], // file protected
     pub typ: [u8;3], // type of file
     /// Controls which operations are locked.
@@ -115,7 +115,7 @@ pub struct Password {
     pad2: [u8;8]
 }
 
-/// Disk label extent can appear anywhere in the directory.
+/// Disk label entries can appear anywhere in the directory.
 /// Requires CP/M v3 or higher.
 #[derive(DiskStruct)]
 pub struct Label {
@@ -133,15 +133,15 @@ pub struct Label {
     decoder: u8,
     pad: [u8;2],
     password: [u8;8],
-    /// this will be duplicated in timestamp extent if it exists
+    /// this will be duplicated in timestamp entry if it exists
     create_time: [u8;4],
-    /// this will be duplicated in timestamp extent if it exists
+    /// this will be duplicated in timestamp entry if it exists
     update_time: [u8;4]
 }
 
-/// Timestamp extent for CP/M 3, if present, follows every third other extent.
+/// Timestamp entry for CP/M 3, if present, follows every third other entry.
 /// This contains 2 timestamps and 1 password mode per file, for up to 3 files.
-/// The timestamp is meaningful only if it follows the first extent (logical extents 0-EXM) of the corresponding file.
+/// The timestamp is meaningful only if it follows the first extent-entry (logical extents 0-EXM) of the corresponding file.
 /// 4-byte timestamp: from_le_bytes([b0,b1])=days, day 1 = 1-jan-1978, b2=BCD hour, b3=BCD minute.
 /// Requires CP/M v3 or higher; other time stamping was provided by third parties earlier.
 #[derive(DiskStruct)]
@@ -564,21 +564,21 @@ impl Directory {
     pub fn num_entries(&self) -> usize {
         self.entries.len()
     }
-    pub fn get_type(&self,ptr: &Ptr) -> ExtentType {
+    pub fn get_type(&self,ptr: &Ptr) -> EntryType {
         let (idx,xstat) = match ptr {
             Ptr::ExtentEntry(i) => (*i,self.entries[*i][0]),
             _ => panic!("wrong pointer type")
         };
-        trace!("entry {} has extent type {}",idx,xstat);
+        trace!("entry {} has type {}",idx,xstat);
         match xstat {
-            x if x<USER_END => ExtentType::File,
-            x if x<USER_END*2 => ExtentType::Password,
-            LABEL => ExtentType::Label,
-            TIMESTAMP => ExtentType::Timestamp,
-            DELETED => ExtentType::Deleted,
+            x if x<USER_END => EntryType::FileExtent,
+            x if x<USER_END*2 => EntryType::Password,
+            LABEL => EntryType::Label,
+            TIMESTAMP => EntryType::Timestamp,
+            DELETED => EntryType::Deleted,
             x => {
-                debug!("unknown extent type {}",x);
-                ExtentType::Unknown
+                debug!("unknown entry type {}",x);
+                EntryType::Unknown
             }
         }
     }
@@ -594,19 +594,19 @@ impl Directory {
     //         _ => panic!("wrong pointer type")
     //     }
     // }
-    pub fn get_entry<EntryType: DiskStruct + DirectoryEntry>(&self,ptr: &Ptr) -> Option<EntryType> {
-        let rng = EntryType::stat_range();
+    pub fn get_entry<EntryObject: DiskStruct + DirectoryEntry>(&self,ptr: &Ptr) -> Option<EntryObject> {
+        let rng = EntryObject::stat_range();
         match ptr {
             Ptr::ExtentEntry(idx) => match self.entries[*idx][0] {
                 x if x>=rng[0] && x<rng[1] => Some(
-                    EntryType::from_bytes(&self.entries[*idx]).expect(RCH)
+                    EntryObject::from_bytes(&self.entries[*idx]).expect(RCH)
                 ),
                 _ => None
             },
             _ => panic!("wrong pointer type")
         }
     }
-    pub fn set_entry<EntryType: DiskStruct>(&mut self,ptr: &Ptr,x: &EntryType) {
+    pub fn set_entry<EntryObject: DiskStruct>(&mut self,ptr: &Ptr,x: &EntryObject) {
         match ptr {
             Ptr::ExtentEntry(idx) => {
                 self.entries[*idx] = x.to_bytes().try_into().expect("unexpected size")
@@ -701,11 +701,11 @@ impl Directory {
         // first pass collects everything except passwords
         for i in 0..self.num_entries() {
             let xtype = self.get_type(&Ptr::ExtentEntry(i));
-            if xtype==ExtentType::Unknown {
-                debug!("unknown extent type in entry {}",i);
+            if xtype==EntryType::Unknown {
+                debug!("unknown entry type in entry {}",i);
                 return Err(Box::new(Error::BadFormat));
             }
-            if cpm_vers[0]<3 && (xtype==ExtentType::Label || xtype==ExtentType::Timestamp || xtype==ExtentType::Password) {
+            if cpm_vers[0]<3 && (xtype==EntryType::Label || xtype==EntryType::Timestamp || xtype==EntryType::Password) {
                 debug!("rejecting CP/M v3 entry type at {}",i);
                 return Err(Box::new(Error::BadFormat));
             }

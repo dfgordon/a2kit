@@ -200,7 +200,7 @@ impl Navigate for StatementCompletionProvider {
 impl StatementCompletionProvider {
 	fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_applesoft::language()).expect("could not start Applesoft parser");
+        parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("could not start Applesoft parser");
 		Self {
 			pos: lsp::Position::new(0,0),
 			line: String::new(),

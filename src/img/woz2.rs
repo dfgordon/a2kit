@@ -12,8 +12,9 @@ use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use crate::img;
 use crate::img::meta;
-use crate::img::tracks::{TrackKey,SectorKey};
-use crate::img::woz::{INFO_ID,TMAP_ID,TRKS_ID,META_ID,WRIT_ID};
+use crate::img::tracks::{TrackKey,SectorKey,Method,FluxCells};
+use crate::img::tracks::gcr::TrackEngine;
+use crate::img::woz::{INFO_ID,TMAP_ID,TRKS_ID,FLUX_ID,META_ID,WRIT_ID};
 use crate::bios::blocks::apple;
 use crate::{STDRESULT,DYNERR,getByte,getByteEx,getHexEx,putByte,putHex,putStringBuf};
 
@@ -153,15 +154,16 @@ pub struct Woz2 {
     header: Header,
     info: Info,
     tmap: TMap,
+    flux: Option<TMap>,
     trks: Trks,
     meta: Option<Meta>,
     writ: Option<Vec<u8>>,
+    /// state: controller
+    engine: TrackEngine,
+    /// state: current track data and angle
+    cells: Option<FluxCells>,
     /// state: current index into the TMAP
     tmap_pos: usize,
-    /// state: current angle of head
-    bit_pos: usize,
-    /// state: bits on current track
-    bit_count: usize
 }
 
 impl Header {
@@ -348,7 +350,9 @@ impl Trks {
             },
             _ => return Err(Box::new(img::Error::ImageTypeMismatch))
         };
-        let (bits_in_blocks,engine) = img::tracks::gcr::format_track(skey, buf_len, fmt,false)?;
+        let mut engine = TrackEngine::create(Method::Edit, false);
+        let cells = engine.format_track(skey, buf_len, fmt)?;
+        let bits_in_blocks = cells.to_woz_buf(buf_len,0);
         if bits_in_blocks.len() % 512 > 0 {
             panic!("track bits buffer is not an even number of blocks");
         }
@@ -357,7 +361,7 @@ impl Trks {
         let mut trk = Trk::new();
         trk.starting_block = u16::to_le_bytes(block_offset as u16);
         trk.block_count = u16::to_le_bytes(blocks as u16);
-        trk.bit_count = u32::to_le_bytes(engine.bit_count() as u32);
+        trk.bit_count = u32::to_le_bytes(cells.count() as u32);
         Ok((bits_in_blocks,trk))
     }
     fn create(vol: u8,kind: &img::DiskKind,fmt: &img::tracks::DiskFormat,tmap: &[u8]) -> Result<Self,DYNERR> {
@@ -563,12 +567,13 @@ impl Woz2 {
             header: Header::new(),
             info: Info::new(),
             tmap: TMap::new(),
+            flux: None,
             trks: Trks::new(),
             meta: None,
             writ: None,
+            engine: TrackEngine::create(Method::Edit, false),
+            cells: None,
             tmap_pos: usize::MAX,
-            bit_pos: 0,
-            bit_count: 1
         }
     }
     pub fn blank(kind: img::DiskKind) -> Self {
@@ -582,12 +587,13 @@ impl Woz2 {
             header: Header::create(),
             info: Info::blank(kind),
             tmap: TMap::blank(),
+            flux: None,
             trks: Trks::blank(),
             meta: None,
             writ: None,
+            engine: TrackEngine::create(Method::Edit, false),
+            cells: None,
             tmap_pos: usize::MAX,
-            bit_pos: 0,
-            bit_count: 1
         }
     }
     pub fn create(vol: u8,kind: img::DiskKind) -> Self {
@@ -606,12 +612,13 @@ impl Woz2 {
             header: Header::create(),
             info: Info::create(kind),
             tmap,
+            flux: None,
             trks,
             meta: None,
             writ: None,
+            engine: TrackEngine::create(Method::Edit, false),
+            cells: None,
             tmap_pos: usize::MAX,
-            bit_pos: 0,
-            bit_count: 1
         })
     }
     fn sanity_check(&self) -> Result<(),DiskStructError> {
@@ -623,7 +630,7 @@ impl Woz2 {
             }
         }
     }
-    /// see if there is a buffer for the given quarter track
+    /// see if there is a buffer for the given quarter track, does not change disk state
     fn try_motor(&self,tmap_idx: usize) -> Result<usize,DYNERR> {
         if self.tmap.map[tmap_idx] == 0xff {
             log::info!("touched blank media at TMAP index {}",tmap_idx);
@@ -643,30 +650,39 @@ impl Woz2 {
         let end = begin + u16::from_le_bytes(trk.block_count) as usize * 512;
         Ok(&self.trks.bits[begin..end])
     }
-    /// Get a mutable reference to the track bits
-    fn get_trk_bits_mut(&mut self,tkey: TrackKey) -> Result<&mut [u8],DYNERR> {
-        let tmap_idx = img::woz::get_tmap_index(tkey,&self.kind)?;
-        let idx = self.try_motor(tmap_idx)?;
+    /// Get the slice-range for this track
+    fn get_trk_rng(&self,idx: usize) ->[usize;2] {
         let trk = &self.trks.tracks[idx];
         let begin = u16::from_le_bytes(trk.starting_block) as usize * 512 - self.track_bits_offset;
         let end = begin + u16::from_le_bytes(trk.block_count) as usize * 512;
-        Ok(&mut self.trks.bits[begin..end])
+        [begin,end]
     }
-    /// Create a lightweight trait object to read/write the bits.  The nibble format will be taken
-    /// from `self.fmt` if available, otherwise a standard format based on `self.kind` is selected.
-    fn new_rw_obj(&mut self,tkey: TrackKey) -> Result<img::tracks::gcr::TrackEngine,DYNERR> {
-        let tmap_idx = img::woz::get_tmap_index(tkey.clone(),&self.kind)?;
-        let idx = self.try_motor(tmap_idx)?;
-        if self.tmap_pos != tmap_idx {
-            log::debug!("goto {} of {} at {}->{}",tkey,self.kind,tmap_idx,idx);
-            self.tmap_pos = tmap_idx;
+    /// Save changes to the current track buffer if they exist
+    fn write_back_track(&mut self) -> STDRESULT {
+        if let Some(cells) = &self.cells {
+            let idx = self.try_motor(self.tmap_pos)?;
+            let [beg,end] = self.get_trk_rng(idx);
+            self.trks.bits[beg..end].copy_from_slice(&cells.to_woz_buf(end-beg,0));
         }
-        let new_bit_count = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-        let new_bit_pos = (self.bit_pos * new_bit_count / self.bit_count) % new_bit_count;
-        let ans = img::tracks::gcr::TrackEngine::create(new_bit_count, new_bit_pos,false);
-        self.bit_pos = new_bit_pos;
-        self.bit_count = new_bit_count;
-        return Ok(ans);
+        Ok(())
+    }
+    /// Goto track and extract FluxCells if necessary, returns [motor,head,width]
+    fn goto_track(&mut self,tkey: TrackKey) -> Result<[usize;3],DYNERR> {
+        let tmap_idx = img::woz::get_tmap_index(tkey.clone(),&self.kind)?;
+        if self.tmap_pos != tmap_idx {
+            log::debug!("goto {} of {}",tkey,self.kind);
+            self.write_back_track()?;
+            self.tmap_pos = tmap_idx;
+            let idx = self.try_motor(tmap_idx)?;
+            let cell_count = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
+            let ptr = match &self.cells {
+                Some(cells) => cells.sync_next_track(cell_count),
+                None => 0
+            };
+            self.cells = Some(FluxCells::create_woz_bits(cell_count, self.get_trk_bits_ref(tkey.clone())?));
+            self.cells.as_mut().unwrap().set_ptr(ptr);
+        }
+        img::woz::get_motor_pos(tkey, &self.kind)
     }
 }
 
@@ -717,6 +733,9 @@ impl img::DiskImage for Woz2 {
         self.fmt = Some(fmt);
         Ok(())
     }
+    fn change_method(&mut self,method: img::tracks::Method) {
+        self.engine.change_method(method);
+    }
     fn read_block(&mut self,addr: crate::fs::Block) -> Result<Vec<u8>,DYNERR> {
         apple::read_block(self, addr)
     }
@@ -733,8 +752,7 @@ impl img::DiskImage for Woz2 {
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let mut reader = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,width] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,width] = self.goto_track(tkey.clone())?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?;
         let (cyl,head,sec) = (u8::try_from((motor+width/4)/width)?,u8::try_from(head)?,u8::try_from(sec)?);
@@ -742,16 +760,14 @@ impl img::DiskImage for Woz2 {
             img::DiskKind::D525(_) => SectorKey::a2_525(254, cyl),
             _ => SectorKey::a2_35(cyl, head)
         };
-        let ans = reader.read_sector(self.get_trk_bits_ref(tkey)?,&skey,sec,zfmt)?;
-        self.bit_pos = reader.get_bit_ptr();
+        let ans = self.engine.read_sector(self.cells.as_mut().unwrap(),&skey,sec,zfmt)?;
         Ok(ans)
     }
     fn write_pro_sector(&mut self,tkey: TrackKey,sec: usize,dat: &[u8]) -> Result<(),DYNERR> {
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let mut writer = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,width] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,width] = self.goto_track(tkey.clone())?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?.clone();
         let (cyl,head,sec) = (u8::try_from((motor+width/4)/width)?,u8::try_from(head)?,u8::try_from(sec)?);
@@ -759,8 +775,7 @@ impl img::DiskImage for Woz2 {
             img::DiskKind::D525(_) => SectorKey::a2_525(254, cyl),
             _ => SectorKey::a2_35(cyl, head)
         };
-        writer.write_sector(self.get_trk_bits_mut(tkey)?,dat,&skey,sec,&zfmt)?;
-        self.bit_pos = writer.get_bit_ptr();
+        self.engine.write_sector(self.cells.as_mut().unwrap(),dat,&skey,sec,&zfmt)?;
         Ok(())
     }
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized {
@@ -782,6 +797,11 @@ impl img::DiskImage for Woz2 {
                 (TRKS_ID,Some(chunk)) => {
                     ans.track_bits_offset = ptr + 1288;
                     ans.trks.update_from_bytes(&chunk)?
+                },
+                (FLUX_ID,Some(chunk)) => {
+                    let mut new_flux = TMap::new();
+                    new_flux.update_from_bytes(&chunk)?;
+                    ans.flux = Some(new_flux);
                 },
                 (META_ID,Some(chunk)) => {
                     let mut new_meta = Meta::new();
@@ -823,11 +843,15 @@ impl img::DiskImage for Woz2 {
         if self.track_bits_offset!=1536 {
             panic!("track bits at a nonstandard offset");
         }
+        self.write_back_track().expect("could not restore track");
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.header.to_bytes());
         ans.append(&mut self.info.to_bytes());
         ans.append(&mut self.tmap.to_bytes());
         ans.append(&mut self.trks.to_bytes());
+        if let Some(flux) = &self.flux {
+            ans.append(&mut flux.to_bytes());
+        }
         if let Some(meta) = &self.meta {
             ans.append(&mut meta.to_bytes());
         }
@@ -851,25 +875,26 @@ impl img::DiskImage for Woz2 {
         self.set_pro_track_buf(TrackKey::CH((cyl,head)),dat)
     }
     fn set_pro_track_buf(&mut self,tkey: TrackKey,dat: &[u8]) -> STDRESULT {
-        let bits = self.get_trk_bits_mut(tkey)?;
-        if bits.len()!=dat.len() {
-            log::error!("source track buffer is {} bytes, destination track buffer is {} bytes",dat.len(),bits.len());
+        let tmap_idx = img::woz::get_tmap_index(tkey.clone(),&self.kind)?;
+        let idx = self.try_motor(tmap_idx)?;
+        let[beg,end] = self.get_trk_rng(idx);
+        if end-beg != dat.len() {
+            log::error!("source track buffer is {} bytes, destination track buffer is {} bytes",dat.len(),end-beg);
             return Err(Box::new(img::Error::ImageSizeMismatch));
         }
-        bits.copy_from_slice(dat);
+        self.trks.bits[beg..end].copy_from_slice(dat);
         Ok(())
     }
     fn get_track_solution(&mut self,track: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
         self.get_pro_track_solution(TrackKey::Track(track))
     }
     fn get_pro_track_solution(&mut self,tkey: TrackKey) -> Result<Option<img::TrackSolution>,DYNERR> {
-        let mut reader = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,width] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,width] = self.goto_track(tkey.clone())?;
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::debug!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey.clone())?,zfmt) {
+            if let Ok(chss_map) = self.engine.chss_map(self.cells.as_mut().unwrap(),zfmt) {
                 return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
             }
         }
@@ -879,7 +904,7 @@ impl img::DiskImage for Woz2 {
             self.kind = img::names::A2_DOS32_KIND;
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey.clone())?,zfmt) {
+            if let Ok(chss_map) = self.engine.chss_map(self.cells.as_mut().unwrap(),zfmt) {
                 if chss_map.len()==13 {
                     return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
                 }
@@ -888,7 +913,7 @@ impl img::DiskImage for Woz2 {
             self.kind = img::names::A2_DOS33_KIND;
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey)?,zfmt) {
+            if let Ok(chss_map) = self.engine.chss_map(self.cells.as_mut().unwrap(),zfmt) {
                 if chss_map.len()==16 {
                     return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
                 }
@@ -902,7 +927,7 @@ impl img::DiskImage for Woz2 {
             };
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-            if let Ok(chss_map) = reader.chss_map(self.get_trk_bits_ref(tkey.clone())?,zfmt) {
+            if let Ok(chss_map) = self.engine.chss_map(self.cells.as_mut().unwrap(),zfmt) {
                 return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
             }
             return Ok(None);
@@ -945,10 +970,9 @@ impl img::DiskImage for Woz2 {
         self.get_pro_track_nibbles(TrackKey::CH((cyl, head)))
     }
     fn get_pro_track_nibbles(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
-        let mut reader = self.new_rw_obj(tkey.clone())?;
-        let [motor,head,_] = img::woz::get_motor_pos(tkey.clone(), &self.kind)?;
+        let [motor,head,_] = self.goto_track(tkey.clone())?;
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-        Ok(reader.to_nibbles(self.get_trk_bits_ref(tkey)?, zfmt))
+        Ok(self.engine.to_nibbles(self.cells.as_mut().unwrap(), zfmt))
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         let tkey = super::woz::tkey_from_tmap_idx(self.tmap_pos, &self.kind);

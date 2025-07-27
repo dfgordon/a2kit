@@ -197,7 +197,7 @@ impl Navigate for StatementCompletionProvider {
 impl StatementCompletionProvider {
 	fn new() -> Self {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_integerbasic::language()).expect("could not start Integer parser");
+        parser.set_language(&tree_sitter_integerbasic::LANGUAGE.into()).expect("could not start Integer parser");
 		Self {
 			pos: lsp::Position::new(0,0),
 			line: String::new(),

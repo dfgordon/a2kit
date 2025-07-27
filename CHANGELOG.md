@@ -18,27 +18,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * create, read, and write with proprietary formats
     - from CLI use `--pro` argument with any disk image subcommand
+* WOZ handling enhancements
+    - flux tracks
+    - optional emulation to deeper levels (LSS, fake bits)
+    - CLI access of quarter tracks, e.g. `17.25..19.25` selects two quarter tracks
 * support AppleSingle format (PR #2)
 * minify and renumber can be guarded by external references
 * CLI `mkdsk` supports creating blank or empty disks (issue #3)
-* support for quarter tracks
-    - from the CLI just use decimals, e.g. `17.25..19.25` selects two quarter tracks
-* WOZ fake bits are produced as appropriate
 * add long help for certain CLI arguments
 * CLI `geometry` output is enhanced
     - adds the `addr_code` key (nibble code used in address fields)
     - will return fractional cylinder numbers if necessary
 * CLI `get` can be coerced into formatting output for the console
 
-### Breaking Changes
+### Breaking Changes (CLI)
+
+* The `mkdsk --kind` values are changed
+    - ambiguous kinds such as `5.25in` are no longer allowed
+    - every floppy kind is in the form of a triple `<PKG-VEND-FMT>`
+* Scripts that depend on `geometry` output will need to be reviewed
+* Error return types have changed in some cases
+
+### Breaking Changes (Crate)
 
 * modules `disk35` and `disk525` are eliminated
+* `TrackBits` trait is eliminated
 * various public entities are eliminated from `img::woz`
 * changes to `DiskImage` trait
-    - eliminated `track-2ch`, `ch_2_track`
+    - eliminated `track_2_ch`, `ch_2_track`
 * enumeration `img::NibbleCode` is eliminated 
 * removed functions `lang::merlin::eval_if`, `img::imd::cpm_blocking`
 * trait function args or return values changed: `Renumber::build_edits`, `Packing::get_load_address`
+* language parsers use tree-sitter 0.25
+* code that depends on specific error return types might break
+* CP/M `ExtentType` is replaced by `EntryType`
 
 ## [3.7.0] - 2025-03-22
 

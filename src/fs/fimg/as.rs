@@ -20,6 +20,26 @@ fn fixed_len_str(s: &String, fixed_len: usize) -> Vec<u8> {
     }
 }
 
+/// AppleSingle does not speak Apple DOS 3.x
+fn prodos_to_dos_type(typ: u16) -> u8 {
+    match typ {
+        0x04 => 0, // txt
+        0xfa => 1, // integer
+        0xfc => 2, // applesoft
+        _ => 3 // otherwise use binary
+    }
+}
+
+/// AppleSingle does not speak Apple DOS 3.x
+fn dos_to_prodos_type(typ: u8) -> u16 {
+    match typ {
+        0 => 0x04,
+        1 => 0xfa,
+        2 => 0xfc,
+        _ => 0x06
+    }
+}
+
 #[derive(BinRead, BinWrite, Debug, Clone)]
 #[brw(big, magic = 0x00051600u32)]
 #[br(assert(version == 0x00010000 || version == 0x00020000, "Unknown AppleSingle version {:X}, only version 1 and 2 are supported", version))]
@@ -128,6 +148,27 @@ impl AppleSingleFile {
                 log::debug!("AppleSingle file does not contain any data");
                 Err(Box::new(crate::fs::Error::FileFormat))
             },
+        }
+    }
+    /// Translate DOS 3.x info to the equivalent ProDOS info and add it to the AppleSingle.
+    /// Remember write protection is the high bit of the file type.
+    pub fn add_dos3x_info(&mut self, file_type: u8, load_addr: u16) {
+        let access = if file_type & 0x80 > 0 {
+            0xc3
+        } else {
+            0x01
+        };
+        self.add_prodos_info(dos_to_prodos_type(file_type & 0x7f),load_addr as u32,access)
+    }
+    /// Get DOS 3.x info as (file_type,load_addr) by translating the ProDOS info.
+    /// Remember write protection is the high bit of the file type.
+    pub fn get_dos3x_info(&self) -> Option<(u8,u16)> {
+        match self.get_prodos_info() {
+            Some((typ,aux,access)) => Some(
+                (prodos_to_dos_type(typ) + match access > 1 { true => 0x80, false => 0 },
+                (aux & 0xffff) as u16)
+            ),
+            None => None
         }
     }
     /// add the ProDOS info entry as (type,aux,access)

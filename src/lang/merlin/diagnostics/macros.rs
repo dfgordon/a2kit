@@ -83,7 +83,7 @@ fn substitute(parser: &mut tree_sitter::Parser, line: &str, search: &Vec<String>
 /// returns (expanded macro, set of variables that were actually used)
 fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str) -> Result<(String,HashSet<usize>),DYNERR> {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_merlin6502::language())?;
+    parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into())?;
     let mut ans = String::new();
     let mut matches = HashSet::new();
     let mut search = Vec::new();
@@ -117,7 +117,7 @@ fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str)
 /// This will subtract unassembled lines as well as the control operations themselves.
 fn evaluate_conditionals(txt: &str, symbols: &mut Symbols, scope: &Symbol) -> Result<String,DYNERR> {
     let mut parser = tree_sitter::Parser::new();
-    if let Err(_) = parser.set_language(&tree_sitter_merlin6502::language()) {
+    if let Err(_) = parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()) {
         return Ok(txt.to_string());
     }
     let mut ans = String::new();

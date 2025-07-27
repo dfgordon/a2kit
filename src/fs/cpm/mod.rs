@@ -210,7 +210,7 @@ impl Disk
     }
     fn is_extent_free(&self,ptr: Ptr,dir: &Directory) -> bool {
         match dir.get_type(&ptr) {
-            ExtentType::Deleted | ExtentType::Unknown => true,
+            EntryType::Deleted | EntryType::Unknown => true,
             _ => false
         }
     }
@@ -220,7 +220,7 @@ impl Disk
         for i in 0..dir.num_entries() {
             trace!("check entry {}",i);
             match dir.get_type(&Ptr::ExtentEntry(i)) {
-                ExtentType::Deleted | ExtentType::Unknown => {
+                EntryType::Deleted | EntryType::Unknown => {
                     ans += 1
                 },
                 _ => { debug!("entry {} is used",i); }
@@ -727,7 +727,7 @@ impl super::DiskFS for Disk {
                     dir.set_entry::<Label>(&Ptr::ExtentEntry(i), &lab);
                     completion += 1;
                 }
-                if dir.get_type(&Ptr::ExtentEntry(i))==ExtentType::Deleted {
+                if dir.get_type(&Ptr::ExtentEntry(i))==EntryType::Deleted {
                     dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &new_px);
                     completion += 1;
                 }

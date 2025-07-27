@@ -385,7 +385,7 @@ impl Minifier
 		self.forbids_combining_any = false;
 		self.pass = 1;
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.trim().len()==0 {
 				continue;
@@ -417,7 +417,7 @@ impl Minifier
 		self.pass = 2;
 		self.set_line_ref_map()?;
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.trim().len()==0 { // should never be
 				continue;
@@ -443,7 +443,7 @@ impl Minifier
 		self.minified_program = String::new();
 		self.pass = 3;
 		let mut parser = tree_sitter::Parser::new();
-		parser.set_language(&tree_sitter_applesoft::language()).expect("error loading applesoft grammar");
+		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into()).expect("error loading applesoft grammar");
 		for line in program.lines() {
 			if line.trim().len()==0 { // should never be
 				continue;
