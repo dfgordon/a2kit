@@ -337,6 +337,7 @@ pub fn update_json_severity(maybe_obj: &serde_json::Value, key: &str, curr: &mut
         if let Some(x) = outer.get(key) {
             match x.as_str() {
                 Some("ignore") => *curr = None,
+                Some("hint") => *curr = Some(lsp::DiagnosticSeverity::HINT),
                 Some("info") => *curr = Some(lsp::DiagnosticSeverity::INFORMATION),
                 Some("warn") => *curr = Some(lsp::DiagnosticSeverity::WARNING),
                 Some("error") => *curr = Some(lsp::DiagnosticSeverity::ERROR),

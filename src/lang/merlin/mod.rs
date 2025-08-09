@@ -599,6 +599,22 @@ impl Symbols {
         }
         Ok(false)
     }
+    /// test whether any label is referenced or an entry
+    fn is_label_referenced_or_ent(&self,label: &str,scope: Option<&Symbol>) -> bool {
+        let maybe_sym =  match label.get(0..1) {
+            Some(":") => match scope {
+                Some(parent) => parent.children.get(label),
+                None => None
+            },
+            Some("]") => self.vars.get(label),
+            Some(_) => self.globals.get(label),
+            None => None
+        };
+        match maybe_sym {
+            Some(sym) => sym.refs.len() > 0 || sym.flags & symbol_flags::ENT > 0,
+            None => false
+        }
+    }
     /// test whether a macro is ever referenced, even indirectly
     fn is_macro_referenced(&self,label: &str, max_depth: usize) -> Result<bool,crate::DYNERR> {
         // first see if it is directly referenced, if yes we are done

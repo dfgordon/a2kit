@@ -61,9 +61,9 @@ fn dimg_arg(req: bool) -> Arg {
 fn method_arg() -> Arg {
     Arg::new("method").long("method").help("select decoding methodology")
         .value_name("METHOD")
-        .value_parser(["analyze","edit","emulate"])
+        .value_parser(["auto","edit","analyze","emulate"])
         .required(false)
-        .default_value("edit")
+        .default_value("auto")
 }
 
 pub fn build_cli() -> Command {
@@ -258,6 +258,10 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                     .required(true)
                     .multiple(false)
                     .args(["os", "empty", "blank"]),
+            )
+            .arg(Arg::new("flux").long("flux").value_name("TRACKS").help("list of flux tracks")
+                .required(false)
+                .long_help("list of tracks (CH form) that will be created as flux streams, the `..` and `,,` separators can be used to form ranges")
             )
             .visible_alias("mkimg")
             .about("write a new disk image to the given path")

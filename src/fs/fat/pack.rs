@@ -7,6 +7,8 @@ use std::str::FromStr;
 use a2kit_macro::DiskStruct;
 use super::Packer;
 use super::super::{FileImage,Packing,UnpackedData};
+use super::super::fimg::r#as::AppleSingleFile;
+use binrw::{BinRead,BinWrite};
 use super::types::{SequentialText,Error};
 use crate::{STDRESULT,DYNERR};
 
@@ -17,6 +19,72 @@ pub const DOTDOT: ([u8;8],[u8;3]) = ([b'.',b'.',32,32,32,32,32,32],[32,32,32]);
 // TODO: how do we support old style extended character sets?
 // For Kanji, if first name byte is 0x05 replace with extended character 0xe5.
 //const KANJI: u8 = 0x05;
+
+fn option_to_utc(time: Option<chrono::NaiveDateTime>) -> Option<chrono::DateTime<chrono::Utc>> {
+    match time {
+        Some(dt) => Some(dt.and_utc()),
+        None => None
+    }
+}
+
+/// pack [tenths,time,date] into FAT format for created (5 bytes)
+fn pack_create_stamp(time: Option<chrono::NaiveDateTime>) -> [u8;5] {
+    [
+        vec![pack_tenths(time)],
+        pack_time(time).to_vec(),
+        pack_date(time).to_vec()
+    ].concat().try_into().expect("packing time failed")
+}
+
+/// pack [time,date] into FAT format for modified (4 bytes)
+fn pack_modify_stamp(time: Option<chrono::NaiveDateTime>) -> [u8;4] {
+    [
+        pack_time(time).to_vec(),
+        pack_date(time).to_vec()
+    ].concat().try_into().expect("packing time failed")
+}
+
+/// pack date into FAT format for modified (2 bytes)
+fn pack_access_stamp(date: Option<chrono::NaiveDateTime>) -> [u8;2] {
+    pack_date(date).to_vec().try_into().expect("packing date failed")
+}
+
+/// unpack create time from slice, if wrong size return None
+fn unpack_create_stamp(stamp: &[u8]) -> Option<chrono::NaiveDateTime> {
+    if stamp.len() != 5 {
+        return None;
+    }
+    let time = unpack_time([stamp[1],stamp[2]],stamp[0]);
+    let date = unpack_date([stamp[3],stamp[4]]);
+    match (date,time) {
+        (Some(d),Some(t)) => Some(d.and_time(t)),
+        _ => None
+    }
+}
+
+/// unpack modify time from slice, if wrong size return None
+fn unpack_modify_stamp(stamp: &[u8]) -> Option<chrono::NaiveDateTime> {
+    if stamp.len() != 4 {
+        return None;
+    }
+    let time = unpack_time([stamp[0],stamp[1]],0);
+    let date = unpack_date([stamp[2],stamp[3]]);
+    match (date,time) {
+        (Some(d),Some(t)) => Some(d.and_time(t)),
+        _ => None
+    }
+}
+
+/// unpack access time from slice, if wrong size return None
+fn unpack_access_stamp(stamp: &[u8]) -> Option<chrono::NaiveDateTime> {
+    if stamp.len() != 2 {
+        return None;
+    }
+    match unpack_date([stamp[0],stamp[1]]) {
+        Some(d) => d.and_hms_opt(0,0,0),
+        None => None
+    }
+}
 
 /// pack the date into the FAT format, if the year is not between 1980
 /// and 2107 it will be pegged to the nearest representable date.
@@ -379,5 +447,51 @@ impl Packing for Packer {
         log::error!("FAT implementation does not support operation");
         return Err(Box::new(Error::General));
     }
+    fn pack_apple_single(&self,fimg: &mut FileImage, dat: &[u8], _new_load_addr: Option<usize>) -> STDRESULT {
+        let apple_single = AppleSingleFile::read(&mut std::io::Cursor::new(dat))?;
+        let dat = apple_single.get_data_fork()?;
+        let accessed = apple_single.get_access_time();
+        let created = apple_single.get_create_time();
+        let modified = apple_single.get_modify_time();
+        match apple_single.get_msdos_info() {
+            Some(attrib) => {
+                self.pack_bin(fimg,&dat,None,None)?;
+                // Only use the AppleSingle name if the FileImage name is empty; the
+                // command line name is loaded into the FileImage before we get here.
+                if fimg.full_path.len() == 0 {
+                    fimg.full_path = apple_single.get_real_name();
+                }
+                fimg.access = vec![attrib];
+                fimg.accessed = pack_access_stamp(Some(accessed)).to_vec();
+                fimg.created = pack_create_stamp(Some(created)).to_vec();
+                fimg.modified = pack_modify_stamp(Some(modified)).to_vec();
+                Ok(())
+            },
+            None => {
+                log::error!("AppleSingle is missing MS-DOS information");
+                Err(Box::new(crate::fs::Error::FileSystemMismatch))
+            }
+        }
+    }
+    fn unpack_apple_single(&self,fimg: &FileImage) -> Result<Vec<u8>,DYNERR> {
+        if fimg.fs_type.len() != 1 {
+            log::error!("unexpected file type in file image");
+            return Err(Box::new(crate::fs::Error::FileImageFormat));
+        }
 
+        let attrib = match fimg.access.len() { 1 => fimg.access[0], _ => 0 };
+        let accessed = option_to_utc(unpack_access_stamp(&fimg.accessed));
+        let created = option_to_utc(unpack_create_stamp(&fimg.created));
+        let modified = option_to_utc(unpack_modify_stamp(&fimg.modified));
+        let dat = self.unpack_bin(fimg)?;
+
+        let mut apple_single = AppleSingleFile::new();
+        apple_single.add_real_name(&fimg.full_path);
+        apple_single.add_dates(created,modified,None,accessed);
+        apple_single.add_msdos_info(attrib);
+        apple_single.add_data_fork(&dat);
+        let mut ans = std::io::Cursor::new(Vec::new());
+        AppleSingleFile::write(&mut apple_single,&mut ans)?;
+        Ok(ans.into_inner())
+    }
 }

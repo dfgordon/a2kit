@@ -11,7 +11,7 @@
 //! ## Basic timing parameters for 5.25 inch disks
 //! 
 //! * Time is normalized to the resolution of a WOZ flux track, 1 tick = 125 ns.
-//! * The bit-cell duration in 32 ticks
+//! * The bit-cell duration is 32 ticks
 //! * The LSS cycle is 4 ticks
 //! * Apple 2/2+/2e/2c processor cycle is 8 ticks
 //! 
@@ -21,7 +21,7 @@
 
 use super::super::FluxCells;
 
-const FAKE_BITS: [u8;32] = [1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1];
+const FAKE_BITS: [u8;32] = [180, 2, 177, 40, 180, 160, 114, 96, 20, 1, 26, 45, 25, 96, 129, 70, 3, 0, 0, 77, 140, 42, 8, 137, 2, 8, 68, 4, 225, 195, 141, 0];
 
 /// ROM is accessed as `[Q6*2 + Q7][high-bit][pulse][sequence]`
 const ROM: [[[[u8;16];2];2];4] = [
@@ -42,7 +42,7 @@ const ROM: [[[[u8;16];2];2];4] = [
             [0x18,0x38,0x08,0x48,0xd8,0xd8,0xd8,0xd8,0xd8,0xd8,0xd8,0xd8,0xd8,0xe8,0xf8,0xe0]
         ]
     ],
-    // Q6=0,Q7=1 (write, pulse does not affect)
+    // Q6=0,Q7=1 (shift for write, pulse does not affect)
     [
         // high bit clear
         [
@@ -76,7 +76,7 @@ const ROM: [[[[u8;16];2];2];4] = [
             [0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a]
         ]
     ],
-    // Q6=1,Q7=1 (write, pulse does not affect)
+    // Q6=1,Q7=1 (load for write, pulse does not affect)
     [
         // high bit clear
         [
@@ -102,18 +102,20 @@ pub struct State {
     seq: usize,
     /// current value of data latch
     latch: u8,
-    /// soft switch used to set the latch
+    /// value of $C08D is what will be written out
     c08d: u8,
-    /// first bit selecting arm of LSS program
+    /// first bit selecting arm of LSS program ($C08C -> off, $C08D -> on)
     q6: bool,
-    /// second bit selecting arm of LSS program
+    /// second bit selecting arm of LSS program ($C08E -> off, $C08F -> on)
     q7: bool,
     /// is the disk write protected
     write_protect: bool,
     /// pointer into the circular fake bit buffer
     fake_bit_ptr: usize,
-    /// ticks since the last pulse, used to emit fake bits
-    last_pulse: usize
+    /// ticks when last pulse was emitted, used to emit fake bits
+    last_pulse: usize,
+    /// circular buffer of fake bits
+    fake_bit_pool: bit_vec::BitVec
 }
 
 impl State {
@@ -125,8 +127,9 @@ impl State {
             q6: false,
             q7: false,
             write_protect: false,
-            fake_bit_ptr: (chrono::Local::now().timestamp() % 32) as usize,
-            last_pulse: 0
+            fake_bit_ptr: (chrono::Local::now().timestamp() % 256) as usize,
+            last_pulse: 0,
+            fake_bit_pool: bit_vec::BitVec::from_bytes(&FAKE_BITS)
         }
     }
     /// Check for a pulse while advancing through one LSS cycle.
@@ -139,8 +142,8 @@ impl State {
                 self.last_pulse = cells.ptr;
             }
             if cells.since(self.last_pulse) > 96 {
-                self.fake_bit_ptr = (self.fake_bit_ptr + 1) % 32;
-                new_pulse = FAKE_BITS[self.fake_bit_ptr] > 0;
+                self.fake_bit_ptr = (self.fake_bit_ptr + 1) & 0xff;
+                new_pulse = self.fake_bit_pool[self.fake_bit_ptr];
             }
             pulse |= new_pulse;                
         }
@@ -161,6 +164,10 @@ impl State {
         self.q6 = false;
         self.q7 = false;
     }
+    // pub fn check_write_protect(&mut self) {
+    //     self.q6 = true;
+    //     self.q7 = false;
+    // }
     // pub fn start_write(&mut self,set: u8) {
     //     self.q6 = true;
     //     self.q7 = true;
@@ -171,9 +178,11 @@ impl State {
     // }
     /// Advance the state machine through `ticks` time units (125 ns).
     /// Returns whether the latch was touched or not.
-    /// This requires both cells.fshift > 1 and ticks%4 == 0.
+    /// Assertion panic if anything is not aligned to 4-tick boundaries.
     pub fn advance(&mut self, ticks: usize, cells: &mut FluxCells) -> bool {
-        assert!(ticks%4==0 && cells.fshift > 1);
+        assert!(ticks%4==0);
+        assert!(cells.fshift > 1);
+        assert!(cells.ptr & 3 == 0); 
         let mut touched = false;
         let cycles = ticks/4;
         for _ in 0..cycles {

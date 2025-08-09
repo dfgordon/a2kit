@@ -81,10 +81,10 @@ pub const TYPE_MAP_DISP: [(u8,&str);39] = [
     (0x13, "AFM"), // SOS
     (0x14, "AFR"), // SOS
     (0x15, "SLB"), // SOS
-    (0x19, "AWD"), // AppleWorks Data Base
-    (0x1a, "AWW"), // AppleWorks Word Processor
-    (0x1b, "AWS"), // AppleWorks Spreadsheet
-    (0xef, "PSA"), // Pascal area
+    (0x19, "ADB"), // AppleWorks Data Base
+    (0x1a, "AWP"), // AppleWorks Word Processor
+    (0x1b, "ASP"), // AppleWorks Spreadsheet
+    (0xef, "PAS"), // Pascal file
     (0xf0, "CMD"),
     (0xf1, "USR"),
     (0xf2, "USR"),

@@ -206,6 +206,11 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     else if node.kind() == "var_mac" {
         push(rng, "macro substitution variable referenced outside macro", lsp::DiagnosticSeverity::ERROR);
     } else if child.is_some() && node.kind()=="label_def" {
+        if let Some(severity) = ctx.unused_labels_setting() {
+            if !symbols.is_label_referenced_or_ent(&txt, ctx.curr_scope()) {
+                push(rng,"label is never referenced",severity);
+            }
+        }
         let ck = child.unwrap().kind();
         if ck == "global_label" {
             ctx.enter_scope(&txt,symbols);

@@ -82,6 +82,8 @@ pub enum Error {
     UnknownImageType,
     #[error("track count did not match request")]
     TrackCountMismatch,
+    #[error("geometric coordinate out of range")]
+    GeometryMismatch,
 	#[error("image size did not match the request")]
 	ImageSizeMismatch,
     #[error("image type not compatible with request")]
@@ -204,7 +206,19 @@ pub enum DiskImageType {
     IMD,
     DOT2MG,
     NIB,
-    TD0
+    TD0,
+    /// for future expansion
+    DOT86F,
+    /// for future expansion
+    D64,
+    /// for future expansion
+    G64,
+    /// for future expansion
+    MFI,
+    /// for future expansion
+    MFM,
+    /// for future expansion
+    HFE,
 }
 
 impl TrackLayout {
@@ -335,7 +349,7 @@ impl fmt::Display for FluxCode {
     }
 }
 
-/// Given a command line argument return a likely disk kind the user may want
+/// match command line argument to disk kind
 impl FromStr for DiskKind {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
@@ -400,7 +414,13 @@ impl fmt::Display for DiskImageType {
             Self::IMD => write!(f,"imd"),
             Self::DOT2MG => write!(f,"2mg"),
             Self::NIB => write!(f,"nib"),
-            Self::TD0 => write!(f,"td0")
+            Self::TD0 => write!(f,"td0"),
+            Self::D64 => write!(f,"d64"),
+            Self::DOT86F => write!(f,"86f"),
+            Self::G64 => write!(f,"g64"),
+            Self::HFE => write!(f,"hfe"),
+            Self::MFM => write!(f,"mfm"),
+            Self::MFI => write!(f,"mfi")
         }
     }
 }

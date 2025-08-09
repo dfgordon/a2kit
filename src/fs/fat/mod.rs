@@ -44,9 +44,9 @@ pub fn new_fimg(chunk_len: usize,set_time: bool,path: &str) -> Result<super::Fil
         fs_type: vec![0;3],
         aux: vec![],
         eof: vec![0;4],
-        accessed: created.clone(),
+        accessed: created[3..5].to_vec(),
         created: created.clone(),
-        modified: vec![created[1],created[2],created[3],created[4]],
+        modified: created[1..5].to_vec(),
         access: vec![0], // attributes, do not confuse with access time
         version: vec![12],
         min_version: vec![12],

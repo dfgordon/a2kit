@@ -25,11 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * support AppleSingle format (PR #2)
 * minify and renumber can be guarded by external references
 * CLI `mkdsk` supports creating blank or empty disks (issue #3)
+* CLI `mkdsk` supports creating flux tracks
 * add long help for certain CLI arguments
 * CLI `geometry` output is enhanced
     - adds the `addr_code` key (nibble code used in address fields)
     - will return fractional cylinder numbers if necessary
 * CLI `get` can be coerced into formatting output for the console
+* macro expansions handle `]0` (Merlin 16 or higher)
+* additional diagnostics and settings for Merlin server
 
 ### Breaking Changes (CLI)
 
@@ -52,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * language parsers use tree-sitter 0.25
 * code that depends on specific error return types might break
 * CP/M `ExtentType` is replaced by `EntryType`
+* new public structure members
+    - in `merlin::settings`
+* changes to public interfaces
+    - create functions for woz images
 
 ## [3.7.0] - 2025-03-22
 

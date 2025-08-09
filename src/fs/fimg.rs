@@ -34,10 +34,13 @@ impl FileImage {
     pub fn fimg_version() -> String {
         "2.1.0".to_string()
     }
-    /// the string slices must be in the form X.Y.Z or else we panic
-    pub fn version_tuple(vers: &str) -> (usize,usize,usize) {
-        let v: Vec<usize> = vers.split(".").map(|s| usize::from_str(s).expect("bad version format")).collect();
-        (v[0],v[1],v[2])
+    /// the string slices must be in the form X.Y.Z or else return error
+    pub fn version_tuple(vers: &str) -> Result<(usize,usize,usize),DYNERR> {
+        let v: Vec<Result<usize,std::num::ParseIntError>> = vers.split(".").map(|s| usize::from_str(s)).collect();
+        if v.len() != 3 {
+            return Err(Box::new(Error::UnexpectedVersion));
+        }
+        Ok((v[0].clone()?,v[1].clone()?,v[2].clone()?))
     }
     pub fn ordered_indices(&self) -> Vec<usize> {
         let copy = self.chunks.clone();
@@ -175,7 +178,7 @@ impl FileImage {
     pub fn from_json(json_str: &str) -> Result<FileImage,DYNERR> {
         let parsed = json::parse(json_str)?;
         let fimg_version = FileImage::parse_str("fimg_version",&parsed)?;
-        let vers_tup = Self::version_tuple(&fimg_version);
+        let vers_tup = Self::version_tuple(&fimg_version)?;
         if vers_tup < (2,0,0) {
             log::error!("file image v2 or higher is required");
             return Err(Box::new(Error::FileFormat));
@@ -237,9 +240,9 @@ impl FileImage {
     /// Put chunks into the JSON string representation
     pub fn to_json(&self,indent: Option<u16>) -> String {
         let mut json_map = json::JsonValue::new_object();
-        let mut sorted : BTreeMap<usize,Vec<u8>> = BTreeMap::new();
+        let mut sorted : BTreeMap<usize,&[u8]> = BTreeMap::new();
         for (c,v) in &self.chunks {
-            sorted.insert(*c,v.clone());
+            sorted.insert(*c,v);
         }
         for (c,v) in &sorted {
             json_map[c.to_string()] = json::JsonValue::String(hex::encode_upper(v));

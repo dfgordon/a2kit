@@ -85,7 +85,7 @@ fn read_small() {
 fn write_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file
-    let img = woz1::Woz1::create(35, names::A2_DOS32_KIND);
+    let img = woz1::Woz1::create(35, names::A2_DOS32_KIND,None).expect("could not create");
     let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init32(254,true).expect("failed to INIT");
 

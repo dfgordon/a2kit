@@ -51,7 +51,7 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
                     }
                 },
                 ItemType::RawTrack => {
-                    img.set_pro_track_buf(super::parse_track_request(&dest_path,img.motor_steps_per_cyl())?,dat)?
+                    img.set_pro_track_buf(super::request_one_track(&dest_path,img.motor_steps_per_cyl())?,dat)?
                 },
                 ItemType::Track => {
                     error!("cannot copy nibbles, try using the raw track");

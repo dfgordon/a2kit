@@ -40,6 +40,8 @@ pub enum Error {
     FileSystemMismatch,
     #[error("file image format is wrong")]
     FileImageFormat,
+    #[error("incompatible or ill-formed version")]
+    UnexpectedVersion,
     #[error("high level file format is wrong")]
     FileFormat
 }

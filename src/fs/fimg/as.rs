@@ -116,6 +116,13 @@ impl AppleSingleFile {
         });
         self.finish_entry();
     }
+    /// get the accessed time or now if none
+    pub fn get_access_time(&self) -> chrono::NaiveDateTime {
+        match self.get_entry(EntryType::FileDatesInfo) {
+            Some(EntryData::FileDatesInfo(dt)) => dt.access_time.naive_local(),
+            _ => chrono::Local::now().naive_local()
+        }
+    }
     /// get the create time or now if none
     pub fn get_create_time(&self) -> chrono::NaiveDateTime {
         match self.get_entry(EntryType::FileDatesInfo) {
@@ -191,6 +198,26 @@ impl AppleSingleFile {
             Some(EntryData::ProDOSFileInfo(file_info)) => Some((file_info.file_type,file_info.aux_type,file_info.access)),
             _ => {
                 log::debug!("AppleSingle file does not contain any ProDOS file info");
+                None
+            },
+        }
+    }
+    /// add the MS-DOS info entry as (attributes)
+    pub fn add_msdos_info(&mut self, attrib: u8) {
+        self.entries.push(Entry {
+            r#type: EntryType::MsdosFileInfo,
+            offset: 0,
+            data: EntryData::MSDOSFileInfo( MsdosFileInfo { attrib: attrib as u16 }),
+            length: 2
+        });
+        self.finish_entry();
+    }
+    /// get the MS-DOS (attrib) if it exists
+    pub fn get_msdos_info(&self) -> Option<u8> {
+        match self.get_entry(EntryType::MsdosFileInfo) {
+            Some(EntryData::MSDOSFileInfo(file_info)) => Some((file_info.attrib & 0xff) as u8),
+            _ => {
+                log::debug!("AppleSingle file does not contain any MS-DOS file info");
                 None
             },
         }

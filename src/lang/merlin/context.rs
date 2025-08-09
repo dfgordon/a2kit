@@ -603,8 +603,16 @@ impl Context {
         self.config.flag.case_sensitive
     }
     pub fn unused_macros_setting(&self) -> Option<lsp::DiagnosticSeverity> {
-        // TODO: next major version: self.config.flag.unused_macros
-        Some(lsp::DiagnosticSeverity::HINT)
+        self.config.flag.unused_macros
+    }
+    pub fn unused_labels_setting(&self) -> Option<lsp::DiagnosticSeverity> {
+        self.config.flag.unused_labels
+    }
+    pub fn dup_mac_locs(&self) -> Option<lsp::DiagnosticSeverity> {
+        self.config.flag.dup_mac_locs
+    }
+    pub fn missing_entries(&self) -> Option<lsp::DiagnosticSeverity> {
+        self.config.flag.missing_entries
     }
     pub fn linker_threshold(&self) -> f64 {
         self.config.linker.detect

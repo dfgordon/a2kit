@@ -4,7 +4,7 @@ use crate::bios::{bpb,dpb};
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal,fat};
 use crate::img;
 use crate::img::{DiskKind,DiskImage,DiskImageType,names};
-use crate::img::tracks::DiskFormat;
+use crate::img::tracks::{DiskFormat,TrackKey};
 use super::CommandError;
 use crate::{STDRESULT,DYNERR};
 
@@ -41,7 +41,7 @@ macro_rules! cpm_patterns {
     };
 }
 
-fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap: Option<&String>) -> Result<u8,DYNERR> {
+fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap: Option<&String>,fmt: &Option<DiskFormat>,flux: &Vec<TrackKey>) -> Result<u8,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -61,21 +61,39 @@ fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap:
             return Err(Box::new(CommandError::InvalidCommand))
         }
     }
+    match (img_typ,flux.len()>0) {
+        (DiskImageType::WOZ2,_) => {},
+        (_,false) => {},
+        _ => {
+            log::error!("selected image type does not support flux tracks");
+            return Err(Box::new(CommandError::InvalidCommand))
+        }
+    }
+    match (img_typ,fmt) {
+        (_,None) => {},
+        (DiskImageType::WOZ1,Some(_)) => {},
+        (DiskImageType::WOZ2,Some(_)) => {},
+        _ => {
+            log::error!("unable to use proprietary tracks for this image type");
+            return Err(Box::new(CommandError::InvalidCommand))
+        }
+    }
     Ok(vol)
 }
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage_std(img_typ: &DiskImageType,maybe_wrap: Option<&String>,vol: u8,kind: &DiskKind) -> Result<Box<dyn DiskImage>,DYNERR> {
-    return match (img_typ,*kind) {
+fn mkimage(img_typ: &DiskImageType,maybe_wrap: Option<&String>,maybe_vol: Option<&String>,kind: &DiskKind,fmt: Option<DiskFormat>,flux: Vec<TrackKey>) -> Result<Box<dyn DiskImage>,DYNERR> {
+    let vol = verify_mkimage(img_typ,maybe_vol,maybe_wrap,&fmt,&flux)?;
+    match (img_typ,*kind) {
         (DiskImageType::D13,names::A2_DOS32_KIND) => Ok(Box::new(img::dsk_d13::D13::create(35))),
         (DiskImageType::DO,names::A2_DOS33_KIND) => Ok(Box::new(img::dsk_do::DO::create(35,16))),
-        (DiskImageType::WOZ1,names::A2_DOS32_KIND) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind))),
-        (DiskImageType::WOZ1,names::A2_DOS33_KIND) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind))),
-        (DiskImageType::WOZ2,names::A2_DOS32_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
-        (DiskImageType::WOZ2,names::A2_DOS33_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
-        (DiskImageType::WOZ2,names::A2_400_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
-        (DiskImageType::WOZ2,names::A2_800_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind))),
+        (DiskImageType::WOZ1,names::A2_DOS32_KIND) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind,fmt)?)),
+        (DiskImageType::WOZ1,names::A2_DOS33_KIND) => Ok(Box::new(img::woz1::Woz1::create(vol,*kind,fmt)?)),
+        (DiskImageType::WOZ2,names::A2_DOS32_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind,fmt,flux)?)),
+        (DiskImageType::WOZ2,names::A2_DOS33_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind,fmt,flux)?)),
+        (DiskImageType::WOZ2,names::A2_400_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind,fmt,flux)?)),
+        (DiskImageType::WOZ2,names::A2_800_KIND) => Ok(Box::new(img::woz2::Woz2::create(vol,*kind,fmt,flux)?)),
         (DiskImageType::PO,names::A2_DOS33_KIND) => Ok(Box::new(img::dsk_po::PO::create(280))),
         (DiskImageType::PO,names::A2_400_KIND) => Ok(Box::new(img::dsk_po::PO::create(800))),
         (DiskImageType::PO,names::A2_800_KIND) => Ok(Box::new(img::dsk_po::PO::create(1600))),
@@ -95,27 +113,6 @@ fn mkimage_std(img_typ: &DiskImageType,maybe_wrap: Option<&String>,vol: u8,kind:
             log::error!("pairing of image type and disk kind is not supported");
             Err(Box::new(CommandError::UnsupportedItemType))
         }
-    };
-}
-
-fn mkimage_pro(img_typ: &DiskImageType,vol: u8,kind: &DiskKind,fmt: DiskFormat) -> Result<Box<dyn DiskImage>,DYNERR> {
-    return match (img_typ,*kind) {
-        (DiskImageType::WOZ1,names::A2_DOS32_KIND) => Ok(Box::new(img::woz1::Woz1::create_pro(vol,*kind,fmt)?)),
-        (DiskImageType::WOZ1,names::A2_DOS33_KIND) => Ok(Box::new(img::woz1::Woz1::create_pro(vol,*kind,fmt)?)),
-        (DiskImageType::WOZ2,names::A2_DOS32_KIND) => Ok(Box::new(img::woz2::Woz2::create_pro(vol,*kind,fmt)?)),
-        (DiskImageType::WOZ2,names::A2_DOS33_KIND) => Ok(Box::new(img::woz2::Woz2::create_pro(vol,*kind,fmt)?)),
-        _ => {
-            log::error!("proprietary formatting not supported for this image type");
-            Err(Box::new(CommandError::UnsupportedItemType))
-        }
-    };
-}
-
-fn mkimage(img_typ: &DiskImageType,maybe_wrap: Option<&String>,maybe_vol: Option<&String>,kind: &DiskKind,fmt: Option<DiskFormat>) -> Result<Box<dyn DiskImage>,DYNERR> {
-    let vol = verify_mkimage(img_typ,maybe_vol,maybe_wrap)?;
-    match fmt {
-        Some(fmt) => mkimage_pro(img_typ,vol,kind,fmt),
-        None => mkimage_std(img_typ,maybe_wrap,vol,kind)
     }
 }
 
@@ -295,6 +292,7 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
     let maybe_vol = cmd.get_one::<String>("volume");
     let maybe_wrap = cmd.get_one::<String>("wrap");
     let maybe_os = cmd.get_one::<String>("os");
+    let maybe_flux = cmd.get_one::<String>("flux");
     let boot = cmd.get_flag("bootable");
     if boot {
         log::info!("bootable requested");
@@ -313,10 +311,18 @@ pub fn mkdsk(cmd: &clap::ArgMatches) -> STDRESULT {
             return Err(Box::new(CommandError::InvalidCommand));
         }
     };
+    let steps_per_cyl = match kind {
+        names::A2_DOS32_KIND | names::A2_DOS33_KIND => 4,
+        _ => 1
+    };
+    let flux = match maybe_flux {
+        Some(farg) => super::parse_track_request(farg, steps_per_cyl)?,
+        None => vec![]
+    };
     // Make an image without any file system
     let mut img = match cmd.get_flag("blank") {
         true => mkblank(&img_typ,&kind,maybe_wrap)?,
-        false => mkimage(&img_typ,maybe_wrap,maybe_vol,&kind,fmt)?, // either --os or --empty
+        false => mkimage(&img_typ,maybe_wrap,maybe_vol,&kind,fmt,flux)?, // either --os or --empty
     };
     if let Some(fext) = dest_path.split(".").last() {
         if !img.file_extensions().contains(&fext.to_string().to_lowercase()) {

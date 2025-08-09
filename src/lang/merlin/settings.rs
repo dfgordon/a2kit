@@ -11,9 +11,11 @@ use lsp_types::DiagnosticSeverity;
 #[derive(Clone)]
 pub struct Flag {
     pub case_sensitive: Option<DiagnosticSeverity>,
-    pub unclosed_folds: Option<DiagnosticSeverity>
-    // TODO: major version: pub unused_macros: Option<DiagnosticSeverity>
-    // TODO: major version: pub dup_mac_locs: Option<DiagnosticSeverity>
+    pub unclosed_folds: Option<DiagnosticSeverity>,
+    pub unused_macros: Option<DiagnosticSeverity>,
+    pub dup_mac_locs: Option<DiagnosticSeverity>,
+    pub unused_labels: Option<DiagnosticSeverity>,
+    pub missing_entries: Option<DiagnosticSeverity>,
 }
 #[derive(Clone)]
 pub struct Columns {
@@ -63,9 +65,11 @@ impl Settings {
             version: super::MerlinVersion::Merlin8,
             flag : Flag {
                 case_sensitive: None,
-                unclosed_folds: Some(DiagnosticSeverity::ERROR)
-                // TODO: major version: unused_macros: Some(DiagnosticSeverity::HINT)
-                // TODO: major version: dup_mac_locs: Some(DiagnosticSeverity::WARNING)
+                unclosed_folds: Some(DiagnosticSeverity::ERROR),
+                unused_macros: Some(DiagnosticSeverity::HINT),
+                dup_mac_locs: Some(DiagnosticSeverity::WARNING),
+                unused_labels: Some(DiagnosticSeverity::WARNING),
+                missing_entries: Some(DiagnosticSeverity::ERROR),
             },
             columns : Columns {
                 c1: 9,
@@ -113,8 +117,10 @@ pub fn parse(json: &str) -> Result<Settings,DYNERR> {
                     "flag" => {
                         update_json_severity(val,"caseSensitive",&mut ans.flag.case_sensitive);
                         update_json_severity(val,"unclosedFolds",&mut ans.flag.unclosed_folds);
-                        // TODO: major version: update_json_severity(val,"unusedMacros",&mut ans.flag.unused_macros);
-                        // TODO: major version: update_json_severity(val,"duplicateMacroLocals",&mut ans.flag.dup_mac_locs);
+                        update_json_severity(val,"unusedMacros",&mut ans.flag.unused_macros);
+                        update_json_severity(val,"duplicateMacroLocals",&mut ans.flag.dup_mac_locs);
+                        update_json_severity(val,"unusedLabels",&mut ans.flag.unused_labels);
+                        update_json_severity(val,"missingEntries",&mut ans.flag.missing_entries);
                     },
                     "columns" => {
                         update_json_i64(val,"c1",&mut ans.columns.c1);

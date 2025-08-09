@@ -22,14 +22,14 @@ const MAX_TRACK_BLOCKS_525: u16 = 13;
 const MAX_TRACK_BLOCKS_35: u16 = 19;
 
 // calculation of 3.5 inch disk sector bits
-const SYNC_TRACK_HEADER_NIBS: usize = 36;
-const SYNC_GAP_NIBS: usize = 6;
-const SYNC_CLOSE_NIBS: usize = 36;
-const DATA_NIBS: usize = 699; // nibbles of data, checksum follows 
-const CHK_NIBS: usize = 4; // how many checksum nibbles after data
-const ADDRESS_FULL_SEGMENT: usize = 3 + 5 + 2; // prolog,cyl,sec,side,format,chk,epilog
-const DATA_FULL_SEGMENT: usize = 3 + 1 + DATA_NIBS + CHK_NIBS + 2; // prolog,sec,data+chk,epilog
-const SECTOR_BITS: usize = ADDRESS_FULL_SEGMENT*8 + SYNC_GAP_NIBS*10 + DATA_FULL_SEGMENT*8 + SYNC_CLOSE_NIBS*10;
+// const SYNC_TRACK_HEADER_NIBS: usize = 36;
+// const SYNC_GAP_NIBS: usize = 6;
+// const SYNC_CLOSE_NIBS: usize = 36;
+// const DATA_NIBS: usize = 699; // nibbles of data, checksum follows 
+// const CHK_NIBS: usize = 4; // how many checksum nibbles after data
+// const ADDRESS_FULL_SEGMENT: usize = 3 + 5 + 2; // prolog,cyl,sec,side,format,chk,epilog
+// const DATA_FULL_SEGMENT: usize = 3 + 1 + DATA_NIBS + CHK_NIBS + 2; // prolog,sec,data+chk,epilog
+// const SECTOR_BITS: usize = ADDRESS_FULL_SEGMENT*8 + SYNC_GAP_NIBS*10 + DATA_FULL_SEGMENT*8 + SYNC_CLOSE_NIBS*10;
 
 /// Form regex to match patterns like `a|c|b` (order deliberately scrambled).
 /// Expansion of `metaOptions!("a","b","c")` looks like this: `^(a|b|c)(\|(a|b|c))*$`
@@ -118,6 +118,7 @@ pub struct Info {
     pad: [u8;10]
 }
 
+/// TMap struct is used for both TMAP and FLUX chunks
 #[derive(DiskStruct)]
 pub struct TMap {
     id: [u8;4],
@@ -183,6 +184,7 @@ impl Info {
         ans.boot_sector_format = 0;
         ans
     }
+    /// in general this should be followed up with `update` to account for track hints
     fn create(kind: img::DiskKind) -> Self {
 
         let creator_str = "a2kit v".to_string() + env!("CARGO_PKG_VERSION");
@@ -240,6 +242,22 @@ impl Info {
             pad: [0;10]
         }
     }
+    /// If there has been a change to the tracks, this can be called to update the hints in the INFO chunk
+    fn update(&mut self,bmap: &TMap,fmap: &Option<TMap>,trks: &Trks) {
+        self.largest_track = u16::to_le_bytes(trks.largest_track_in_blocks(&bmap));
+        match &fmap {
+            Some(map) => {
+                self.flux_block = u16::to_le_bytes((3 + trks.bits.len() / 512) as u16);
+                self.largest_flux_track = u16::to_le_bytes(trks.largest_track_in_blocks(map));
+                self.vers = 3;
+            },
+            None => {
+                self.flux_block = [0,0];
+                self.largest_flux_track = [0,0];
+                self.vers = 2;
+            }
+        }
+    }
     fn verify_value(&self,key: &str,hex_str: &str) -> bool {
         match key {
             stringify!(disk_type) => hex_str=="01" || hex_str=="02",
@@ -274,17 +292,28 @@ impl TMap {
             map
         }
     }
-    fn create(kind: &img::DiskKind, fmt: &img::tracks::DiskFormat) -> Result<Self,DYNERR> {
-        let mut map: [u8;160] = [0xff;160];
+    /// This will map 3 quarter tracks for each motor position found in the DiskFormat.
+    /// It will return a tuple with (Self,Option<Self>), where the option is the FLUX map.
+    /// The map value (for either TMap) is the index into the TRKS chunk, and these will be filled in order.
+    /// The FLUX map is created if flux.len()>0, regardless of whether there is a match in fmt.
+    fn create(kind: &img::DiskKind, fmt: &img::tracks::DiskFormat, flux: Vec<TrackKey>) -> Result<(Self,Option<Self>),DYNERR> {
+        let mut bmap: [u8;160] = [0xff;160];
+        let mut fmap: [u8;160] = [0xff;160];
         let motor_head = fmt.get_motor_and_head();
+        let mut flux_set = std::collections::HashSet::new();
+        for tkey in flux {
+            let [motor,head,_] = img::woz::get_motor_pos(tkey, kind)?;
+            flux_set.insert([motor,head]);
+        }
         let mut slot = 0;
         match *kind {
             img::DiskKind::D525(_) => {
                 for (m,h) in motor_head {
                     if h > 0 || m > 159 {
                         log::error!("motor {} head {} is not legal",m,h);
-                        return Err(Box::new(img::Error::ImageTypeMismatch))
+                        return Err(Box::new(img::Error::GeometryMismatch))
                     }
+                    let map = if flux_set.contains(&[m,h]) { &mut fmap } else { &mut bmap };
                     if m>0 {
                         map[m-1] = slot;
                     }
@@ -299,8 +328,9 @@ impl TMap {
                 for (m,h) in motor_head {
                     if h > 0 || m > 79 {
                         log::error!("motor {} head {} is not legal",m,h);
-                        return Err(Box::new(img::Error::ImageTypeMismatch))
+                        return Err(Box::new(img::Error::GeometryMismatch))
                     }
+                    let map = if flux_set.contains(&[m,h]) { &mut fmap } else { &mut bmap };
                     map[m] = slot;
                     slot += 1;
                 }
@@ -309,8 +339,9 @@ impl TMap {
                 for (m,h) in motor_head {
                     if h > 1 || m > 79 {
                         log::error!("motor {} head {} is not legal",m,h);
-                        return Err(Box::new(img::Error::ImageTypeMismatch))
+                        return Err(Box::new(img::Error::GeometryMismatch))
                     }
+                    let map = if flux_set.contains(&[m,h]) { &mut fmap } else { &mut bmap };
                     map[m*2+h] = slot;
                     slot += 1;
                 }
@@ -320,11 +351,20 @@ impl TMap {
         if slot > 160 {
             log::warn!("TMAP has unusual slot reference {}",slot);
         }
-        Ok(Self {
+        let tmap_chunk = Self {
             id: u32::to_le_bytes(TMAP_ID),
             size: u32::to_le_bytes(160),
-            map
-        })
+            map: bmap
+        };
+        let fmap_chunk = match flux_set.len() > 0 {
+            true => Some(Self {
+                id: u32::to_le_bytes(FLUX_ID),
+                size: u32::to_le_bytes(160),
+                map: fmap
+            }),
+            false => None
+        };
+        Ok((tmap_chunk,fmap_chunk))
     }
 }
 
@@ -340,47 +380,43 @@ impl Trks {
         ans.size = u32::to_le_bytes(chunk_size as u32);
         return ans;
     }
-    fn create_bits_and_trk(skey: SectorKey,kind: &img::DiskKind,fmt: &img::tracks::ZoneFormat,block_offset: usize) -> Result<(Vec<u8>,Trk),DYNERR> {
+    fn create_segment_and_trk(skey: SectorKey,fmt: &img::tracks::ZoneFormat,block_offset: usize,is_flux: bool) -> Result<(Vec<u8>,Trk),DYNERR> {
         fmt.check_flux_code(img::FluxCode::GCR)?;
-        let buf_len = match *kind {
-            img::DiskKind::D525(_) => MAX_TRACK_BLOCKS_525 as usize * 512,
-            img::DiskKind::D35(_) => {
-                let bytes = (fmt.sector_count() * SECTOR_BITS + SYNC_TRACK_HEADER_NIBS * 10) / 8;
-                bytes + (512 - bytes % 512) + 512
-            },
-            _ => return Err(Box::new(img::Error::ImageTypeMismatch))
-        };
         let mut engine = TrackEngine::create(Method::Edit, false);
-        let cells = engine.format_track(skey, buf_len, fmt)?;
-        let bits_in_blocks = cells.to_woz_buf(buf_len,0);
-        if bits_in_blocks.len() % 512 > 0 {
-            panic!("track bits buffer is not an even number of blocks");
+        let mut cells = engine.format_track(skey, 0xffffff, fmt)?;
+        if is_flux {
+            cells.change_resolution(2);
         }
-        let blocks = bits_in_blocks.len() / 512;
+        let (segment,count) = cells.to_woz_buf(None,0);
+        let blocks = segment.len() / 512;
         // write the track metrics
         let mut trk = Trk::new();
         trk.starting_block = u16::to_le_bytes(block_offset as u16);
         trk.block_count = u16::to_le_bytes(blocks as u16);
-        trk.bit_count = u32::to_le_bytes(cells.count() as u32);
-        Ok((bits_in_blocks,trk))
+        trk.bit_count = u32::to_le_bytes(count as u32);
+        Ok((segment,trk))
     }
-    fn create(vol: u8,kind: &img::DiskKind,fmt: &img::tracks::DiskFormat,tmap: &[u8]) -> Result<Self,DYNERR> {
+    fn create(vol: u8,kind: &img::DiskKind,fmt: &img::tracks::DiskFormat,tmap: &TMap,flux: &Option<TMap>) -> Result<Self,DYNERR> {
         let mut ans = Trks::new();
         ans.id = u32::to_le_bytes(TRKS_ID);
         // This offset assumes we are creating with chunk order INFO, TMAP, TRKS.
         // The assumption is only used during creation, where we can make it so.
         let mut block_offset: usize = 3;
         let mut chunk_size: usize = 0;
+        let maybe_fmap = match flux {
+            Some(chunk) => Some(chunk.map.as_slice()),
+            None => None
+        };
         for slot in 0..160 {
-            if let Some((motor,skey)) = img::woz::get_trks_slot_id(vol, slot, tmap, kind) {
+            if let Some((motor,skey,is_flux)) = img::woz::get_trks_slot_id(vol, slot, &tmap.map, maybe_fmap, kind) {
                 log::trace!("create track at slot {} with motor {} and key {}",slot,motor,skey);
                 let z_fmt = fmt.get_zone_fmt(motor as usize,skey.head() as usize)?;
-                let (mut bits_in_blocks,trk) = Self::create_bits_and_trk(skey,kind,z_fmt,block_offset)?;
+                let (mut segment,trk) = Self::create_segment_and_trk(skey,z_fmt,block_offset,is_flux)?;
                 chunk_size += Trk::new().len();
-                chunk_size += bits_in_blocks.len();
-                block_offset += bits_in_blocks.len() / 512;
+                chunk_size += segment.len();
+                block_offset += segment.len() / 512;
                 ans.tracks.push(trk);
-                ans.bits.append(&mut bits_in_blocks);
+                ans.bits.append(&mut segment);
             } else {
                 chunk_size += Trk::new().len();
                 ans.tracks.push(Trk::new());
@@ -388,6 +424,58 @@ impl Trks {
         }
         ans.size = u32::to_le_bytes(chunk_size as u32);
         Ok(ans)
+    }
+    /// Get the slice-range for `trks.bits`, valid for either bits or flux.
+    /// The `idx` argument will generally come from `try_motor`.
+    fn rng(&self,idx: usize,track_bits_offset: usize) ->[usize;2] {
+        let trk = &self.tracks[idx];
+        let begin = u16::from_le_bytes(trk.starting_block) as usize * 512 - track_bits_offset;
+        let end = begin + u16::from_le_bytes(trk.block_count) as usize * 512;
+        [begin,end]
+    }
+    /// returns the largest track in blocks that is mapped by `tmap_or_flux`
+    fn largest_track_in_blocks(&self,tmap_or_flux: &TMap) -> u16 {
+        let mut largest = 0;
+        for idx in &tmap_or_flux.map {
+            if *idx as usize == 0xff {
+                continue;
+            }
+            if *idx as usize >= self.tracks.len() {
+                log::warn!("ignoring bad index into TRKS chunk");
+                continue;
+            }
+            let val = u16::from_le_bytes(self.tracks[*idx as usize].block_count);
+            largest = largest.max(val);
+        }
+        largest
+    }
+    /// Update the track bits/fluxes in segment `idx` using the data in `seg`.
+    /// If the segment has grown, update all the `Trk` offsets.
+    /// N.b. the INFO chunk has to be updated externally.
+    /// May panic if `seg.len() % 512 > 0`.
+    fn update_segment(&mut self,idx: usize,seg: &[u8],count: usize,track_bits_offset: usize) -> STDRESULT {
+        let [beg,end] = self.rng(idx,track_bits_offset);
+        if beg + seg.len() <= end {
+            self.bits[beg..beg+seg.len()].copy_from_slice(&seg);
+            self.bits[beg+seg.len()..end].fill(0);
+            self.tracks[idx].bit_count = u32::to_le_bytes(count as u32);
+        } else {
+            let additional = seg.len() + beg - end;
+            assert!(additional % 512 == 0);
+            self.bits[end..].rotate_right(additional);
+            self.bits.extend_from_within(end..end+additional);
+            self.bits[beg..beg+seg.len()].copy_from_slice(&seg);
+            self.tracks[idx].bit_count = u32::to_le_bytes(count as u32);
+            self.tracks[idx].block_count = u16::to_le_bytes((seg.len() >> 9) as u16);
+            let block_shift = (additional >> 9) as u16;
+            let curr = u32::from_le_bytes(self.size);
+            self.size = u32::to_le_bytes(curr + additional as u32);
+            for i in idx+1..160 {
+                let curr = u16::from_le_bytes(self.tracks[i].starting_block);
+                self.tracks[i].starting_block = u16::to_le_bytes(curr + block_shift);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -596,23 +684,24 @@ impl Woz2 {
             tmap_pos: usize::MAX,
         }
     }
-    pub fn create(vol: u8,kind: img::DiskKind) -> Self {
-        match img::woz::kind_to_format(&kind) {
-            Some(fmt) => Self::create_pro(vol,kind,fmt).expect("failed to create image"),
-            None => panic!("format could not be created")
-        }
-    }
-    pub fn create_pro(vol: u8,kind: img::DiskKind,fmt: img::tracks::DiskFormat) -> Result<Self,DYNERR> {
-        let tmap = TMap::create(&kind,&fmt)?;
-        let trks = Trks::create(vol,&kind,&fmt,&tmap.map)?;
+    /// panics if `kind` is invalid
+    pub fn create(vol: u8,kind: img::DiskKind,maybe_fmt: Option<img::tracks::DiskFormat>,flux: Vec<TrackKey>) -> Result<Self,DYNERR> {
+        let fmt = match maybe_fmt {
+            Some(fmt) => fmt,
+            None => img::woz::kind_to_format(&kind).unwrap()
+        };
+        let (bmap,fmap) = TMap::create(&kind,&fmt,flux)?;
+        let trks = Trks::create(vol,&kind,&fmt,&bmap,&fmap)?;
+        let mut info = Info::create(kind);
+        info.update(&bmap,&fmap,&trks);
         Ok(Self {
             kind,
             fmt: Some(fmt),
             track_bits_offset: 1536,
             header: Header::create(),
-            info: Info::create(kind),
-            tmap,
-            flux: None,
+            info,
+            tmap: bmap,
+            flux: fmap,
             trks,
             meta: None,
             writ: None,
@@ -622,47 +711,59 @@ impl Woz2 {
         })
     }
     fn sanity_check(&self) -> Result<(),DiskStructError> {
-        match u32::from_le_bytes(self.info.id)>0 && u32::from_le_bytes(self.tmap.id)>0 && u32::from_le_bytes(self.trks.id)>0 {
-            true => Ok(()),
-            false => {
-                log::debug!("WOZ v2 sanity checks failed");
-                return Err(DiskStructError::IllegalValue);
+        if self.flux.is_some() && (self.info.vers < 3 || self.info.flux_block==[0,0] || self.info.largest_flux_track==[0,0]) {
+            log::error!("INFO chunk contradicts presence of FLUX chunk");
+            return Err(DiskStructError::IllegalValue);
+        }
+        if self.flux.is_none() && self.info.vers >= 3 && (self.info.flux_block!=[0,0] || self.info.largest_flux_track!=[0,0]) {
+            log::error!("INFO chunk contradicts absence of FLUX chunk");
+            return Err(DiskStructError::IllegalValue);
+        }
+        if u32::from_le_bytes(self.info.id)!=INFO_ID || u32::from_le_bytes(self.tmap.id)!=TMAP_ID || u32::from_le_bytes(self.trks.id)!=TRKS_ID {
+            log::debug!("Required chunk id was not as expected");
+            return Err(DiskStructError::IllegalValue);
+        }
+        Ok(())
+    }
+    /// return index to TRK descriptor, and whether this is a FLUX track, does not change disk state
+    fn try_motor(&self,tmap_idx: usize) -> Result<(usize,bool),DYNERR> {
+        // if there is a flux track use it
+        if let Some(fmap) = &self.flux {
+            let ans = fmap.map[tmap_idx];
+            if ans != 0xff {
+                if ans as usize >= self.trks.tracks.len() {
+                    return Err(Box::new(img::Error::InternalStructureAccess));
+                } else {
+                    return Ok((ans as usize,true));
+                }
             }
         }
-    }
-    /// see if there is a buffer for the given quarter track, does not change disk state
-    fn try_motor(&self,tmap_idx: usize) -> Result<usize,DYNERR> {
-        if self.tmap.map[tmap_idx] == 0xff {
+        // if no flux track look for a normal track
+        let ans = self.tmap.map[tmap_idx];
+        if ans == 0xff {
             log::info!("touched blank media at TMAP index {}",tmap_idx);
             Err(Box::new(img::NibbleError::BadTrack))
-        } else if self.tmap.map[tmap_idx] as usize >= self.trks.tracks.len() {
-            Err(Box::new(img::Error::TrackCountMismatch))
+        } else if ans as usize >= self.trks.tracks.len() {
+            Err(Box::new(img::Error::InternalStructureAccess))
         } else {
-            Ok(self.tmap.map[tmap_idx] as usize)
+            Ok((ans as usize,false))
         }
     }
-    /// Get a reference to the track bits
-    fn get_trk_bits_ref(&self,tkey: TrackKey) -> Result<&[u8],DYNERR> {
+    /// Get a reference to the track data, valid for either bits or flux
+    fn get_trk_data_ref(&self,tkey: TrackKey) -> Result<&[u8],DYNERR> {
         let tmap_idx = img::woz::get_tmap_index(tkey,&self.kind)?;
-        let idx = self.try_motor(tmap_idx)?;
-        let trk = &self.trks.tracks[idx];
-        let begin = u16::from_le_bytes(trk.starting_block) as usize * 512 - self.track_bits_offset;
-        let end = begin + u16::from_le_bytes(trk.block_count) as usize * 512;
+        let (idx,_) = self.try_motor(tmap_idx)?;
+        let [begin,end] = self.trks.rng(idx,self.track_bits_offset);
         Ok(&self.trks.bits[begin..end])
     }
-    /// Get the slice-range for this track
-    fn get_trk_rng(&self,idx: usize) ->[usize;2] {
-        let trk = &self.trks.tracks[idx];
-        let begin = u16::from_le_bytes(trk.starting_block) as usize * 512 - self.track_bits_offset;
-        let end = begin + u16::from_le_bytes(trk.block_count) as usize * 512;
-        [begin,end]
-    }
-    /// Save changes to the current track buffer if they exist
+    /// Save changes to the current track buffer if they exist, valid for either bits or flux.
+    /// This will grow the TRKS chunk if necessary, but will never shrink it.
     fn write_back_track(&mut self) -> STDRESULT {
         if let Some(cells) = &self.cells {
-            let idx = self.try_motor(self.tmap_pos)?;
-            let [beg,end] = self.get_trk_rng(idx);
-            self.trks.bits[beg..end].copy_from_slice(&cells.to_woz_buf(end-beg,0));
+            let (idx,_) = self.try_motor(self.tmap_pos)?;
+            let (seg,count) = cells.to_woz_buf(None, 0);
+            self.trks.update_segment(idx, &seg, count, self.track_bits_offset)?;
+            self.info.update(&self.tmap,&self.flux,&self.trks);
         }
         Ok(())
     }
@@ -673,14 +774,20 @@ impl Woz2 {
             log::debug!("goto {} of {}",tkey,self.kind);
             self.write_back_track()?;
             self.tmap_pos = tmap_idx;
-            let idx = self.try_motor(tmap_idx)?;
-            let cell_count = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-            let ptr = match &self.cells {
-                Some(cells) => cells.sync_next_track(cell_count),
-                None => 0
+            let (idx,is_flux) = self.try_motor(tmap_idx)?;
+            let [beg,end] = self.trks.rng(idx,self.track_bits_offset);
+            let bits_or_bytes = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
+            let mut new_cells = match is_flux {
+                true => {
+                    log::debug!("this is a flux track");
+                    FluxCells::from_woz_flux(bits_or_bytes, &self.trks.bits[beg..end])
+                },
+                false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end])
             };
-            self.cells = Some(FluxCells::create_woz_bits(cell_count, self.get_trk_bits_ref(tkey.clone())?));
-            self.cells.as_mut().unwrap().set_ptr(ptr);
+            if let Some(cells) = &self.cells {
+                new_cells.sync_to_other_track(cells);
+            }
+            self.cells = Some(new_cells);
         }
         img::woz::get_motor_pos(tkey, &self.kind)
     }
@@ -815,10 +922,6 @@ impl img::DiskImage for Woz2 {
             }
             ptr = next;
         }
-        if ans.info.vers>=3 && ans.info.flux_block!=[0,0] && ans.info.largest_flux_track!=[0,0] {
-            log::error!("WOZ uses flux data (not supported)");
-            return Err(DiskStructError::IllegalValue);
-        }
         ans.sanity_check()?;
         ans.kind = match (ans.info.disk_type,ans.info.boot_sector_format,ans.info.disk_sides) {
             (1,0,1) => img::names::A2_DOS33_KIND,
@@ -840,16 +943,17 @@ impl img::DiskImage for Woz2 {
         return Ok(ans);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
-        if self.track_bits_offset!=1536 {
-            panic!("track bits at a nonstandard offset");
-        }
+        assert_eq!(self.track_bits_offset,1536);
+        assert!(self.trks.bits.len() % 512 == 0);
         self.write_back_track().expect("could not restore track");
+        self.info.update(&self.tmap,&self.flux,&self.trks);
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.header.to_bytes());
         ans.append(&mut self.info.to_bytes());
         ans.append(&mut self.tmap.to_bytes());
         ans.append(&mut self.trks.to_bytes());
         if let Some(flux) = &self.flux {
+            log::debug!("writing flux chunk");
             ans.append(&mut flux.to_bytes());
         }
         if let Some(meta) = &self.meta {
@@ -869,15 +973,15 @@ impl img::DiskImage for Woz2 {
         self.get_pro_track_buf(TrackKey::CH((cyl,head)))
     }
     fn get_pro_track_buf(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
-        Ok(self.get_trk_bits_ref(tkey)?.to_vec())
+        Ok(self.get_trk_data_ref(tkey)?.to_vec())
     }
     fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT {
         self.set_pro_track_buf(TrackKey::CH((cyl,head)),dat)
     }
     fn set_pro_track_buf(&mut self,tkey: TrackKey,dat: &[u8]) -> STDRESULT {
         let tmap_idx = img::woz::get_tmap_index(tkey.clone(),&self.kind)?;
-        let idx = self.try_motor(tmap_idx)?;
-        let[beg,end] = self.get_trk_rng(idx);
+        let (idx,_) = self.try_motor(tmap_idx)?;
+        let[beg,end] = self.trks.rng(idx,self.track_bits_offset);
         if end-beg != dat.len() {
             log::error!("source track buffer is {} bytes, destination track buffer is {} bytes",dat.len(),end-beg);
             return Err(Box::new(img::Error::ImageSizeMismatch));

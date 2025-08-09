@@ -173,7 +173,7 @@ impl Trk {
         fmt.check_flux_code(img::FluxCode::GCR)?;
         let mut engine = TrackEngine::create(Method::Edit,false);
         let cells = engine.format_track(skey, TRACK_BYTE_CAPACITY, fmt)?;
-        let bits = cells.to_woz_buf(TRACK_BYTE_CAPACITY,0);
+        let (bits,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY),0);
         let bytes_used = u16::to_le_bytes(bits.len() as u16);
         Ok(Self {
             bits: bits.try_into().expect("track buffer mismatch"),
@@ -202,13 +202,13 @@ impl Trks {
         // occur prior to the last used slot.
         let mut end_slot = 0;
         for slot in 0..160 {
-            if img::woz::get_trks_slot_id(vol,slot, tmap, kind).is_some() {
+            if img::woz::get_trks_slot_id(vol,slot, tmap, None, kind).is_some() {
                 end_slot = slot + 1;
             }
         }
         ans.size = u32::to_le_bytes(end_slot as u32 * Trk::new().len() as u32);
         for slot in 0..end_slot {
-            if let Some((motor,skey)) = img::woz::get_trks_slot_id(vol, slot, tmap, kind) {
+            if let Some((motor,skey,_)) = img::woz::get_trks_slot_id(vol, slot, tmap, None, kind) {
                 ans.tracks.push(Trk::create(skey,fmt.get_zone_fmt(motor as usize,0)?)?);
             } else {
                 ans.tracks.push(Trk::new());
@@ -295,13 +295,11 @@ impl Woz1 {
     /// Create the image of a specific kind of disk (panics if unsupported disk kind).
     /// The volume is used to format the address fields on the tracks.
     /// Panics if `kind` is not supported.
-    pub fn create(vol: u8,kind: img::DiskKind) -> Self {
-        match img::woz::kind_to_format(&kind) {
-            Some(fmt) => Self::create_pro(vol,kind,fmt).expect("failed to create image"),
-            None => panic!("format could not be created")
-        }
-    }
-    pub fn create_pro(vol: u8,kind: img::DiskKind,fmt: img::tracks::DiskFormat) -> Result<Self,DYNERR> {
+    pub fn create(vol: u8,kind: img::DiskKind,maybe_fmt: Option<img::tracks::DiskFormat>) -> Result<Self,DYNERR> {
+        let fmt = match maybe_fmt {
+            Some(fmt) => fmt,
+            None => img::woz::kind_to_format(&kind).unwrap()
+        };
         let tmap = TMap::create(&fmt);
         let trks = Trks::create(vol,&kind,&fmt,&tmap.map)?;
         Ok(Self {
@@ -353,7 +351,7 @@ impl Woz1 {
     fn write_back_track(&mut self) {
         if let Some(cells) = &self.cells {
             let idx = self.try_motor(self.tmap_pos).expect("out of sequence access");
-            let buf = cells.to_woz_buf(TRACK_BYTE_CAPACITY,0);
+            let (buf,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY),0);
             self.trks.tracks[idx].bits = buf.try_into().expect("track buffer mismatch");
         }
     }
@@ -365,13 +363,12 @@ impl Woz1 {
             self.write_back_track();
             self.tmap_pos = tmap_idx;
             let idx = self.try_motor(tmap_idx)?;
-            let cell_count = u16::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-            let ptr = match &self.cells {
-                Some(cells) => cells.sync_next_track(cell_count),
-                None => 0
-            };
-            self.cells = Some(FluxCells::create_woz_bits(cell_count, self.get_trk_bits_ref(tkey.clone())?));
-            self.cells.as_mut().unwrap().set_ptr(ptr);
+            let bit_count = u16::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
+            let mut new_cells = FluxCells::from_woz_bits(bit_count, &self.trks.tracks[idx].bits);
+            if let Some(cells) = &self.cells {
+                new_cells.sync_to_other_track(cells);
+            }
+            self.cells = Some(new_cells);
         }
         img::woz::get_motor_pos(tkey, &self.kind)
     }

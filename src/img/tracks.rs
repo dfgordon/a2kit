@@ -56,8 +56,13 @@ fn eval_u8(expr: &str,ctx: &std::collections::HashMap<String,String>) -> Result<
 
 #[derive(Clone,PartialEq)]
 pub enum Method {
-    Analyze,
+    /// select based on track
+    Auto,
+    /// direct manipulation, good for textbook data streams
     Edit,
+    /// emulate, but use hints the real system might not have
+    Analyze,
+    /// emulate the real system as near as possible
     Emulate,
 }
 
@@ -65,6 +70,7 @@ impl FromStr for Method {
     type Err = super::Error;
     fn from_str(s: &str) -> Result<Self,Self::Err> {
         match s {
+            "auto" => Ok(Method::Auto),
             "analyze" => Ok(Method::Analyze),
             "edit" => Ok(Method::Edit),
             "emulate" => Ok(Method::Emulate),
@@ -128,14 +134,14 @@ impl FluxCells {
         }
     }
     /// Create cells from a track buffer in the form of a nibble stream or bit stream, assuming 4 microsecond bit cells
-    pub fn create_woz_bits(cell_count: usize,buf: &[u8]) -> Self {
+    pub fn from_woz_bits(bit_count: usize,buf: &[u8]) -> Self {
         let mut stream = BitVec::from_bytes(buf);
-        stream.truncate(cell_count);
+        stream.truncate(bit_count);
         Self::new_woz_bits(0,stream)
     }
     /// Create cells from a WOZ flux track buffer, the flux cells will
-    /// be set to 500 ns.  The slice argument should omit the track buffer's padding.
-    pub fn create_woz_flux(buf: &[u8]) -> Self {
+    /// be set to 500 ns.  Any padding in `buf` is ignored.
+    pub fn from_woz_flux(byte_count: usize,buf: &[u8]) -> Self {
         let mut stream = BitVec::new();
         let mut write = |carryover0: &mut usize, carryover1: &mut usize| {
             let ticks = *carryover0 + *carryover1;
@@ -148,7 +154,7 @@ impl FluxCells {
         };
         let mut carryover0 = 0;
         let mut carryover1 = 0;
-        for segment in buf {
+        for segment in &buf[0..byte_count] {
             carryover0 += *segment as usize;
             if *segment!=255 {
                 write(&mut carryover0,&mut carryover1);
@@ -157,24 +163,100 @@ impl FluxCells {
         write(&mut carryover0,&mut carryover1);
         Self::new_woz_flux(0,stream)
     }
-    /// Convert the cells to the native WOZ or NIB track buffer, works
-    /// for any kind of cell
-    pub fn to_woz_buf(&self,padded_len: usize,padded_val: u8) -> Vec<u8> {
-        if self.fshift==self.bshift {
-            let mut ans = self.stream.to_bytes();
-            if ans.len() < padded_len {
-                ans.append(&mut vec![padded_val;padded_len-ans.len()]);
+    /// Change the resolution of the cells. Mainly useful for converting between bitstream tracks and flux tracks.
+    /// N.b. if resolution is being reduced information will be lost, in general.
+    pub fn change_resolution(&mut self,flux_shift: usize) {
+        if flux_shift == self.fshift {
+            return;
+        } else if flux_shift < self.fshift {
+            // resolution is higher
+            let factor = 1 << self.fshift >> flux_shift;
+            let mut new_stream = BitVec::new();
+            for bit in &self.stream {
+                new_stream.push(bit);
+                new_stream.append(&mut BitVec::from_elem(factor-1,false));
             }
-            return ans;
+            self.fshift = flux_shift;
+            self.fmask = (1 << flux_shift) - 1;
+            self.stream = new_stream;
         } else {
-            panic!("need to implement flux track restoration");
+            // resolution is lower
+            let factor = 1 << flux_shift >> self.fshift;
+            let new_len = self.stream.len() << self.fshift >> flux_shift;
+            let mut new_stream = BitVec::new();
+            for i in 0..new_len {
+                let mut val = false;
+                for j in 0..factor {
+                    val |= self.stream[i*factor+j];
+                }
+                new_stream.push(val);
+            }
+            self.fshift = flux_shift;
+            self.fmask = (1 << flux_shift) - 1;
+            self.stream = new_stream;
         }
     }
-    /// Get a pointer that will synchronize the next track
-    pub fn sync_next_track(&self,new_cell_count: usize) -> usize {
-        let old_ptr = self.ptr;
-        let old_cell_count = self.stream.len();
-        old_ptr * new_cell_count / old_cell_count
+    /// Convert the cells to the native WOZ or NIB track buffer, works
+    /// for any kind of cell.  If `padded_len==None` the result is padded
+    /// to the nearest 512 byte boundary.  If `padded_len==Some` and the data fits within
+    /// the prescribed length, it is used, otherwise panic.
+    /// Returns (buf,count), where count is either the
+    /// bit count for bit streams, or byte count for flux streams.
+    pub fn to_woz_buf(&self,padded_len: Option<usize>,padded_val: u8) -> (Vec<u8>,usize) {
+        let (mut buf,count) = if self.fshift==self.bshift {
+            (self.stream.to_bytes(),self.stream.len())
+        } else {
+            let mut zeroes = 0;
+            let mut end = usize::MAX;
+            let mut buf = Vec::new();
+            // figure out where the last transition is and make that the end,
+            // otherwise we could have a broken encoding
+            for (i,cell) in self.stream.iter().rev().enumerate() {
+                if cell {
+                    end = self.stream.len() - i;
+                    break;
+                }
+            }
+            if end==usize::MAX {
+                log::info!("no flux transitions on track");
+                end = 1;
+            }
+            let mut iter_clos = |cell| {
+                if cell {
+                    // The following line presumes the tick count is inclusive of whatever time
+                    // the transition takes, or else the transition is infinitessimal in duration. 
+                    buf.push(zeroes + (1 << self.fshift));
+                    zeroes = 0;
+                } else {
+                    zeroes += 1 << self.fshift;
+                }
+                if zeroes >= 0xff {
+                    buf.push(0xff);
+                    zeroes = zeroes % 0xff;
+                }
+            };
+            for i in end..self.stream.len() {
+                iter_clos(self.stream[i]);
+            }
+            for i in 0..end {
+                iter_clos(self.stream[i]);
+            }
+            let count = buf.len();
+            (buf,count)
+        };
+        let padding = match (buf.len(),padded_len) {
+            (l,Some(tot)) if l<=tot => tot-l,
+            (l,Some(tot)) => panic!("buffer too small {}/{}",l,tot),
+            (l,_) if l==0 => 512,
+            (l,_) => ((l-1)/512)*512 + 512 - l
+        };
+        buf.append(&mut vec![padded_val;padding]);
+        (buf,count)
+    }
+    /// Synchronize these cells to another set of cells, used when switching tracks.
+    /// This will impose alignment of the time-pointer to a flux cell boundary.
+    pub fn sync_to_other_track(&mut self,other: &FluxCells) {
+        self.ptr = (other.ptr * self.revolution / other.revolution) >> self.fshift << self.fshift;
     }
     /// How many cells are on this track
     pub fn count(&self) -> usize {
@@ -202,7 +284,7 @@ impl FluxCells {
         let cells_per_bit = 1 << self.bshift >> self.fshift;
         let mut ans = false;
         for _ in 0..cells_per_bit {
-            ans |= self.stream.get(self.ptr >> self.fshift).unwrap();
+            ans |= self.stream[self.ptr >> self.fshift];
             self.fwd(1 << self.fshift);
         }
         ans
@@ -211,7 +293,7 @@ impl FluxCells {
     pub fn write_bit(&mut self,pulse: bool) {
         let cells_per_bit = 1 << self.bshift >> self.fshift;
         for _ in 0..cells_per_bit {
-            self.stream.set(self.ptr >> self.fshift,pulse && self.ptr&self.fmask==0);
+            self.stream.set(self.ptr >> self.fshift,pulse && (self.ptr & self.bmask==0));
             self.fwd(1 << self.fshift);
         }
     }
@@ -279,7 +361,7 @@ pub struct ZoneFormat {
     chs_extract_expr: Vec<String>,
     /// When reading replace `swap_nibs[i][0]` with `swap_nibs[i][1]`, when writing do the opposite.
     swap_nibs: Vec<[u8;2]>,
-    /// When the file system asks for cylinder `x`, go to `x + cyl_shift[x]`
+    /// Capacity of each sector, in some cases the possible values are tightly constrained
     capacity: Vec<usize>
 }
 

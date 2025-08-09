@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use lsp_types as lsp;
 use crate::lang::{Navigate,Navigation};
 use crate::lang::server::basic_diag;
-use crate::lang::merlin::{Symbol,Symbols};
+use crate::lang::merlin::{Symbol,Symbols,MerlinVersion};
 use crate::lang::{node_text,lsp_range};
 use crate::lang::merlin::context::Context;
 use crate::DYNERR;
@@ -81,7 +81,7 @@ fn substitute(parser: &mut tree_sitter::Parser, line: &str, search: &Vec<String>
 /// * nodes: list of macro argument nodes
 /// * call_source: text of the line where the macro is called
 /// returns (expanded macro, set of variables that were actually used)
-fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str) -> Result<(String,HashSet<usize>),DYNERR> {
+fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str, vers: &MerlinVersion) -> Result<(String,HashSet<usize>),DYNERR> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into())?;
     let mut ans = String::new();
@@ -89,6 +89,12 @@ fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str)
     let mut search = Vec::new();
     let mut replace = Vec::new();
     let mut types = Vec::new();
+    search.push("]0".to_string());
+    replace.push(match vers {
+        MerlinVersion::Merlin8 => "]0".to_string(), // if Merlin 8 leave it the same
+        _ => nodes.len().to_string()
+    });
+    types.push("var_cnt".to_string());
     for i in 0..nodes.len() {
         search.push(format!("]{}",i + 1));
         replace.push(node_text(&nodes[i], call_source));
@@ -214,7 +220,7 @@ pub fn expand_macro(node: &tree_sitter::Node, call_source: &str, symbols: &Symbo
                 nodes.push(next.unwrap().named_child(i).unwrap());
             }
         }
-        if let Ok((expanded,_)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, call_source) {
+        if let Ok((expanded,_)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, call_source, &symbols.assembler) {
             let mut symbols_clone = symbols.clone();
             let mut mac = sym.clone();
             mac.unset_children(); // until we are fully expanding assume these are unknown
@@ -252,14 +258,14 @@ pub fn check_macro_args(node: &tree_sitter::Node, symbols: &mut Symbols, ctx: &m
                 nodes.push(next.unwrap().named_child(i).unwrap());
             }
         }
-        if let Ok((_,arg_matches)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, ctx.line()) {
-            for i in arg_count..8 {
+        if let Ok((_,arg_matches)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, ctx.line(), &symbols.assembler) {
+            for i in arg_count+1..9 {
                 if arg_matches.contains(&i) {
-                    diag.push(basic_diag(rng, &format!("argument missing: `]{}`",i+1),lsp::DiagnosticSeverity::ERROR));
+                    diag.push(basic_diag(rng, &format!("argument missing: `]{}`",i),lsp::DiagnosticSeverity::ERROR));
                 }
             }
             for i in 0..nodes.len() {
-                if !arg_matches.contains(&i) {
+                if !arg_matches.contains(&(i+1)) {
                     let rng = lsp_range(nodes[i].range(), ctx.row(), ctx.col());
                     diag.push(basic_diag(rng, "argument not used",lsp::DiagnosticSeverity::WARNING));
                 }

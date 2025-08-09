@@ -51,7 +51,7 @@ impl Nib {
             let skey = SectorKey::a2_525(vol, track);
             let zfmt = fmt.get_zone_fmt(0, 0)?;
             let cells = engine.format_track(skey, TRACK_BYTE_CAPACITY_NIB,&zfmt)?;
-            let mut buf = cells.to_woz_buf(TRACK_BYTE_CAPACITY_NIB,0xff);
+            let (mut buf,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY_NIB),0xff);
             if track==0 {
                 init_cells = Some(cells);
             }
@@ -92,7 +92,8 @@ impl Nib {
     /// Save changes to the track
     fn write_back_track(&mut self) {
         let track = self.track_pos;
-        self.data[track * self.trk_cap..(track+1) * self.trk_cap].copy_from_slice(&self.cells.to_woz_buf(self.trk_cap,0xff));
+        let (src,_) = self.cells.to_woz_buf(Some(self.trk_cap), 0xff);
+        self.data[track * self.trk_cap..(track+1) * self.trk_cap].copy_from_slice(&src);
     }
     /// Goto track and extract FluxCells if necessary, returns [motor,head,width]
     fn goto_track(&mut self,tkey: TrackKey) -> Result<[usize;3],DYNERR> {
@@ -102,7 +103,7 @@ impl Nib {
             self.write_back_track();
             self.track_pos = track;
             let bit_count = self.trk_cap * 8;
-            self.cells = FluxCells::create_woz_bits(bit_count,self.get_trk_bits_ref(tkey.clone())?);
+            self.cells = FluxCells::from_woz_bits(bit_count,self.get_trk_bits_ref(tkey.clone())?);
         }
         img::woz::get_motor_pos(tkey, &self.kind)
     }
@@ -174,7 +175,7 @@ impl img::DiskImage for Nib {
         match buf.len() {
             l if l==35*TRACK_BYTE_CAPACITY_NIB => {
                 let data = buf.to_vec();
-                let cells = FluxCells::create_woz_bits(TRACK_BYTE_CAPACITY_NIB*8, &data[0..TRACK_BYTE_CAPACITY_NIB]);
+                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NIB*8, &data[0..TRACK_BYTE_CAPACITY_NIB]);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),
@@ -195,7 +196,7 @@ impl img::DiskImage for Nib {
             },
             l if l==35*TRACK_BYTE_CAPACITY_NB2 => {
                 let data = buf.to_vec();
-                let cells = FluxCells::create_woz_bits(TRACK_BYTE_CAPACITY_NB2*8, &data[0..TRACK_BYTE_CAPACITY_NB2]);
+                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NB2*8, &data[0..TRACK_BYTE_CAPACITY_NB2]);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),

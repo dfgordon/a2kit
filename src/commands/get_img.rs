@@ -48,10 +48,10 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                     cum
                 },
                 ItemType::Track => {
-                    img.get_pro_track_nibbles(super::parse_track_request(&src_path,img.motor_steps_per_cyl())?)?
+                    img.get_pro_track_nibbles(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 ItemType::RawTrack => {
-                    img.get_pro_track_buf(super::parse_track_request(&src_path,img.motor_steps_per_cyl())?)?
+                    img.get_pro_track_buf(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 _ => panic!("{}",RCH)
             };

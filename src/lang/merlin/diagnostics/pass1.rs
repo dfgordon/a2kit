@@ -151,7 +151,9 @@ fn visit_gather_macro_def(node: &Node, loc: lsp::Location, ctx: &mut Context, sy
         ctx.trigs.unset_children = true;
     } else if node.kind()=="psop_eom" { // also processed by folds
         if let Some(duplicate_mess) = ctx.exit_scope(symbols) {
-            push(rng,&duplicate_mess,lsp::DiagnosticSeverity::WARNING);
+            if let Some(severity) = ctx.dup_mac_locs() {
+                push(rng,&duplicate_mess,severity);
+            }
         }
         ctx.trigs.pop_vars = true;
         ctx.trigs.checkpoint_vars = true;
@@ -278,7 +280,11 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
                             }
                         }
                     },
-                    None => push(rng,"entry was not found in workspace",lsp::DiagnosticSeverity::ERROR)
+                    None => {
+                        if let Some(severity) = ctx.missing_entries() {
+                            push(rng,"entry was not found in workspace",severity)
+                        }
+                    }
                 };
             }
             if f & merlin::symbol_flags::EXT > 0 || f & merlin::symbol_flags::ENT > 0 {

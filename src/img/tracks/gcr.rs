@@ -5,7 +5,6 @@
 //! Special handling can be triggered by elements of the `ZoneFormat` struct.
 //! 
 //! For Apple tracks, time is normalized to the resolution of a flux track, 1 tick = 125 ns.
-//! On the other hand, the `Tick` struct allows the caller to convert to other normalizations.
 
 use crate::img::{NibbleError,FieldCode};
 use super::{SectorKey,ZoneFormat,Method,FluxCells};
@@ -56,53 +55,82 @@ impl TrackEngine {
     /// (and expense) that the engine will use depending on its settings.
     /// Specific to Apple disks.
     fn read_woz(&mut self,cells: &mut FluxCells,codes: &mut [u8],num_codes: usize) -> usize {
-        match (self.nib_filter,&self.method) {
-            (true,_) => {
-                self.read(cells,codes,num_codes*8);
-                num_codes << 3 << cells.bshift
-            },
-            (false,Method::Edit) => {
+        // We need to have in mind some typical code that would read the disk, in order to run
+        // the LSS with workable timings.  Here is how DOS 3.2 reads the secondary data buffer.
+        // The primary buffer routine is similar (slightly longer buffering time).
+        // beg      STY   $3C        ; 3
+        // wait     LDY   $C08C,X    ; 4
+        //          BPL   wait       ; 2
+        //          EOR   $800,Y     ; 4
+        //          LDY   $3C        ; 3
+        //          DEY              ; 2
+        //          STA   $800,Y     ; 5
+        //          BNE   beg        ; 2
+        // Writing has to be done every 32 microseconds, here is an example:
+        //          LDA   #val       ; 2
+        //          JSR   write      ; 6
+        // write    CLC              ; 2
+        //          PHA              ; 3
+        //          PLA              ; 4
+        //          STA   $C08D,X    ; 5
+        //          ORA   $C08C,X    ; 4
+        //          RTS              ; 6
+        if self.nib_filter {
+            self.read(cells,codes,num_codes*8);
+            return num_codes << 3 << cells.bshift;
+        }
+        let latch_reps = 1000;
+        let loop_time = 6*8; // time spent in `wait` loop
+        let buf_time = 19*8; // time spent buffering and re-entering `wait` loop
+        let flux = cells.bshift > cells.fshift;
+        match (flux,&self.method) {
+            (_,Method::Edit) | (false,Method::Auto) => {
                 let mut code_count = 0;
                 let mut tick_count = 0;
-                while code_count < num_codes {
+                let mut reps = 0;
+                while code_count < num_codes && reps < latch_reps*num_codes {
                     if cells.read_bit() {
                         self.read(cells,&mut codes[code_count..],7);
                         codes[code_count] = 0x80 + (codes[code_count] >> 1);
                         code_count += 1;
+                        tick_count += 7 << cells.bshift;
                     }
                     tick_count += 1 << cells.bshift;
+                    reps += 1;
                 }
                 tick_count
             },
-            (false,Method::Analyze) => {
+            (_,Method::Analyze) => {
                 let mut tick_count: usize = 0;
                 self.woz_state.start_read();
                 for byte in 0..num_codes {
-                    for _try in 0..cells.revolution {
-                        // 64 ticks is a round number for CPU time to test the latch
-                        let touched = self.woz_state.advance(64, cells);
-                        tick_count += 64;
+                    for _try in 0..latch_reps {
+                        let touched = self.woz_state.advance(loop_time, cells);
+                        tick_count += loop_time;
                         codes[byte] = self.woz_state.get_latch();
                         if codes[byte] & 0x80 > 0 && touched {
                             break;
                         }
                     }
+                    self.woz_state.advance(buf_time,cells);
+                    tick_count += buf_time;
                 }
                 tick_count
             },
-            (false,Method::Emulate) => {
+            (_,Method::Emulate) | (true,Method::Auto) => {
                 let mut tick_count: usize = 0;
                 self.woz_state.start_read();
                 for byte in 0..num_codes {
-                    for _try in 0..cells.revolution {
-                        // 64 ticks is a round number for CPU time to test the latch
-                        self.woz_state.advance(64, cells);
-                        tick_count += 64;
+                    for _try in 0..latch_reps {
+                        self.woz_state.advance(loop_time, cells);
+                        tick_count += loop_time;
                         codes[byte] = self.woz_state.get_latch();
                         if codes[byte] & 0x80 > 0 {
                             break;
                         }
                     }
+                    self.woz_state.advance(buf_time,cells);
+                    tick_count += buf_time;
                 }
                 tick_count
             }
@@ -213,7 +241,7 @@ impl TrackEngine {
         }
         let mut matches = 0;
         let mut test_byte: [u8;1] = [0;1];
-        for tries in 0..cells.stream.len() {
+        for tries in 0..cells.revolution >> cells.bshift >> 2 {
             if let Some(max) = cap {
                 if tries>=max {
                     return None;
@@ -557,7 +585,7 @@ impl TrackEngine {
             Some(state) => self.restore_state(cells,&state)
         };
         let mut tick_count = 0;
-        for _try in 0..cells.stream.len() {
+        for _try in 0..cells.revolution >> cells.bshift >> 2 {
             tick_count += self.read_woz(cells,&mut byte,1);
             ans.push(byte[0]);
             if tick_count >= cells.revolution {

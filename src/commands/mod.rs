@@ -55,9 +55,9 @@ pub enum CommandError {
     KeyNotFound,
 }
 
-/// Types of files that may be distinguished by the file system or a2kit.
-/// This will have to be mapped to a similar enumeration at lower levels
-/// in order to obtain the binary type code.
+/// Items of information that a user might want to get-from or put-to a disk image.
+/// The `ItemType` will affect how the CLI interprets the `--file` argument, i.e., as
+/// an ordinary file system path, a disk address, or a metadata key path.
 #[derive(PartialEq,Clone,Copy)]
 pub enum ItemType {
     FileImage,
@@ -118,6 +118,9 @@ const SEC_MESS: &str =
 
 const CYL_MESS: &str =
 "cylinder specification should be a postive integer or quarter-decimal (e.g. 17.25)";
+
+const TRK_MESS: &str =
+"track specification should be `<cyl>,<head>` or a range";
 
 /// parse an ordinary integer or a decimal that ends with
 /// anything in the set ["0","00","25","5","50","75"], an error
@@ -282,19 +285,62 @@ fn parse_sector_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<(TrackKey
     Ok(ans)
 }
 
-/// Parse a track request in the form `cyl,head` (ranges not allowed).
-/// Decimal numbers will be interpreted as quarter tracks.
-fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<TrackKey,DYNERR> {
-    let fcopy = String::from(farg);
-    let ch: Vec<&str> = fcopy.split(',').collect();
-    if ch.len()!=2 {
-        log::error!("track specification should be in form `cylinder,head`");
+/// Parse a track request in the form `c1[..c2],h1[..h2][,,next_range]`.
+/// The cylinder bounds can be quarter tracks, in which case the cylinder range
+/// will be stepping by 4.
+fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<TrackKey>,DYNERR> {
+    let mut ans: Vec<TrackKey> = Vec::new();
+    let mut contiguous_areas = farg.split(",,");
+    while let Some(contig) = contiguous_areas.next() {
+        let mut ranges = contig.split(',');
+        // get track range
+        let trk_rng = match ranges.next() {
+            Some(range) => parse_track_range(range,steps_per_cyl)?,
+            None => {
+                log::error!("{}",TRK_MESS);
+                return Err(Box::new(CommandError::InvalidCommand));
+            }
+        };
+        // get head range
+        let head_rng = match ranges.next() {
+            Some(range) => parse_range(range)?,
+            None => {
+                log::error!("{}",TRK_MESS);
+                return Err(Box::new(CommandError::InvalidCommand));
+            }
+        };
+        if ranges.next().is_some() {
+            log::error!("{}",TRK_MESS);
+            return Err(Box::new(CommandError::InvalidCommand));
+        }
+
+        let mut cyl = trk_rng[0].clone();
+        while cyl < trk_rng[1] {
+            for head in head_rng[0]..head_rng[1] {
+                match cyl {
+                    TrackKey::CH((c,_)) => ans.push(TrackKey::CH((c,head))),
+                    TrackKey::Motor((m,_)) => ans.push(TrackKey::Motor((m,head))),
+                    _ => panic!("unexpected track spec")
+                };
+                if ans.len()>4*(u16::MAX as usize) {
+                    log::error!("track request has too many tracks");
+                    return Err(Box::new(CommandError::InvalidCommand));
+                }
+            }
+            cyl.jump(1,None,steps_per_cyl)?;
+        }
+    }
+    Ok(ans)
+}
+
+/// Calls parse_track_request while rejecting ranges, i.e., accept only one track
+fn request_one_track(farg: &str,steps_per_cyl: usize) -> Result<TrackKey,DYNERR> {
+    let v = parse_track_request(farg,steps_per_cyl)?;
+    if v.len() != 1 {
+        log::error!("expected exactly one track but got {}",v.len());
         return Err(Box::new(CommandError::InvalidCommand));
     }
-    let head = usize::from_str(ch[1])?;
-    let tkey = parse_quarter_decimal(ch[0],head,steps_per_cyl)?;
-    log::debug!("user requested {}",tkey);
-    Ok(tkey)
+    Ok(v[0].clone())
 }
 
 /// parse a block request in the form `b1[..b2][,,next_range]`
@@ -358,6 +404,29 @@ fn test_parse_sec_req() {
     assert_eq!(contig_list,vec![[2,0,3],[2,0,4],[3,0,3],[3,0,4]]);
     let non_contig_list = unwrap_ts_keys(parse_sector_request(non_contig,1).expect("could not parse"));
     assert_eq!(non_contig_list,vec![[2,0,3],[2,0,4],[3,0,3],[3,0,4],[32,0,0],[32,0,1],[33,0,0],[33,0,1]]);
+}
+
+#[test]
+fn test_parse_flux_req() {
+    let unwrap_keys = |keys: Vec<TrackKey>| -> Vec<[usize;2]> {
+        let mut ans = Vec::new();
+        for k in keys {
+            match k {
+                TrackKey::CH((c,h)) => ans.push([c,h]),
+                _ => panic!("unhandled test scenario")
+            }
+        }
+        ans
+    };
+    let single = "2,0";
+    let contig = "2..4,0";
+    let non_contig = "2..4,0,,32..34,0";
+    let single_list = unwrap_keys(parse_track_request(single,1).expect("could not parse"));
+    assert_eq!(single_list,vec![[2,0]]);
+    let contig_list = unwrap_keys(parse_track_request(contig,1).expect("could not parse"));
+    assert_eq!(contig_list,vec![[2,0],[3,0]]);
+    let non_contig_list = unwrap_keys(parse_track_request(non_contig,1).expect("could not parse"));
+    assert_eq!(non_contig_list,vec![[2,0],[3,0],[32,0],[33,0]]);
 }
 
 #[test]
