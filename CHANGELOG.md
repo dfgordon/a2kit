@@ -28,8 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * CLI `mkdsk` supports creating flux tracks
 * add long help for certain CLI arguments
 * CLI `geometry` output is enhanced
-    - adds the `addr_code` key (nibble code used in address fields)
     - will return fractional cylinder numbers if necessary
+    - distinguishes nibble codes used in address vs. data fields
+    - returns better sector addresses and description thereof
 * CLI `get` can be coerced into formatting output for the console
 * macro expansions handle `]0` (Merlin 16 or higher)
 * additional diagnostics and settings for Merlin server
@@ -46,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * modules `disk35` and `disk525` are eliminated
 * `TrackBits` trait is eliminated
+* `parse_escaped_ascii` is eliminated, `escaped_ascii_to_bytes` args changed
 * various public entities are eliminated from `img::woz`
 * changes to `DiskImage` trait
     - eliminated `track_2_ch`, `ch_2_track`

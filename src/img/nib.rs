@@ -252,8 +252,8 @@ impl img::DiskImage for Nib {
         if let Some(fmt) = &self.fmt {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
-            if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
-                return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
+            if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
+                return Ok(Some(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS")));
             }
         }
         // If the given format fails try some standard ones
@@ -261,18 +261,18 @@ impl img::DiskImage for Nib {
         self.kind = img::names::A2_DOS32_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-        if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
-            if chss_map.len()==13 {
-                return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
+        if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
+            if addr_map.len()==13 {
+                return Ok(Some(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS")));
             }
         }
         log::trace!("try DOS 3.3 format");
         self.kind = img::names::A2_DOS33_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
-        if let Ok(chss_map) = self.engine.chss_map(&mut self.cells,zfmt) {
-            if chss_map.len()==16 {
-                return Ok(Some(zfmt.track_solution(motor,head,width,chss_map)));
+        if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
+            if addr_map.len()==16 {
+                return Ok(Some(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS")));
             }
         }
         return Ok(None);

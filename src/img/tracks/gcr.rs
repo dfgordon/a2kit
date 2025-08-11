@@ -594,28 +594,33 @@ impl TrackEngine {
         }
         return ans;
     }
-    pub fn chss_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<Vec<[usize;4]>,DYNERR> {
+    /// return vectors of sector addresses and sizes in geometric order
+    pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;4]>,Vec<usize>),DYNERR> {
         let mut ptr_list: Vec<usize> = Vec::new();
         cells.ptr = 0;
-        let mut ans: Vec<[usize;4]> = Vec::new();
+        let mut addr_map: Vec<[u8;4]> = Vec::new();
+        let mut size_map: Vec<usize> = Vec::new();
         let (patt,mask) = fmt.get_marker(0);
         for _try in 0..32 {
             if self.find_byte_pattern(cells,patt,mask,None,&fmt.addr_nibs()).is_some() {
                 let addr = self.decode_addr(cells,fmt)?;
                 if ptr_list.contains(&cells.ptr) {
                     // if we have seen this one before we are done
-                    return Ok(ans)
+                    return Ok((addr_map,size_map))
                 }
                 ptr_list.push(cells.ptr);
-                let chs = fmt.get_chs(&addr)?;
-                log::trace!("scan sector {}",chs[2]);
+                let mut addr = fmt.get_nice_addr(&addr)?;
+                while addr.len() < 4 {
+                    addr.push(0);
+                }
                 let capacity = self.get_sector_capacity(cells, fmt)?;
-                ans.push([chs[0] as usize,chs[1] as usize,chs[2] as usize,capacity]);
+                addr_map.push([addr[0],addr[1],addr[2],addr[3]]);
+                size_map.push(capacity);
             } else {
                 return Err(Box::new(NibbleError::BitPatternNotFound));
             }
         }
-        return Ok(ans);
+        return Ok((addr_map,size_map));
     }
     /// Create a GCR track based on the given ZoneFormat.
     /// * skey - standard address components, in general will be transformed by fmt

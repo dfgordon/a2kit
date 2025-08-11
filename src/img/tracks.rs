@@ -355,10 +355,9 @@ pub struct ZoneFormat {
     markers: [SectorMarker; 4],
     /// gaps at start of track, end of sector, end of data (often for syncing)
     gaps: [BitVec; 3],
-    /// Ordered expressions used to calculate CHS values as they appear in address fields.
-    /// This is straightforward for IBM disks, for others we align the values as best we can.
-    /// Variables may include (a0,a1,a2,...), i.e., the actual address values.
-    chs_extract_expr: Vec<String>,
+    /// Ordered expressions used to calculate human readable address bytes.
+    /// Variables may include (a0,a1,a2,...), i.e., the actual address bytes.
+    addr_extract_expr: Vec<String>,
     /// When reading replace `swap_nibs[i][0]` with `swap_nibs[i][1]`, when writing do the opposite.
     swap_nibs: Vec<[u8;2]>,
     /// Capacity of each sector, in some cases the possible values are tightly constrained
@@ -524,21 +523,21 @@ impl ZoneFormat {
         }
         Ok(ans)
     }
-    /// Return whatever is in the CHS bytes for this address
-    fn get_chs(&self,addr: &Vec<u8>) -> Result<[u8;3],DYNERR> {
-        if self.chs_extract_expr.len() != 3 {
-            log::error!("chs_expr in format should have 3 elements");
+    /// Return a version of the address that might be transformed for human interpretation
+    fn get_nice_addr(&self,addr: &Vec<u8>) -> Result<Vec<u8>,DYNERR> {
+        if self.addr_extract_expr.len() < 3 || self.addr_extract_expr.len() > 4 {
+            log::error!("addr_extract_expr in format should have 3 or 4 elements");
             return Err(Box::new(crate::commands::CommandError::InvalidCommand));
         }
         let mut ctx = HashMap::new();
         for i in 0..addr.len() {
             ctx.insert(["a",&usize::to_string(&i)].concat(),u8::to_string(&addr[i]));
         }
-        Ok([
-            eval_u8(&self.chs_extract_expr[0],&ctx)?,
-            eval_u8(&self.chs_extract_expr[1],&ctx)?,
-            eval_u8(&self.chs_extract_expr[2],&ctx)?
-        ])
+        let mut ans = Vec::new();
+        for expr in &self.addr_extract_expr {
+            ans.push(eval_u8(expr,&ctx)?);
+        }
+        Ok(ans)
     }
     /// Get a sector address field to be matched against an actual address field during seeking.
     /// The inputs are transformed by expressions stored with the format. These transformations
@@ -582,7 +581,7 @@ impl ZoneFormat {
     pub fn sector_count(&self) -> usize {
         self.capacity.len()
     }
-    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,chss_map: Vec<[usize;4]>) -> img::TrackSolution {
+    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;4]>,size_map: Vec<usize>,addr_type: &str) -> img::TrackSolution {
         img::TrackSolution {
             cylinder: motor/head_width,
             fraction: [motor%head_width,head_width],
@@ -590,7 +589,9 @@ impl ZoneFormat {
             flux_code: self.flux_code,
             addr_code: self.addr_nibs,
             data_code: self.data_nibs,
-            chss_map
+            addr_type: addr_type.to_string(),
+            addr_map,
+            size_map
         }
     }
     /// see if `win` matches marker `which` at any stage and return the mnemonic.

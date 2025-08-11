@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::{Block,dos3x,DiskFS};
-use a2kit::img::{dsk_d13,woz1,names};
+use a2kit::img::{dsk_d13,woz1,woz2,names,tracks};
 use a2kit::commands::ItemType;
 use a2kit::lang::integer;
 
@@ -79,6 +79,34 @@ fn read_small() {
     // check the sequential text file
     let txt = emulator_disk.get("thetext").expect(RCH).unpack_txt().expect(RCH);
     assert_eq!(&txt,"HELLO FROM DOS 3.2\n");
+}
+
+#[test]
+fn write_small_flux() {
+    // Formatting: DOS, Writing: Virtual II
+    // This tests a small BASIC program, binary, and text file, with the additional wrinkle of a flux track.
+    // The flux track does not exist on the reference disk, which is fine since we only compare decoded sectors.
+    let img = woz2::Woz2::create(35, names::A2_DOS32_KIND,None,vec![tracks::TrackKey::Track(17)]).expect("could not create");
+    let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
+    disk.init32(254,true).expect("failed to INIT");
+
+    // save the BASIC program
+    let lib_tokens = get_tokens("disk_builder.ibas");
+    let mut fimg = disk.new_fimg(None, false, "hello").expect(RCH);
+    fimg.pack_tok(&lib_tokens,ItemType::IntegerTokens,Some(&vec![0x08])).expect(RCH);
+    disk.put(&fimg).expect(RCH);
+
+    // save the binary
+    fimg.pack_bin(&[6,5,0,2],Some(768),Some(&vec![0x0a])).expect(RCH);
+    disk.put_at("thechip",&mut fimg).expect(RCH);
+
+    // save the text
+    fimg.pack_txt("HELLO FROM DOS 3.2\n").expect(RCH);
+    disk.put_at("thetext",&mut fimg).expect(RCH);
+
+    let mut ignore = disk.standardize(0);
+    ignore_boot_tracks(&mut ignore);
+    disk.compare(&Path::new("tests").join("dos32-smallfiles.woz"),&ignore);
 }
 
 #[test]

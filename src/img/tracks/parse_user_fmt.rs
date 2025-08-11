@@ -194,7 +194,7 @@ impl ZoneFormat {
         let addr_fmt_expr = parse_str_list(&obj["addr_fmt_expr"],"addr_fmt_expr")?;
         let addr_seek_expr = parse_str_list(&obj["addr_seek_expr"],"addr_seek_expr")?;
         let data_expr = parse_str_list(&obj["data_expr"],"data_expr")?;
-        let chs_extract_expr = parse_str_list(&obj["chs_extract_expr"],"chs_extract_expr")?;
+        let addr_extract_expr = parse_str_list(&obj["addr_extract_expr"],"addr_extract_expr")?;
         let keys = parse_hex_list(&obj["markers"],"markers")?;
         let masks = parse_hex_list(&obj["marker_masks"],"marker_masks")?;
         let sync_trk_beg = parse_sync_gap(&obj["sync_trk_beg"], "sync_trk_beg")?;
@@ -238,7 +238,7 @@ impl ZoneFormat {
             data_expr,
             markers: std::array::from_fn(|i| markers[i].clone()),
             gaps: [sync_trk_beg,sync_sec_end,sync_dat_end],
-            chs_extract_expr,
+            addr_extract_expr,
             capacity,
             swap_nibs
         });

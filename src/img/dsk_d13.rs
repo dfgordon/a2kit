@@ -122,9 +122,9 @@ impl img::DiskImage for D13 {
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
         let [c,h] = self.get_rz(super::TrackKey::Track(trk))?;
-        let mut chss_map: Vec<[usize;4]> = Vec::new();
+        let mut addr_map: Vec<[u8;4]> = Vec::new();
         for i in 0..13 {
-            chss_map.push([c,h,crate::bios::skew::DOS32_PHYSICAL[i],256]);
+            addr_map.push([254,c.try_into()?,crate::bios::skew::DOS32_PHYSICAL[i].try_into()?,0]);
         }
         return Ok(Some(img::TrackSolution {
             cylinder: c,
@@ -133,7 +133,9 @@ impl img::DiskImage for D13 {
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((5,3)),
-            chss_map
+            addr_type: "*TS".to_string(),
+            addr_map,
+            size_map: vec![256;13]
         }));
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

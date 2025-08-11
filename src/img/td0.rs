@@ -927,9 +927,13 @@ impl img::DiskImage for Td0 {
             true => img::FluxCode::FM,
             false => img::FluxCode::MFM
         };
-        let mut chss_map: Vec<[usize;4]> = Vec::new();
+        let mut addr_map: Vec<[u8;4]> = Vec::new();
         for sec in &trk_obj.sectors {
-            chss_map.push([sec.header.cylinder as usize,sec.header.head as usize,sec.header.id as usize,SECTOR_SIZE_BASE << sec.header.sector_shift]);
+            addr_map.push([sec.header.cylinder,sec.header.head,sec.header.id,sec.header.sector_shift]);
+        }
+        let mut size_map: Vec<usize> = Vec::new();
+        for sec in &trk_obj.sectors {
+            size_map.push(SECTOR_SIZE_BASE << sec.header.sector_shift);
         }
         Ok(Some(img::TrackSolution {
             cylinder: trk_obj.header.cylinder as usize,
@@ -938,7 +942,9 @@ impl img::DiskImage for Td0 {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            chss_map
+            addr_type: "CHS*".to_string(),
+            addr_map,
+            size_map
         }))
     }
     fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {

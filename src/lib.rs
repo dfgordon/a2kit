@@ -530,7 +530,7 @@ pub fn escaped_ascii_from_bytes(bytes: &Vec<u8>,escape_cc: bool,inverted: bool) 
 /// if `inverted` is true the sign of the non-escaped bytes is flipped.
 /// if `caps` is true the ascii is put in upper case.
 /// This is suitable for either languages or directory strings.
-pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
+pub fn escaped_ascii_to_bytes(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
     let mut ans: Vec<u8> = Vec::new();
     let hex_patt = Regex::new(r"\\x[0-9A-Fa-f][0-9A-Fa-f]").expect("unreachable");
     let mut hexes = hex_patt.find_iter(s);
@@ -565,11 +565,6 @@ pub fn parse_escaped_ascii(s: &str,inverted: bool,caps: bool) -> Vec<u8> {
         curs += 1;
     }
     return ans;
-}
-
-/// Calls `parse_escaped_ascii` with `caps=true`
-pub fn escaped_ascii_to_bytes(s: &str,inverted: bool) -> Vec<u8> {
-    parse_escaped_ascii(s,inverted,true)
 }
 
 /// Cursor to walk a JSON tree.

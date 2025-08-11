@@ -118,7 +118,7 @@ impl Tokenizer
     }
 	fn stringlike_node_to_bytes(txt: &str,trim: bool) -> Vec<u8> {
 		let ans = match trim { true => txt.trim_start().to_string(), false => txt.to_string() };
-		return crate::parse_escaped_ascii(&ans, false, false);
+		return crate::escaped_ascii_to_bytes(&ans, false, false);
 	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();

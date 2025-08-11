@@ -17,7 +17,7 @@
 			"sync_sec_end": [["1111111100",10]],
 			"sync_dat_end": [["1111111100",20]],
 			"capacity": [[256,16]],
-			"chs_extract_expr": ["a1","0","a2"],
+			"addr_extract_expr": ["a0","a1","a2"],
 			"swap_nibs": [["d5","9b"]]
 		},
 		{
@@ -35,7 +35,7 @@
 			"sync_sec_end": [["1111111100",10]],
 			"sync_dat_end": [["1111111100",20]],
 			"capacity": [[256,16]],
-			"chs_extract_expr": ["a1","0","a2"],
+			"addr_extract_expr": ["a0","a1","a2"],
 			"swap_nibs": [["d5","9b"]]
 		}
 	]

@@ -151,8 +151,8 @@ pub struct BlockLayout {
 
 /// Detailed layout of a single track, allows for
 /// heterogeneous sector layouts. This is intended as an
-/// output rather than a control knob.  For the latter see the
-/// `pro` module.
+/// output rather than a control knob.  See also
+/// `tracks::DiskFormat` and `tracks::ZoneFormat`.
 pub struct TrackSolution {
     cylinder: usize,
     fraction: [usize;2],
@@ -160,11 +160,13 @@ pub struct TrackSolution {
     flux_code: FluxCode,
     addr_code: FieldCode,
     data_code: FieldCode,
-    chss_map: Vec<[usize;4]>
+    addr_type: String,
+    addr_map: Vec<[u8;4]>,
+    size_map: Vec<usize>
 }
 
-/// Fixed size representation of how all the tracks on a disk
-/// are layed out.  The simplifying assumptions are
+/// Fixed size representation of how all the tracks on a disk are layed out,
+/// useful for pattern matching.  The simplifying assumptions are
 /// * at most 5 zones on the disk
 /// * every track in a zone is laid out the same
 /// * every sector on a track is laid out the same
@@ -594,15 +596,15 @@ fn geometry_json(pkg: String,track_sols: Vec<TrackSolution>,indent: Option<u16>)
             FieldCode::None => json::JsonValue::Null,
             n => json::JsonValue::String(n.to_string())
         };
-        trk_obj["chs_map"] = json::JsonValue::new_array();
-        for chss in sol.chss_map {
-            let mut chss_json = json::JsonValue::new_array();
-            chss_json.push(chss[0])?;
-            chss_json.push(chss[1])?;
-            chss_json.push(chss[2])?;
-            chss_json.push(chss[3])?;
-            trk_obj["chs_map"].push(chss_json)?;
+        trk_obj["addr_map"] = json::JsonValue::new_array();
+        for addr in sol.addr_map {
+            trk_obj["addr_map"].push(json::JsonValue::String(hex::encode_upper(&addr[0..sol.addr_type.len()])))?;
         }
+        trk_obj["size_map"] = json::JsonValue::new_array();
+        for size in sol.size_map {
+            trk_obj["size_map"].push(size)?;
+        }
+        trk_obj["addr_type"] = json::JsonValue::String(sol.addr_type);
         trk_ary.push(trk_obj)?;
     }
     if solved_track_count==0 {
@@ -654,4 +656,13 @@ pub fn package_string(kind: &DiskKind) -> String {
         DiskKind::LogicalSectors(_) => "logical".to_string(),
         DiskKind::Unknown => "unknown".to_string()
     }
+}
+
+fn highest_bit(mut val: usize) -> u8 {
+    let mut ans = 0;
+    while val > 0 {
+        ans += 1;
+        val = val >> 1;
+    }
+    ans
 }

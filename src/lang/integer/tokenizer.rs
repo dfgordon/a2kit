@@ -121,7 +121,7 @@ impl Tokenizer
 	/// will invert and capitalize
 	fn stringlike_node_to_bytes(txt: &str,trim: bool) -> Vec<u8> {
 		let trimmed = match trim { true => txt.trim_start().to_string(), false => txt.to_string() };
-		return crate::parse_escaped_ascii(&trimmed, true, true);
+		return crate::escaped_ascii_to_bytes(&trimmed, true, true);
 	}
 	fn tokenize_line(&mut self,parser: &mut tree_sitter::Parser) -> STDRESULT {
 		self.tokenized_line = Vec::new();

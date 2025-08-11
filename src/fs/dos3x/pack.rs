@@ -40,7 +40,7 @@ pub fn string_to_file_name(s: &str) -> [u8;30] {
         panic!("DOS filename was loo long");
     }
     let mut ans: [u8;30] = [0xa0;30]; // fill with negative spaces
-    let unescaped = crate::escaped_ascii_to_bytes(s, true);
+    let unescaped = crate::escaped_ascii_to_bytes(s, true, true);
     for i in 0..30 {
         if i<unescaped.len() {
             ans[i] = unescaped[i];
