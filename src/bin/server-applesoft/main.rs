@@ -40,7 +40,7 @@ enum ServerError {
 }
 
 struct AnalysisResult {
-    uri: lsp::Url,
+    uri: lsp::Uri,
     version: Option<i32>,
     diagnostics: Vec<lsp::Diagnostic>,
     symbols: applesoft::Symbols
@@ -118,7 +118,7 @@ fn launch_analysis_thread(analyzer: Arc<Mutex<Analyzer>>, doc: a2kit::lang::Docu
 
 /// Diagnostics are never requested by the client.
 /// This server pushes them up after analysis pass, which in turn is triggered by document changes.
-pub fn push_diagnostics(connection: &lsp_server::Connection,uri: lsp::Url, version: Option<i32>, diagnostics: Vec<lsp::Diagnostic>) {
+pub fn push_diagnostics(connection: &lsp_server::Connection,uri: lsp::Uri, version: Option<i32>, diagnostics: Vec<lsp::Diagnostic>) {
     let note = lsp_server::Notification::new(
         "textDocument/publishDiagnostics".to_string(),
         lsp::PublishDiagnosticsParams {

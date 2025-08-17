@@ -183,7 +183,7 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         fimg.desequence(dat);
         fimg.fs_type = vec![FileType::Text as u8];
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
+        fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         Ok(())
     }
     
@@ -206,7 +206,7 @@ impl Packing for Packer {
         if let Some(addr) = load_addr {
             fimg.desequence(&padded);
             fimg.fs_type = vec![FileType::Binary as u8];
-            fimg.access = vec![STD_ACCESS | DIDCHANGE];
+            fimg.access = vec![STD_ACCESS | Access::Backup as u8];
             fimg.aux = u16::to_le_bytes(u16::try_from(addr)?).to_vec();
             return Ok(());    
         }
@@ -222,7 +222,7 @@ impl Packing for Packer {
         Self::verify(fimg)?;
         let file = SequentialText::from_str(txt)?;
         fimg.desequence(&file.to_bytes());
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
+        fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         fimg.fs_type = vec![FileType::Text as u8];
         Ok(())
     }
@@ -241,7 +241,7 @@ impl Packing for Packer {
             None => tok.to_vec()
         };
         fimg.desequence(&padded);
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
+        fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         match lang {
             ItemType::ApplesoftTokens => {
                 let addr = crate::lang::applesoft::deduce_address(tok);
@@ -266,7 +266,7 @@ impl Packing for Packer {
         let converter = TextConverter::new(vec![0x0d]);
         fimg.fs_type = vec![FileType::Text as u8];
         fimg.aux = u16::to_le_bytes(recs.record_len.try_into()?).to_vec();
-        fimg.access = vec![STD_ACCESS | DIDCHANGE];
+        fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         recs.update_fimg(fimg, true, converter, true)
     }
     

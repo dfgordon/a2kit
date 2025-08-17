@@ -47,7 +47,7 @@ enum ServerError {
 }
 
 struct AnalysisResult {
-    uri: lsp::Url,
+    uri: lsp::Uri,
     version: Option<i32>,
     diagnostics: Vec<lsp::Diagnostic>,
     folding: Vec<lsp::FoldingRange>,
@@ -185,7 +185,7 @@ fn launch_analysis_thread(analyzer: Arc<Mutex<Analyzer>>, doc: a2kit::lang::Docu
 
 /// Diagnostics are never requested by the client.
 /// This server pushes them up after analysis pass, which in turn is triggered by document changes.
-pub fn push_diagnostics(connection: &lsp_server::Connection,uri: lsp::Url, version: Option<i32>, diagnostics: Vec<lsp::Diagnostic>) {
+pub fn push_diagnostics(connection: &lsp_server::Connection,uri: lsp::Uri, version: Option<i32>, diagnostics: Vec<lsp::Diagnostic>) {
     let note = lsp_server::Notification::new(
         "textDocument/publishDiagnostics".to_string(),
         lsp::PublishDiagnosticsParams {
@@ -354,7 +354,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     // Initial workspace scan
     if let Some(folders) = params.workspace_folders {
-        let source_dirs = folders.iter().map(|f| f.uri.clone()).collect::<Vec<lsp::Url>>();
+        let source_dirs = folders.iter().map(|f| f.uri.clone()).collect::<Vec<lsp::Uri>>();
         tools.hover_provider.set_workspace_folder(source_dirs.clone());
         if let Ok(mut mutex) = tools.analyzer.lock() {
             match mutex.init_workspace(source_dirs, Vec::new()) {

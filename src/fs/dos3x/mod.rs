@@ -623,7 +623,7 @@ impl Disk
         }
     }
     /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
-    fn modify(&mut self,name: &str,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
+    fn modify(&mut self,name: &str,maybe_unlock: Option<bool>,maybe_new_name: Option<&str>,maybe_ftype: Option<&str>) -> STDRESULT {
         if !is_name_valid(&name) {
             log::error!("old name is invalid, perhaps use hex escapes");
             return Err(Box::new(Error::SyntaxError));
@@ -641,9 +641,9 @@ impl Disk
                     if entry.file_type > 127 && maybe_new_name!=None {
                         return Err(Box::new(Error::FileLocked));
                     }
-                    entry.file_type = match maybe_lock {
-                        Some(true) => entry.file_type | 0x80,
-                        Some(false) => entry.file_type & 0x7f,
+                    entry.file_type = match maybe_unlock {
+                        Some(true) => entry.file_type & 0x7f,
+                        Some(false) => entry.file_type | 0x80,
                         None => entry.file_type
                     };
                     if let Some(new_name) = maybe_new_name {
@@ -884,19 +884,8 @@ impl super::DiskFS for Disk {
         log::error!("number of directory sectors is not plausible, aborting");
         Err(Box::new(Error::EndOfData))
     }
-    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
-        log::error!("DOS does not support operation");
-        Err(Box::new(Error::SyntaxError))
-    }
-    fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        log::error!("DOS does not support operation");
-        Err(Box::new(Error::SyntaxError))
-    }
-    fn lock(&mut self,name: &str) -> STDRESULT {
-        return self.modify(name,Some(true),None,None);
-    }
-    fn unlock(&mut self,name: &str) -> STDRESULT {
-        return self.modify(name,Some(false),None,None);
+    fn set_attrib(&mut self,name: &str,attrib: super::Attributes,_password: Option<&str>) -> STDRESULT {
+        self.modify(name,attrib.write,None,None)
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {
         self.ok_to_rename(new_name)?;

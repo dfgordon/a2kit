@@ -9,11 +9,10 @@ use super::super::TextConversion;
 
 pub const BLOCK_SIZE: usize = 512;
 pub const VOL_KEY_BLOCK: u16 = 2;
-pub const DESTROYABLE: u8 = 0x80;
-pub const RENAMABLE: u8 = 0x40;
-pub const DIDCHANGE: u8 = 0x20;
-pub const WRITEABLE: u8 = 0x02;
-pub const READABLE: u8 = 0x01;
+const DESTROYABLE: u8 = 0x80;
+const RENAMABLE: u8 = 0x40;
+const WRITEABLE: u8 = 0x02;
+const READABLE: u8 = 0x01;
 pub const STD_ACCESS: u8 = READABLE | WRITEABLE | RENAMABLE | DESTROYABLE;
 
 /// Enumerates ProDOS errors

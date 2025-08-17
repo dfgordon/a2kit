@@ -199,8 +199,9 @@ impl img::DiskImage for DO {
         }
         return Ok(Some(img::TrackSolution {
             cylinder: c,
-            head: h,
             fraction: [0,4],
+            head: h,
+            speed_kbps: 250,
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((6,2)),

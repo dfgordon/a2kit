@@ -63,31 +63,47 @@ pub enum Error {
     BadUrl
 }
 
-/// This works by normalizing to the server's convention, i.e., anything that comes from the
-/// client must be normalized.
-/// As an example, the client may send "file:///c%3A" while the server generates "file:///C:".
-pub fn normalize_client_uri(uri: lsp::Url) -> lsp::Url {
-    if let Ok(path) = uri.to_file_path() {
-        if let Ok(new_uri) = lsp::Url::from_file_path(path) {
-            return new_uri;
-        }
+/// Take a URI from the client and recreate it using the server's conventions.
+/// This is needed in order to make reliable file system comparisons.
+/// If the URI cannot be interpreted by `std::path` the input is returned unchanged.
+pub fn normalize_client_uri(uri: lsp::Uri) -> lsp::Uri {
+    match pathbuf_from_uri(&uri) {
+        Ok(path) => match uri_from_path(&path) {
+            Ok(ans) => return ans,
+            Err(_) => {}
+        },
+        Err(_) => {}
     }
     uri
 }
 
-/// This works by normalizing to the server's convention, i.e., anything that comes from the
-/// client must be normalized.
-/// As an example, the client may send "file:///c%3A" while the server generates "file:///C:".
-pub fn normalize_client_uri_str(uri: &str) -> Result<lsp::Url,DYNERR> {
-    if let Ok(parsed) = lsp::Url::parse(uri) {
-        if let Ok(path) = parsed.to_file_path() {
-            if let Ok(new_uri) = lsp::Url::from_file_path(path) {
-                return Ok(new_uri);
-            }
-        }
-        return Ok(parsed);
+/// Convenience function calling `normalize_client_uri`
+pub fn normalize_client_uri_str(uri: &str) -> Result<lsp::Uri,DYNERR> {
+    Ok(normalize_client_uri(lsp::Uri::from_str(uri)?))
+}
+
+pub fn uri_from_path(path: &std::path::Path) -> Result<lsp::Uri,DYNERR> {
+    let url = match url::Url::from_file_path(path) {
+        Ok(ans) => ans,
+        Err(()) => return Err(Box::new(Error::PathNotFound))
+    };
+    let uri = fluent_uri::Uri::from_str(url.as_str())?.normalize();
+    Ok(lsp::Uri::from_str(uri.as_str())?)
+}
+
+pub fn uri_from_path_str(path_str: &str) -> Result<lsp::Uri,DYNERR> {
+    uri_from_path(&std::path::PathBuf::from_str(path_str)?)
+}
+
+pub fn pathbuf_from_uri(uri: &lsp::Uri) -> Result<std::path::PathBuf,DYNERR> {
+    let url_crate_uri = match url::Url::from_str(uri.as_str()) {
+        Ok(ans) => ans,
+        Err(e) => return Err(Box::new(e))
+    };
+    match url_crate_uri.to_file_path() {
+        Ok(ans) => Ok(ans),
+        Err(_) => Err(Box::new(Error::BadUrl))
     }
-    return Err(Box::new(Error::PathNotFound));
 }
 
 /// Text document packed up with URI string and version information.
@@ -96,13 +112,13 @@ pub fn normalize_client_uri_str(uri: &str) -> Result<lsp::Url,DYNERR> {
 /// There are internally defined URI's for strings and macros.
 #[derive(Clone)]
 pub struct Document {
-    pub uri: lsp::Url,
+    pub uri: lsp::Uri,
     pub version: Option<i32>,
     pub text: String
 }
 
 impl Document {
-    pub fn new(uri: lsp::Url,text: String) -> Self {
+    pub fn new(uri: lsp::Uri,text: String) -> Self {
         Self {
             uri,
             version: None,
@@ -111,30 +127,25 @@ impl Document {
     }
     pub fn from_string(text: String, id: u64) -> Self {
         Self {
-            uri: lsp::Url::from_str(&format!("string:{}",id)).expect(RCH),
+            uri: lsp::Uri::from_str(&format!("string:{}",id)).expect(RCH),
             version: None,
             text
         }
     }
     pub fn from_macro(text: String, label: String) -> Self {
         Self {
-            uri: lsp::Url::from_str(&format!("macro:{}",label)).expect(RCH),
+            uri: lsp::Uri::from_str(&format!("macro:{}",label)).expect(RCH),
             version: None,
             text
         }
     }
     pub fn from_file_path(path: &std::path::Path) -> Result<Self,DYNERR> {
         let by = std::fs::read(path)?;
-        let text = String::from_utf8(by)?;
-        if let Ok(uri) = lsp::Url::from_file_path(path) {
-            Ok(Self {
-                uri,
-                version: None,
-                text
-            })
-        } else {
-            Err(Box::new(Error::PathNotFound))
-        }
+        Ok(Self {
+            uri: uri_from_path(path)?,
+            version: None,
+            text: String::from_utf8(by)?
+        })
     }
 }
 

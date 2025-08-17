@@ -160,12 +160,12 @@ pub fn handle_request(
                             let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
                             if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
                                 let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                match tools.doc_chkpts.get(&normalized_uri.to_string()) { Some(chk) => {
                                     tools.highlighter.use_shared_symbols(chk.shared_symbols());
-                                } else {
+                                } _ => {
                                     // need to clear symbols if there is no checkpoint
                                     tools.highlighter.use_shared_symbols(Arc::new(a2kit::lang::merlin::Symbols::new()));
-                                }
+                                }}
                                 // decision here is to highlight even if no symbols found
                                 resp = match tools.highlighter.get(&program) {
                                     Ok(result) => {
@@ -182,7 +182,7 @@ pub fn handle_request(
                             let uri_res = serde_json::from_value::<String>(params.arguments[1].clone());
                             if let (Ok(program),Ok(uri)) = (prog_res,uri_res) {
                                 let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                match tools.doc_chkpts.get(&normalized_uri.to_string()) { Some(chk) => {
                                     tools.tokenizer.use_shared_symbols(chk.shared_symbols());
                                     resp = match formatter::format_for_paste(program,&mut tools.tokenizer) {
                                         Ok(result) => {
@@ -190,9 +190,9 @@ pub fn handle_request(
                                         },
                                         Err(_) => lsp_server::Response::new_err(req.id,PARSE_ERROR,"formatting failed".to_string())
                                     };
-                                } else {
+                                } _ => {
                                     resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,"cannot format due to missing checkpoint".to_string());
-                                }
+                                }}
                             }
                         }
                     },
@@ -246,7 +246,7 @@ pub fn handle_request(
                             let end_res = serde_json::from_value::<isize>(params.arguments[3].clone());
                             if let (Ok(program),Ok(uri),Ok(beg),Ok(end)) = (prog_res,uri_res,beg_res,end_res) {
                                 let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                match tools.doc_chkpts.get(&normalized_uri.to_string()) { Some(chk) => {
                                     let dasm_symbols = Arc::new(merlin::assembly::Assembler::dasm_symbols(chk.shared_symbols()));
                                     tools.assembler.use_shared_symbols(Arc::clone(&dasm_symbols));
                                     tools.disassembler.use_shared_symbols(Arc::clone(&dasm_symbols));
@@ -278,9 +278,9 @@ pub fn handle_request(
                                             lsp_server::Response::new_err(req.id,PARSE_ERROR,mess)
                                         }
                                     };
-                                } else {
+                                } _ => {
                                     resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,"cannot assemble due to missing checkpoint".to_string());
-                                }
+                                }}
                             }
                         }
                     },
@@ -323,7 +323,7 @@ pub fn handle_request(
                             resp = match (maybe_path,maybe_prog,maybe_uri) {
                                 (Ok(path),Ok(program),Ok(uri)) => {
                                     let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
-                                    if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                    match tools.doc_chkpts.get(&normalized_uri.to_string()) { Some(chk) => {
                                         tools.tokenizer.use_shared_symbols(chk.shared_symbols());
                                         match tools.tokenizer.tokenize(program) {
                                             Ok(dat) => match tools.disk.write(&path, &dat, a2kit::commands::ItemType::MerlinTokens) {
@@ -332,9 +332,9 @@ pub fn handle_request(
                                             },
                                             Err(e) => Response::new_err(req.id,PARSE_ERROR,e.to_string())
                                         }
-                                    } else {
+                                    } _ => {
                                         Response::new_err(req.id,PARSE_ERROR,"document symbols were not available".to_string())
-                                    }
+                                    }}
                                 }
                                 _ => Response::new_err(req.id,PARSE_ERROR,"parsing error during put".to_string())
                             };

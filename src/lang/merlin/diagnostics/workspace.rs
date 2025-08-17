@@ -1,6 +1,7 @@
 use std::collections::{HashSet,HashMap};
 use std::ffi::OsString;
 use std::path::PathBuf;
+use crate::lang;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
 use super::super::{SourceType,Symbol,Workspace};
@@ -10,10 +11,11 @@ use crate::{DYNERR,STDRESULT};
 const RCH: &str = "unreachable was reached";
 const MAX_DIRS: usize = 1000;
 const MAX_DEPTH: usize = 10;
-const IGNORE_DIRS: [&str;3] = [
+const IGNORE_DIRS: [&str;4] = [
     "build",
     "node_modules",
-    "target"
+    "target",
+    ".git"
 ];
 
 impl Workspace {
@@ -53,7 +55,7 @@ impl Workspace {
         ans
     }
     /// Get all masters of this URI
-	pub fn get_masters(&self, uri: &lsp::Url) -> HashSet<String> {
+	pub fn get_masters(&self, uri: &lsp::Uri) -> HashSet<String> {
         let mut ans = HashSet::new();
         if let Some(masters) = self.put_map.get(&uri.to_string()) {
             for master in masters {
@@ -93,7 +95,7 @@ impl Workspace {
 	/// Get the document URL that is the best match to the ProDOS path at the *next* cursor location.
     /// This may return an empty vector, or a vector with more than one match, where the latter
     /// means there were multiple equally good matches.
-	pub fn get_include_doc(&self, node: &tree_sitter::Node, source: &str) -> Vec<lsp::Url> {
+	pub fn get_include_doc(&self, node: &tree_sitter::Node, source: &str) -> Vec<lsp::Uri> {
         let mut ans = Vec::new();
         let mut best_quality = 0;
 		if let Some(file_node) = node.next_named_sibling() {
@@ -119,10 +121,12 @@ impl Workspace {
         }
 		ans
 	}
-    pub fn source_type(&self, uri: &lsp::Url, linker_threshold: f64) -> SourceType {
+    pub fn source_type(&self, uri: &lsp::Uri, linker_threshold: f64) -> SourceType {
         let key = uri.to_string();
-        if uri.scheme() == "macro" {
-            return SourceType::MacroRef;
+        if let Some(scheme) = uri.scheme() {
+            if scheme.as_str() == "macro" {
+                return SourceType::MacroRef;
+            }
         }
         if let Some(frac) = self.linker_frac.get(&uri.to_string()) {
             if *frac >= linker_threshold {
@@ -145,7 +149,7 @@ impl Workspace {
 pub struct WorkspaceScanner {
     parser: tree_sitter::Parser,
     line: String,
-    curr_uri: Option<lsp::Url>,
+    curr_uri: Option<lsp::Uri>,
     curr_row: isize,
     curr_depth: usize,
     file_count: usize,
@@ -202,6 +206,7 @@ impl WorkspaceScanner {
     }
     /// Recursively gather files from this directory
     fn gather_from_dir(&mut self, base: &PathBuf, max_files: usize) -> STDRESULT {
+        log::debug!("gather from {}",base.display());
         self.dir_count += 1;
         self.curr_depth += 1;
         let opt = glob::MatchOptions {
@@ -214,27 +219,33 @@ impl WorkspaceScanner {
         if let Some(globable) = patt.as_os_str().to_str() {
             if let Ok(paths) = glob::glob_with(globable,opt) {
                 for entry in paths {
-                    if let Ok(path) = &entry {
+                    match &entry { Ok(path) => {
                         let full_path = base.join(path);
-                        if let (Ok(uri),Ok(txt)) = (lsp::Url::from_file_path(full_path),std::fs::read_to_string(path.clone())) {
-                            log::trace!("{}",uri.as_str());
-                            self.ws.docs.push(Document::new(uri, txt));
+                        if let Some(path_str) = full_path.as_os_str().to_str() {
+                            if let (Ok(uri),Ok(txt)) = (lang::uri_from_path_str(path_str),std::fs::read_to_string(path.clone())) {
+                                log::trace!("{}",uri.as_str());
+                                self.ws.docs.push(Document::new(uri, txt));
+                            }
                         }
-                    }
+                    } Err(e) => log::warn!("glob error {}",e) }
                     self.file_count += 1;
                     if self.file_count >= max_files {
                         log::error!("aborting due to excessive source file count of {}",self.file_count);
                         return Err(Box::new(crate::lang::Error::OutOfRange));
                     }
                 }
+            } else {
+                log::warn!("directory {} could not be globbed",base.display());
             }
         } else {
-            log::warn!("directory {} could not be globbed",base.display());
+            log::warn!("directory {} has unknown encoding",base.display());
         }
         // now go into subdirectories
         if self.curr_depth < MAX_DEPTH {
+            log::trace!("depth is {}",self.curr_depth);
             for entry in std::fs::read_dir(base)? {
                 let entry = entry?;
+                log::trace!("check {} for descent",entry.file_name().as_os_str().to_string_lossy());
                 let ignore_dirs = IGNORE_DIRS.iter().map(|x| OsString::from(x)).collect::<Vec<OsString>>();
                 if ignore_dirs.contains(&entry.file_name()) {
                     continue;
@@ -250,7 +261,7 @@ impl WorkspaceScanner {
     }
     /// Buffer all documents matching `*.s` in any of `dirs`, up to maximum count `max_files`,
     /// searching at most MAX_DIRS directories, using at most MAX_DEPTH recursions, and ignoring IGNORE_DIRS.
-	pub fn gather_docs(&mut self, dirs: &Vec<lsp::Url>, max_files: usize) -> STDRESULT {
+	pub fn gather_docs(&mut self, dirs: &Vec<lsp::Uri>, max_files: usize) -> STDRESULT {
         self.ws.ws_folders = Vec::new();
         self.ws.docs = Vec::new();
         self.curr_depth = 0;
@@ -261,11 +272,8 @@ impl WorkspaceScanner {
             self.ws.ws_folders.push(dir.clone());
         }
         for dir in dirs {
-            log::debug!("scanning {}",dir.as_str());
-            let path = match dir.to_file_path() {
-                Ok(b) => b,
-                Err(_) => return Err(Box::new(crate::lang::Error::BadUrl))
-            };
+            let path = lang::pathbuf_from_uri(&dir)?;
+            log::debug!("scanning {}",path.as_os_str().to_string_lossy());
             self.gather_from_dir(&path,max_files)?;
 		}
         if self.dir_count >= MAX_DIRS {

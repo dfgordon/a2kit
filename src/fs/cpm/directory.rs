@@ -12,7 +12,7 @@ use super::types::*;
 use super::pack::*;
 use crate::bios::dpb::DiskParameterBlock;
 use std::collections::BTreeMap;
-use log::{error,debug,warn,trace};
+use crate::fs::Attributes;
 use crate::{STDRESULT,DYNERR};
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
@@ -206,14 +206,14 @@ impl Label {
             self.mode &= FILES_PROTECTED ^ u8::MAX;
         }
     }
-    pub fn timestamp_access(&mut self,yes: bool) {
-        if yes {
-            self.mode |= ACCESS;
-            self.mode &= CREATE ^ u8::MAX;
-        } else {
-            self.mode &= ACCESS ^ u8::MAX;
-        }
-    }
+    // pub fn timestamp_access(&mut self,yes: bool) {
+    //     if yes {
+    //         self.mode |= ACCESS;
+    //         self.mode &= CREATE ^ u8::MAX;
+    //     } else {
+    //         self.mode &= ACCESS ^ u8::MAX;
+    //     }
+    // }
     pub fn timestamp_update(&mut self,yes: bool) {
         if yes {
             self.mode |= UPDATE;
@@ -395,19 +395,54 @@ impl DirectoryEntry for Extent {
 }
 
 impl Password {
-    pub fn create(password: &str,user: u8,name_string: &str,read: bool,write: bool,delete: bool) -> Self {
+    /// Create a new password entry.
+    /// The action will be protected if the permission is Some(false).
+    pub fn create(password: &str,user: u8,name_string: &str,permissions: Attributes) -> Self {
         let (name,typ) = string_to_file_name(&name_string);
         let (decoder,encrypted) = string_to_password(password);
+        let mut mode = 0;
+        mode += match permissions.read {
+            Some(false) => PROTECT_READ,
+            _ => 0
+        };
+        mode += match permissions.write {
+            Some(false) => PROTECT_WRITE,
+            _ => 0
+        };
+        mode += match permissions.destroy {
+            Some(false) => PROTECT_DELETE,
+            _ => 0
+        };
         Self {
             user: user + 16,
             name,
             typ,
-            mode: (read as u8 * PROTECT_READ) | (write as u8 * PROTECT_WRITE) | (delete as u8 * PROTECT_DELETE),
+            mode,
             decoder,
             pad1: [0,0],
             password: encrypted,
             pad2: [0;8]
         }
+    }
+    /// Update an existing password-entry with new permissions and new password.
+    /// N.b. setting a permission false activates password protection.
+    pub fn merge(&mut self, password: &str, permissions: Attributes) {
+        let read = match permissions.read {
+            Some(setting) => !setting,
+            None => self.mode & PROTECT_READ > 0
+        };
+        let write = match permissions.write {
+            Some(setting) => !setting,
+            None => self.mode & PROTECT_WRITE > 0
+        };
+        let delete = match permissions.destroy {
+            Some(setting) => !setting,
+            None => self.mode & PROTECT_DELETE > 0
+        };
+        self.mode = (read as u8 * PROTECT_READ) | (write as u8 * PROTECT_WRITE) | (delete as u8 * PROTECT_DELETE);
+        let (decoder,encrypted) = string_to_password(password);
+        self.decoder = decoder;
+        self.password = encrypted;
     }
     pub fn get_string(&self) -> String {
         file_name_to_string(self.name, self.typ)
@@ -458,7 +493,7 @@ impl Timestamp {
                 info.access_time = None;
             }
         } else {
-            error!("timestamp entry not in expected slot");
+            log::error!("timestamp entry not in expected slot");
             return Err(Box::new(Error::BadFormat));
         }
         Ok(())
@@ -492,7 +527,7 @@ impl Timestamp {
             };
             dir.set_entry(&Ptr::ExtentEntry(expected_idx), &ts);
         } else {
-            error!("timestamp entry not in expected slot");
+            log::error!("timestamp entry not in expected slot");
             return Err(Box::new(Error::BadFormat));
         }
         Ok(())
@@ -539,7 +574,7 @@ impl DiskStruct for Directory {
         self.entries = Vec::new();
         let num_extents = bytes.len()/DIR_ENTRY_SIZE;
         if bytes.len()%DIR_ENTRY_SIZE!=0 {
-            warn!("directory buffer wrong size");
+            log::warn!("directory buffer wrong size");
         }
         for i in 0..num_extents {
             match bytes[i*DIR_ENTRY_SIZE..(i+1)*DIR_ENTRY_SIZE].try_into() {
@@ -569,7 +604,7 @@ impl Directory {
             Ptr::ExtentEntry(i) => (*i,self.entries[*i][0]),
             _ => panic!("wrong pointer type")
         };
-        trace!("entry {} has type {}",idx,xstat);
+        log::trace!("entry {} has type {}",idx,xstat);
         match xstat {
             x if x<USER_END => EntryType::FileExtent,
             x if x<USER_END*2 => EntryType::Password,
@@ -577,7 +612,7 @@ impl Directory {
             TIMESTAMP => EntryType::Timestamp,
             DELETED => EntryType::Deleted,
             x => {
-                debug!("unknown entry type {}",x);
+                log::debug!("unknown entry type {}",x);
                 EntryType::Unknown
             }
         }
@@ -634,7 +669,7 @@ impl Directory {
                 timestamp = Timestamp::create();
             }
             if self.entries[i][0]==TIMESTAMP {
-                error!("directory already has timestamps");
+                log::error!("directory already has timestamps");
                 return Err(Box::new(Error::BadFormat));
             }
             if self.entries[i][0]==LABEL {
@@ -653,7 +688,7 @@ impl Directory {
                         timestamp.update3 = lab.update_time;
                     },
                     _ => {
-                        error!("unexpected non-timestamp");
+                        log::error!("unexpected non-timestamp");
                         return Err(Box::new(Error::BadFormat));
                     }
                 };
@@ -677,20 +712,20 @@ impl Directory {
         Ok(ans)
     }
     /// Remove time stamping from this directory.
-    pub fn remove_timestamps(&mut self) {
-        for i in 0..self.num_entries() {
-            if let Some(mut label) = self.get_entry::<Label>(&Ptr::ExtentEntry(i)) {
-                label.timestamp_access(false);
-                label.timestamp_creation(false);
-                label.timestamp_update(false);
-                self.set_entry::<Label>(&Ptr::ExtentEntry(i),&label);
-            }
-            if let Some(mut timestamp) = self.get_entry::<Timestamp>(&Ptr::ExtentEntry(i)) {
-                timestamp.status = DELETED;
-                self.set_entry::<Timestamp>(&Ptr::ExtentEntry(i),&timestamp);
-            }
-        }
-    }
+    // pub fn remove_timestamps(&mut self) {
+    //     for i in 0..self.num_entries() {
+    //         if let Some(mut label) = self.get_entry::<Label>(&Ptr::ExtentEntry(i)) {
+    //             label.timestamp_access(false);
+    //             label.timestamp_creation(false);
+    //             label.timestamp_update(false);
+    //             self.set_entry::<Label>(&Ptr::ExtentEntry(i),&label);
+    //         }
+    //         if let Some(mut timestamp) = self.get_entry::<Timestamp>(&Ptr::ExtentEntry(i)) {
+    //             timestamp.status = DELETED;
+    //             self.set_entry::<Timestamp>(&Ptr::ExtentEntry(i),&timestamp);
+    //         }
+    //     }
+    // }
     /// Build an alphabetized map of user prefixed file names to file info.
     /// This is designed to work whether the disk is CP/M 1, 2, or 3.
     /// The `cpm_vers` sets the maximum version that is accepted.
@@ -702,11 +737,11 @@ impl Directory {
         for i in 0..self.num_entries() {
             let xtype = self.get_type(&Ptr::ExtentEntry(i));
             if xtype==EntryType::Unknown {
-                debug!("unknown entry type in entry {}",i);
+                log::debug!("unknown entry type in entry {}",i);
                 return Err(Box::new(Error::BadFormat));
             }
             if cpm_vers[0]<3 && (xtype==EntryType::Label || xtype==EntryType::Timestamp || xtype==EntryType::Password) {
-                debug!("rejecting CP/M v3 entry type at {}",i);
+                log::debug!("rejecting CP/M v3 entry type at {}",i);
                 return Err(Box::new(Error::BadFormat));
             }
 
@@ -716,17 +751,17 @@ impl Directory {
                 let (name,typ) = fx.get_split_string();
                 let flags = fx.get_flags();
                 if flags[4]>0x7f || flags[5]>0x7f || flags[6]>0x7f || flags[7]>0x7f {
-                    debug!("unexpected high bits in file name");
+                    log::debug!("unexpected high bits in file name");
                     return Err(Box::new(Error::BadFormat));
                 }
                 if !is_name_valid(&fx.get_string()) {
                     bad_names += 1;
                 }
                 if bad_names > 2 {
-                    debug!("after {} bad file names rejecting disk",bad_names);
+                    log::debug!("after {} bad file names rejecting disk",bad_names);
                     return Err(Box::new(Error::BadFormat));
                 }
-                trace!("found file {}:{}",fx.user,fx.get_string_escaped());
+                log::trace!("found file {}:{}",fx.user,fx.get_string_escaped());
 
                 let finfo = match ans.get_mut(&key) {
                     Some(f) => f,
@@ -783,7 +818,7 @@ impl Directory {
                         finfo.encrypted_password = px.password;
                     },
                     None => {
-                        warn!("detached password for `{}`",key);
+                        log::warn!("detached password for `{}`",key);
                     }
                 }
             }

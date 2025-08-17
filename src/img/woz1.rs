@@ -364,7 +364,7 @@ impl Woz1 {
             self.tmap_pos = tmap_idx;
             let idx = self.try_motor(tmap_idx)?;
             let bit_count = u16::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-            let mut new_cells = FluxCells::from_woz_bits(bit_count, &self.trks.tracks[idx].bits);
+            let mut new_cells = FluxCells::from_woz_bits(bit_count, &self.trks.tracks[idx].bits,0,false);
             if let Some(cells) = &self.cells {
                 new_cells.sync_to_other_track(cells);
             }

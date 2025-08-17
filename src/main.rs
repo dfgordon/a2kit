@@ -107,29 +107,14 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
         return commands::modify::mkdir(cmd);
     }
 
-    // Update password for a file
-    if let Some(cmd) = matches.subcommand_matches("protect") {
-        return commands::modify::protect(cmd);
-    }
-
-    // Remove password from a file
-    if let Some(cmd) = matches.subcommand_matches("unprotect") {
-        return commands::modify::unprotect(cmd);
+    // Change permissions for a file
+    if let Some(cmd) = matches.subcommand_matches("access") {
+        return commands::modify::access(cmd);
     }
     
     // Delete a file or directory
     if let Some(cmd) = matches.subcommand_matches("delete") {
         return commands::modify::delete(cmd);
-    }
-
-    // Lock a file or directory
-    if let Some(cmd) = matches.subcommand_matches("lock") {
-        return commands::modify::lock(cmd);
-    }
-
-    // Unlock a file or directory
-    if let Some(cmd) = matches.subcommand_matches("unlock") {
-        return commands::modify::unlock(cmd);
     }
 
     // Rename a file or directory

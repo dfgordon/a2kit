@@ -194,16 +194,17 @@ impl img::DiskImage for Img {
         for i in 0..self.sectors {
             addr_map.push([cylinder.try_into()?,head.try_into()?,i.try_into()?,super::highest_bit(self.sec_size >> 8)]);
         }
-        let flux_code = match self.kind {
-            img::DiskKind::D35(l) => l.flux_code[0],
-            img::DiskKind::D525(l) => l.flux_code[0],
-            img::DiskKind::D8(l) => l.flux_code[0],
-            _ => img::FluxCode::None
+        let (flux_code,speed_kbps) = match self.kind {
+            img::DiskKind::D35(l) => (l.flux_code[0],l.speed_kbps[0]),
+            img::DiskKind::D525(l) => (l.flux_code[0],l.speed_kbps[0]),
+            img::DiskKind::D8(l) => (l.flux_code[0],l.speed_kbps[0]),
+            _ => (img::FluxCode::None,0)
         };
         return Ok(Some(img::TrackSolution {
             cylinder,
             fraction: [0,1],
             head,
+            speed_kbps,
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,

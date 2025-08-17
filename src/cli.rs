@@ -283,36 +283,24 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .about("delete a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
-        Command::new("protect")
-            .arg(file_arg("path inside disk image to protect",true,false))
+        Command::new("access")
+            .arg(file_arg("path inside disk image where permissions will apply",true,false))
             .arg(dimg_arg(true))
-            .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("password to assign").required(true))
-            .arg(Arg::new("read").help("protect read").action(ArgAction::SetTrue))
-            .arg(Arg::new("write").help("protect write").action(ArgAction::SetTrue))
-            .arg(Arg::new("delete").help("protect delete").action(ArgAction::SetTrue))
+            .arg(Arg::new("password").long("password").short('p').value_name("PASSWORD").help("password to assign").required(false))
+            .arg(Arg::new("read").long("read").help("allow read").action(ArgAction::SetTrue))
+            .arg(Arg::new("write").long("write").help("allow write").action(ArgAction::SetTrue))
+            .arg(Arg::new("delete").long("delete").help("allow delete").action(ArgAction::SetTrue))
+            .arg(Arg::new("rename").long("rename").help("allow rename").action(ArgAction::SetTrue))
+            .arg(Arg::new("no-read").long("no-read").help("protect read").action(ArgAction::SetTrue))
+            .arg(Arg::new("no-write").long("no-write").help("protect write").action(ArgAction::SetTrue))
+            .arg(Arg::new("no-delete").long("no-delete").help("protect delete").action(ArgAction::SetTrue))
+            .arg(Arg::new("no-rename").long("no-rename").help("protect rename").action(ArgAction::SetTrue))
+            .group(ArgGroup::new("reading").args(["read","no-read"]).required(false))
+            .group(ArgGroup::new("writing").args(["write","no-write"]).required(false))
+            .group(ArgGroup::new("deleting").args(["delete","no-delete"]).required(false))
+            .group(ArgGroup::new("renaming").args(["rename","no-rename"]).required(false))
             .arg(pro_arg())
-            .about("password protect a disk or file"),
-    );
-    main_cmd = main_cmd.subcommand(
-        Command::new("unprotect")
-            .arg(file_arg("path inside disk image to unprotect",true,false))
-            .arg(dimg_arg(true))
-            .arg(pro_arg())
-            .about("remove password protection from a disk or file"),
-    );
-    main_cmd = main_cmd.subcommand(
-        Command::new("lock")
-            .arg(file_arg("path inside disk image to lock",true,false))
-            .arg(dimg_arg(true))
-            .arg(pro_arg())
-            .about("write protect a file or directory inside a disk image"),
-    );
-    main_cmd = main_cmd.subcommand(
-        Command::new("unlock")
-            .arg(file_arg("path inside disk image to unlock",true,false))
-            .arg(dimg_arg(true))
-            .arg(pro_arg())
-            .about("remove write protection from a file or directory inside a disk image"),
+            .about("change file system permissions"),
     );
     main_cmd = main_cmd.subcommand(
         Command::new("rename")

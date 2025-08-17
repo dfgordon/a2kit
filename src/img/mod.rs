@@ -136,14 +136,6 @@ pub enum FieldCode {
 }
 
 #[derive(PartialEq,Eq,Clone,Copy)]
-pub enum DataRate {
-    R250Kbps,
-    R300Kbps,
-    R500Kbps,
-    R1000Kbps
-}
-
-#[derive(PartialEq,Eq,Clone,Copy)]
 pub struct BlockLayout {
     block_size: usize,
     block_count: usize
@@ -161,6 +153,8 @@ pub struct TrackSolution {
     addr_code: FieldCode,
     data_code: FieldCode,
     addr_type: String,
+    /// nominal rate of pulses during a run of high bits, n.b. this is not the same as the data rate, e.g. for FM clock pulses are counted
+    speed_kbps: usize,
     addr_map: Vec<[u8;4]>,
     size_map: Vec<usize>
 }
@@ -179,7 +173,7 @@ pub struct TrackLayout {
     flux_code: [FluxCode;5],
     addr_code: [FieldCode;5],
     data_code: [FieldCode;5],
-    data_rate: [DataRate;5]
+    speed_kbps: [usize;5]
 }
 
 /// This enumeration is often used in a match arm to take different
@@ -596,6 +590,7 @@ fn geometry_json(pkg: String,track_sols: Vec<TrackSolution>,indent: Option<u16>)
             FieldCode::None => json::JsonValue::Null,
             n => json::JsonValue::String(n.to_string())
         };
+        trk_obj["speed_kbps"] = json::JsonValue::Number(sol.speed_kbps.into());
         trk_obj["addr_map"] = json::JsonValue::new_array();
         for addr in sol.addr_map {
             trk_obj["addr_map"].push(json::JsonValue::String(hex::encode_upper(&addr[0..sol.addr_type.len()])))?;

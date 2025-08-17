@@ -1,5 +1,6 @@
 use lsp_types as lsp;
 use std::sync::Arc;
+use std::str::FromStr;
 use super::settings::Settings;
 use super::Symbols;
 
@@ -12,7 +13,7 @@ mod hovers_addresses;
 
 pub struct HoverProvider {
     config: Settings,
-    ws_folder: Vec<lsp::Url>,
+    ws_folder: Vec<lsp::Uri>,
     parser: super::MerlinParser,
     markup: lsp::MarkupContent,
     pos: lsp::Position,
@@ -53,7 +54,7 @@ impl HoverProvider {
     pub fn use_shared_symbols(&mut self,sym: Arc<Symbols>) {
         self.symbols = sym;
     }
-    pub fn set_workspace_folder(&mut self,uri: Vec<lsp::Url>) {
+    pub fn set_workspace_folder(&mut self,uri: Vec<lsp::Uri>) {
         self.ws_folder = uri;
     }
 }
@@ -149,7 +150,7 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
 				return Ok(Navigation::Exit);
 			}
 			if curs.node().kind() == "macro_ref" {
-                let url = lsp::Url::parse(&self.symbols.display_doc_uri)?;
+                let url = lsp::Uri::from_str(&self.symbols.display_doc_uri)?;
                 let loc = lsp::Location::new(url,self.rng);
                 let local_symbols = Arc::make_mut(&mut self.symbols);
                 local_symbols.localize_all_variables(&loc);
@@ -223,7 +224,7 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                                 }
                             }
                         }
-                        if let Some(sym) = self.symbols.globals.get(&txt) {
+                        match self.symbols.globals.get(&txt) { Some(sym) => {
                             if sym.flags & super::symbol_flags::EXT > 0 {
                                 if sym.defining_code.is_some() {
                                     if let Some(hinted_code) = &sym.defining_code {
@@ -240,9 +241,9 @@ add `>` to right justify in 5 column field, e.g. `#'>`";
                             } else {
                                 new_section(&mut self.markup.value,"global defined right here");
                             }
-                        } else {
+                        } _ => {
                             self.markup.value += "symbol information missing";
-                        }
+                        }}
                     }
                 }
 				return Ok(Navigation::Exit);

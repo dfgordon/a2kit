@@ -7,10 +7,10 @@
 //! a disk.  It should not be confused with a file system.  For example,
 //! the DOS33 kind could (and did) contain ProDOS, CP/M, or Pascal.
 
-use super::{DiskKind,TrackLayout,BlockLayout,FieldCode,FluxCode,DataRate};
+use super::{DiskKind,TrackLayout,BlockLayout,FieldCode,FluxCode};
 
 macro_rules! uni {
-    ($x:expr) => {
+    ($x:expr_2021) => {
         [$x,0,0,0,0]
     };
 }
@@ -23,7 +23,7 @@ pub const A2_DOS32: TrackLayout = TrackLayout {
     flux_code: [FluxCode::GCR;5],
     addr_code: [FieldCode::WOZ((4,4));5],
     data_code: [FieldCode::WOZ((5,3));5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const A2_DOS33: TrackLayout = TrackLayout {
@@ -34,7 +34,7 @@ pub const A2_DOS33: TrackLayout = TrackLayout {
     flux_code: [FluxCode::GCR;5],
     addr_code: [FieldCode::WOZ((4,4));5],
     data_code: [FieldCode::WOZ((6,2));5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const A2_400: TrackLayout = TrackLayout {
@@ -45,7 +45,7 @@ pub const A2_400: TrackLayout = TrackLayout {
     flux_code: [FluxCode::GCR;5],
     addr_code: [FieldCode::WOZ((6,2));5],
     data_code: [FieldCode::WOZ((6,2));5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const A2_800: TrackLayout = TrackLayout {
@@ -56,7 +56,7 @@ pub const A2_800: TrackLayout = TrackLayout {
     flux_code: [FluxCode::GCR;5],
     addr_code: [FieldCode::WOZ((6,2));5],
     data_code: [FieldCode::WOZ((6,2));5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const CPM_1: TrackLayout = TrackLayout {
@@ -67,7 +67,7 @@ pub const CPM_1: TrackLayout = TrackLayout {
     flux_code: [FluxCode::FM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const DSDD_77: TrackLayout = TrackLayout {
@@ -78,7 +78,7 @@ pub const DSDD_77: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const AMSTRAD_SS: TrackLayout = TrackLayout {
@@ -89,7 +89,7 @@ pub const AMSTRAD_SS: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const OSBORNE1_SD: TrackLayout = TrackLayout {
@@ -100,7 +100,7 @@ pub const OSBORNE1_SD: TrackLayout = TrackLayout {
     flux_code: [FluxCode::FM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const OSBORNE1_DD: TrackLayout = TrackLayout {
@@ -111,7 +111,7 @@ pub const OSBORNE1_DD: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const TRS80_M2_CPM: TrackLayout = TrackLayout {
@@ -122,7 +122,7 @@ pub const TRS80_M2_CPM: TrackLayout = TrackLayout {
     flux_code: [FluxCode::FM,FluxCode::MFM,FluxCode::None,FluxCode::None,FluxCode::None],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const NABU_CPM: TrackLayout = TrackLayout {
@@ -133,7 +133,7 @@ pub const NABU_CPM: TrackLayout = TrackLayout {
     flux_code: [FluxCode::FM,FluxCode::MFM,FluxCode::None,FluxCode::None,FluxCode::None],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const KAYPROII: TrackLayout = TrackLayout {
@@ -144,7 +144,7 @@ pub const KAYPROII: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const KAYPRO4: TrackLayout = TrackLayout {
@@ -155,7 +155,7 @@ pub const KAYPRO4: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 // data rates are from ImageDisk by Dave Dunfield, except 2.88 where we are guessing
@@ -168,7 +168,7 @@ pub const IBM_SSDD_8: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_DSDD_8: TrackLayout = TrackLayout {
@@ -179,7 +179,7 @@ pub const IBM_DSDD_8: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_SSDD_9: TrackLayout = TrackLayout {
@@ -190,7 +190,7 @@ pub const IBM_SSDD_9: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_DSDD_9: TrackLayout = TrackLayout {
@@ -201,7 +201,7 @@ pub const IBM_DSDD_9: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_SSQD: TrackLayout = TrackLayout {
@@ -212,7 +212,7 @@ pub const IBM_SSQD: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_DSQD: TrackLayout = TrackLayout {
@@ -223,7 +223,7 @@ pub const IBM_DSQD: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_DSHD: TrackLayout = TrackLayout {
@@ -234,7 +234,7 @@ pub const IBM_DSHD: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const IBM_720: TrackLayout = TrackLayout {
@@ -245,7 +245,7 @@ pub const IBM_720: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R250Kbps;5]
+    speed_kbps: [250;5]
 };
 
 pub const IBM_1440: TrackLayout = TrackLayout {
@@ -256,7 +256,7 @@ pub const IBM_1440: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const IBM_1680: TrackLayout = TrackLayout {
@@ -267,7 +267,7 @@ pub const IBM_1680: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const IBM_1720: TrackLayout = TrackLayout {
@@ -278,7 +278,7 @@ pub const IBM_1720: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R500Kbps;5]
+    speed_kbps: [500;5]
 };
 
 pub const IBM_2880: TrackLayout = TrackLayout {
@@ -289,7 +289,7 @@ pub const IBM_2880: TrackLayout = TrackLayout {
     flux_code: [FluxCode::MFM;5],
     addr_code: [FieldCode::None;5],
     data_code: [FieldCode::None;5],
-    data_rate: [DataRate::R1000Kbps;5]
+    speed_kbps: [1000;5]
 };
 
 // This kind might contain DOS 3.0, 3.1, or 3.2.

@@ -118,7 +118,7 @@ pub trait Checkpoint {
             let pos = params.text_document_position.position;
             let sel_loc = lsp::Location::new(uri.clone(),lsp::Range::new(pos,pos));
             if let Some(chkpt) = chkpts.get(&uri.to_string()) {
-                let mut changes: HashMap<lsp::Url,Vec<lsp::TextEdit>> = HashMap::new();
+                let mut changes: HashMap<lsp::Uri,Vec<lsp::TextEdit>> = HashMap::new();
                 let locs = chkpt.get_renamables(&sel_loc);
                 for loc in locs {
                     let new_edit = lsp::TextEdit::new(loc.range, params.new_name.clone());
@@ -187,7 +187,7 @@ pub trait Checkpoint {
     }
     fn sem_tok_response<TOK: Tokens>(chkpts: HashMap<String,Arc<&Self>>, tok: &mut TOK, req: lsp_server::Request, resp: &mut lsp_server::Response) {
         if let Ok(params) = serde_json::from_value::<lsp::SemanticTokensParams>(req.params) {
-            let uri: lsp::Url =super::normalize_client_uri(params.text_document.uri);
+            let uri: lsp::Uri =super::normalize_client_uri(params.text_document.uri);
             if let Some(chkpt) = chkpts.get(&uri.to_string()) {
                 let doc = chkpt.get_doc();
                 if let Ok(tok) = tok.get(&doc.text) {
@@ -209,7 +209,7 @@ pub trait Analysis {
     /// Analyze source directories and volatile documents that define the workspace.
     /// This should gather workspace level symbols and define any relationships
     /// that may exist between files.
-    fn init_workspace(&mut self,_source_dirs: Vec<lsp::Url>,_volatile_docs: Vec<super::Document>) -> STDRESULT {
+    fn init_workspace(&mut self,_source_dirs: Vec<lsp::Uri>,_volatile_docs: Vec<super::Document>) -> STDRESULT {
         Ok(())
     }
     /// Analyze a master document to produce diagnostic and symbol information.
@@ -355,43 +355,44 @@ pub fn basic_diag(range: lsp::Range,mess: &str,severity: lsp::DiagnosticSeverity
 
 /// Get a path relative to the workspace path for display purposes.
 /// Only checks the first workspace folder.
-/// If there is any failure we keep the full path.
-pub fn path_in_workspace(full: &lsp::Url, ws_folder: &Vec<lsp::Url>) -> String {
+/// If there is any failure we keep the whole URI string.
+pub fn path_in_workspace(full: &lsp::Uri, ws_folder: &Vec<lsp::Uri>) -> String {
     if ws_folder.len() == 0 {
         return full.to_string();
     }
-    let maybe_full = full.to_file_path();
-    let maybe_ws = ws_folder[0].to_file_path();
-    match (maybe_full,maybe_ws) {
-        (Ok(full_path),Ok(ws_path)) => {
-            let e_full_canon = full_path.canonicalize();
-            let e_ws_canon = ws_path.canonicalize();
-            match (e_full_canon,e_ws_canon) {
-                (Ok(full_canon),Ok(ws_canon)) => {
-                    let mut full_iter = full_canon.iter();
-                    let mut ws_iter = ws_canon.iter();
-                    while let Some(ws_node) = ws_iter.next() {
-                        if let Some(node) = full_iter.next() {
-                            if node != ws_node {
-                                return full.to_string();
-                            }
-                        } else {
-                            return full.to_string();
-                        }
-                    }
-                    let mut ans = String::new();
-                    while let Some(node) = full_iter.next() {
-                        ans += &node.to_string_lossy();
-                        ans += "/";
-                    }
-                    if ans.len() < 2 {
+    let full_path = match super::pathbuf_from_uri(full) {
+        Ok(ans) => ans,
+        Err(_) => return full.to_string()
+    };
+    let ws_path = match super::pathbuf_from_uri(&ws_folder[0]) {
+        Ok(ans) => ans,
+        Err(_) => return full.to_string()
+    };
+    let e_full_canon = full_path.canonicalize();
+    let e_ws_canon = ws_path.canonicalize();
+    match (e_full_canon,e_ws_canon) {
+        (Ok(full_canon),Ok(ws_canon)) => {
+            let mut full_iter = full_canon.iter();
+            let mut ws_iter = ws_canon.iter();
+            while let Some(ws_node) = ws_iter.next() {
+                if let Some(node) = full_iter.next() {
+                    if node != ws_node {
                         return full.to_string();
                     }
-                    ans.pop();
-                    ans
-                },
-                _ => full.to_string()
+                } else {
+                    return full.to_string();
+                }
             }
+            let mut ans = String::new();
+            while let Some(node) = full_iter.next() {
+                ans += &node.to_string_lossy();
+                ans += "/";
+            }
+            if ans.len() < 2 {
+                return full.to_string();
+            }
+            ans.pop();
+            ans
         },
         _ => full.to_string()
     }

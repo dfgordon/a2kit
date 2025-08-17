@@ -36,18 +36,22 @@ fn node_path(node: &Node, source: &str) -> Vec<String> {
 /// Higher values mean there were additional matches, such as parent directories.
 fn match_prodos_path(node: &Node, source: &str, doc: &Document) -> usize {
     let mut quality = 0;
-    if !doc.uri.cannot_be_a_base() {
-        let mut doc_segs = std::path::Path::new(doc.uri.path()).iter().rev();
-        for node_seg in node_path(node,source).iter().rev() {
-            if let Some(doc_seg) = doc_segs.next() {
-                if let Some(s) = doc_seg.to_str() {
-                    if s.to_lowercase() == node_seg.to_lowercase() {
-                        quality += 1;
-                    } else {
-                        break;
+    if let Some(scheme) = doc.uri.scheme() {
+        if scheme.as_str() == "file" {
+            match crate::lang::pathbuf_from_uri(&doc.uri) { Ok(path) => {
+                let mut doc_segs = path.iter().rev();
+                for node_seg in node_path(node,source).iter().rev() {
+                    if let Some(doc_seg) = doc_segs.next() {
+                        if let Some(s) = doc_seg.to_str() {
+                            if s.to_lowercase() == node_seg.to_lowercase() {
+                                quality += 1;
+                            } else {
+                                break;
+                            }
+                        }
                     }
                 }
-            }
+            } Err(e) => log::trace!("{} while parsing {}",e,doc.uri.as_str()) }
         }
     }
     quality
@@ -144,7 +148,7 @@ pub struct Analyzer {
     parser: super::MerlinParser,
     ctx: Context,
     scanner: WorkspaceScanner,
-    workspace_folders: Vec<lsp_types::Url>,
+    workspace_folders: Vec<lsp_types::Uri>,
     asm: asm::Asm,
     pass: usize,
     /// Map from document uri to its diagnostics.
@@ -344,7 +348,7 @@ impl Navigate for Analyzer {
 }
 
 impl Analysis for Analyzer {
-    fn init_workspace(&mut self,source_dirs: Vec<lsp_types::Url>,volatile_docs: Vec<Document>) -> STDRESULT {
+    fn init_workspace(&mut self,source_dirs: Vec<lsp_types::Uri>,volatile_docs: Vec<Document>) -> STDRESULT {
         self.workspace_folders = source_dirs;
         self.scanner.gather_docs(&self.workspace_folders, 1000)?;
         self.scanner.append_volatile_docs(volatile_docs);

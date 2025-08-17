@@ -15,6 +15,12 @@
 //! * The LSS cycle is 4 ticks
 //! * Apple 2/2+/2e/2c processor cycle is 8 ticks
 //! 
+//! ## Using with 3.5 inch disks
+//! 
+//! The state machine runs twice as fast when used with 3.5 inch disks. Since the implementation
+//! only references abstract tick counts, it can be used without change if the 3.5 inch disk
+//! `FluxCells` are counting ticks every 62500 ps.
+//! 
 //! The LSS will use 32/4 = 8 LSS-cycles to liberate 1 bit.
 //! It takes a minimum of 64 LSS-cycles to liberate 1 byte.
 //! The LSS cannot resolve the fastest timescale possible in a WOZ image.
@@ -112,8 +118,8 @@ pub struct State {
     write_protect: bool,
     /// pointer into the circular fake bit buffer
     fake_bit_ptr: usize,
-    /// ticks when last pulse was emitted, used to emit fake bits
-    last_pulse: usize,
+    /// absolute ticks when last pulse was emitted, used to emit fake bits
+    last_pulse: u64,
     /// circular buffer of fake bits
     fake_bit_pool: bit_vec::BitVec
 }
@@ -139,9 +145,9 @@ impl State {
             let flux_ptr = cells.ptr >> cells.fshift;
             let mut new_pulse = cells.stream.get(flux_ptr).unwrap();
             if new_pulse {
-                self.last_pulse = cells.ptr;
+                self.last_pulse = cells.time;
             }
-            if cells.since(self.last_pulse) > 96 {
+            if cells.ticks_since(self.last_pulse) > 96 {
                 self.fake_bit_ptr = (self.fake_bit_ptr + 1) & 0xff;
                 new_pulse = self.fake_bit_pool[self.fake_bit_ptr];
             }

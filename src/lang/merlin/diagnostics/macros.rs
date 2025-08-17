@@ -130,7 +130,7 @@ fn evaluate_conditionals(txt: &str, symbols: &mut Symbols, scope: &Symbol) -> Re
     let mut asm = vec![true]; // assume assembly is on (otherwise why expand?)
     for line in txt.lines() {
         let terminated = line.to_string() + "\n";
-        if let Some(tree) = parser.parse(terminated.clone(),None) {
+        match parser.parse(terminated.clone(),None) { Some(tree) => {
             let mut show_it = true;
             let root = tree.root_node();
             let mut curs = root.walk();
@@ -182,11 +182,11 @@ fn evaluate_conditionals(txt: &str, symbols: &mut Symbols, scope: &Symbol) -> Re
                 ans += &line;
                 ans += "\n";    
             }
-        } else {
+        } _ => {
             // if line couldn't be parsed just copy it
             ans += &line;
             ans += "\n";    
-        }
+        }}
     }
     Ok(ans)
 }
@@ -224,11 +224,11 @@ pub fn expand_macro(node: &tree_sitter::Node, call_source: &str, symbols: &Symbo
             let mut symbols_clone = symbols.clone();
             let mut mac = sym.clone();
             mac.unset_children(); // until we are fully expanding assume these are unknown
-            if let Ok(reduced) = evaluate_conditionals(&expanded, &mut symbols_clone, &mac) {
+            match evaluate_conditionals(&expanded, &mut symbols_clone, &mac) { Ok(reduced) => {
                 return Some(reduced);
-            } else {
+            } _ => {
                 return Some(expanded);
-            }
+            }}
         }
     }
     log::debug!("expand: symbol not found");

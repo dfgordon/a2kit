@@ -173,6 +173,73 @@ pub trait TextConversion {
     }
 }
 
+/// structure to aid in setting one or more flags without disturbing the others
+pub struct Attributes {
+    pub read: Option<bool>,
+    pub write: Option<bool>,
+    pub execute: Option<bool>,
+    pub create: Option<bool>,
+    pub rename: Option<bool>,
+    pub destroy: Option<bool>,
+    pub backup: Option<bool>,
+    pub hidden: Option<bool>,
+    pub system: Option<bool>,
+    pub vol: Option<bool>,
+    pub dir: Option<bool>
+}
+
+impl Attributes {
+    /// Create attributes that will leave existing attributes unchanged.
+    /// Can be followed by modifiers, e.g., `Attributes::new().write(true).execute(false)`.
+    pub fn new() -> Self {
+        Self {
+            read: None,
+            write: None,
+            execute: None,
+            create: None,
+            rename: None,
+            destroy: None,
+            backup: None,
+            hidden: None,
+            system: None,
+            vol: None,
+            dir: None
+        }
+    }
+    fn vol(mut self,setting: bool) -> Self {
+        self.vol = Some(setting);
+        self
+    }
+    fn backup(mut self,setting: bool) -> Self {
+        self.backup = Some(setting);
+        self
+    }
+    fn hidden(mut self,setting: bool) -> Self {
+        self.hidden = Some(setting);
+        self
+    }
+    fn system(mut self,setting: bool) -> Self {
+        self.system = Some(setting);
+        self
+    }
+    pub fn read(mut self,setting: bool) -> Self {
+        self.read = Some(setting);
+        self
+    }
+    pub fn write(mut self,setting: bool) -> Self {
+        self.write = Some(setting);
+        self
+    }
+    pub fn destroy(mut self,setting: bool) -> Self {
+        self.destroy = Some(setting);
+        self
+    }
+    pub fn rename(mut self,setting: bool) -> Self {
+        self.rename = Some(setting);
+        self
+    }
+}
+
 /// This is an abstraction of a file that must work for any supported file system.
 /// In particular, it needs to capture all possible attibutes of a file, such
 /// as sparse structure and metadata.  Metadata items are represented by a Vec<u8>
@@ -327,15 +394,8 @@ pub trait DiskFS {
     fn delete(&mut self,path: &str) -> STDRESULT;
     /// Rename a file or directory
     fn rename(&mut self,path: &str,name: &str) -> STDRESULT;
-    /// Change password protection for a file or disk.
-    /// N.b. protection will only work in an emulation environment, and should not be considered secure.
-    fn protect(&mut self,path: &str,password: &str,read: bool,write: bool,delete: bool) -> STDRESULT;
-    /// Remove password protection for a file or disk.
-    fn unprotect(&mut self,path: &str) -> STDRESULT;
-    /// write protect a file
-    fn lock(&mut self,path: &str) -> STDRESULT;
-    // remove write protection from a file
-    fn unlock(&mut self,path: &str) -> STDRESULT;
+    /// Set permissions or other attributes for the given path, flags that are not `Some` will be left as they are
+    fn set_attrib(&mut self,path: &str,attrib: Attributes,password: Option<&str>) -> STDRESULT;
     /// Change the type and subtype of a file, strings may contain numbers as appropriate.
     fn retype(&mut self,path: &str,new_type: &str,sub_type: &str) -> STDRESULT;
     /// Get file image from the `path` within this disk image.
@@ -416,11 +476,11 @@ impl Stat {
         ans["block_beg"] = json::JsonValue::Number(self.block_beg.into());
         ans["block_end"] = json::JsonValue::Number(self.block_end.into());
         ans["free_blocks"] = json::JsonValue::Number(self.free_blocks.into());
-        if let Ok(obj) = json::parse(&self.raw) {
+        match json::parse(&self.raw) { Ok(obj) => {
             ans["raw"] = obj;
-        } else {
+        } _ => {
             ans["raw"] = json::JsonValue::Null;
-        }
+        }}
         if let Some(spaces) = indent {
             return json::stringify_pretty(ans, spaces);
         } else {

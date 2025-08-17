@@ -90,6 +90,8 @@ pub struct FluxCells {
     stream: BitVec,
     /// current location in the flux stream in units of ticks
     ptr: usize,
+    /// emulated time in ticks, origin of time is up to caller
+    time: u64,
     /// one revolution in units of ticks
     revolution: usize,
     /// defines a tick, fixing the basis of time in picoseconds
@@ -105,43 +107,47 @@ pub struct FluxCells {
 }
 
 impl FluxCells {
-    /// Create a NIB or WOZ bitstream with 4 microsecond bit cells
-    fn new_woz_bits(ptr: usize,stream: BitVec) -> Self {
+    /// Create a NIB or WOZ bitstream with 4 or 2 microsecond bit cells
+    fn new_woz_bits(ptr: usize,stream: BitVec,time: u64,double_speed: bool) -> Self {
+        let shft = double_speed as usize;
         let revolution = stream.len() << 5;
         Self {
             stream,
             ptr,
+            time,
             revolution,
-            tick_ps: 125000,
+            tick_ps: 125000 >> shft,
             fshift: 5,
-            fmask: 32 - 1,
+            fmask: (1 << 5) - 1,
             bshift: 5,
-            bmask: 32 - 1,
+            bmask: (1 << 5) - 1,
         }
     }
-    /// Create a WOZ fluxstream with 500 ns flux cells
-    fn new_woz_flux(ptr: usize,stream: BitVec) -> Self {
+    /// Create a WOZ fluxstream with 500 or 250 nanosecond flux cells
+    fn new_woz_flux(ptr: usize,stream: BitVec,time: u64,double_speed: bool) -> Self {
+        let shft = double_speed as usize;
         let revolution = stream.len() << 2;
         Self {
             stream,
             ptr,
+            time,
             revolution,
-            tick_ps: 125000,
+            tick_ps: 125000 >> shft,
             fshift: 2,
-            fmask: 4 - 1,
+            fmask: (1 << 2) - 1,
             bshift: 5,
-            bmask: 32 - 1,
+            bmask: (1 << 5) - 1,
         }
     }
     /// Create cells from a track buffer in the form of a nibble stream or bit stream, assuming 4 microsecond bit cells
-    pub fn from_woz_bits(bit_count: usize,buf: &[u8]) -> Self {
+    pub fn from_woz_bits(bit_count: usize,buf: &[u8],time: u64,double_speed: bool) -> Self {
         let mut stream = BitVec::from_bytes(buf);
         stream.truncate(bit_count);
-        Self::new_woz_bits(0,stream)
+        Self::new_woz_bits(0,stream,time,double_speed)
     }
     /// Create cells from a WOZ flux track buffer, the flux cells will
     /// be set to 500 ns.  Any padding in `buf` is ignored.
-    pub fn from_woz_flux(byte_count: usize,buf: &[u8]) -> Self {
+    pub fn from_woz_flux(byte_count: usize,buf: &[u8],time: u64,double_speed: bool) -> Self {
         let mut stream = BitVec::new();
         let mut write = |carryover0: &mut usize, carryover1: &mut usize| {
             let ticks = *carryover0 + *carryover1;
@@ -161,7 +167,7 @@ impl FluxCells {
             }
         }
         write(&mut carryover0,&mut carryover1);
-        Self::new_woz_flux(0,stream)
+        Self::new_woz_flux(0,stream,time,double_speed )
     }
     /// Change the resolution of the cells. Mainly useful for converting between bitstream tracks and flux tracks.
     /// N.b. if resolution is being reduced information will be lost, in general.
@@ -265,19 +271,23 @@ impl FluxCells {
     pub fn set_ptr(&mut self,ticks: usize) {
         self.ptr = ticks;
     }
+    /// advance on the track by `ticks` and update the elapsed time
     pub fn fwd(&mut self,ticks: usize) {
         self.ptr = (self.ptr + ticks) % self.revolution;
+        self.time += ticks as u64;
     }
+    /// go back on the track by `ticks`, this will also reverse the elapsed time
     pub fn rev(&mut self,ticks: usize) {
-        self.ptr = (self.ptr + self.revolution - ticks) % self.revolution
+        self.ptr = (self.ptr + self.revolution - ticks) % self.revolution;
+        self.time -= ticks as u64;
     }
-    /// ticks since the reference tick, accounting for single wrap around
-    pub fn since(&self,ref_tick: usize) -> usize {
-        if self.ptr >= ref_tick {
-            self.ptr - ref_tick
-        } else {
-            self.ptr + self.revolution - ref_tick
-        }
+    /// ticks since the reference tick
+    pub fn ticks_since(&self,ref_tick: u64) -> u64 {
+        self.time - ref_tick
+    }
+    /// picoseconds since the reference tick
+    pub fn ps_since(&self,ref_tick: u64) -> u64 {
+        self.tick_ps as u64 * (self.time - ref_tick)
     }
     /// emit a pulse from the current bit cell and advance
     pub fn read_bit(&mut self) -> bool {
@@ -334,6 +344,7 @@ pub struct ZoneFormat {
     flux_code: img::FluxCode,
     addr_nibs: img::FieldCode,
     data_nibs: img::FieldCode,
+    speed_kbps: usize,
     motor_start: usize,
     motor_end: usize,
     motor_step: usize,
@@ -586,6 +597,7 @@ impl ZoneFormat {
             cylinder: motor/head_width,
             fraction: [motor%head_width,head_width],
             head,
+            speed_kbps: self.speed_kbps,
             flux_code: self.flux_code,
             addr_code: self.addr_nibs,
             data_code: self.data_nibs,

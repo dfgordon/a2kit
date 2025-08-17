@@ -29,7 +29,7 @@ pub fn verify(cmd: &clap::ArgMatches) -> STDRESULT {
         return Err(Box::new(CommandError::InvalidCommand));
     }
     if let Some(ws_path) = cmd.get_one::<String>("workspace") {
-        match lsp_types::Url::from_directory_path(ws_path) {
+        match lang::uri_from_path_str(ws_path) {
             Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
             Err(_) => return Err(Box::new(lang::Error::PathNotFound))
         }
@@ -291,7 +291,7 @@ pub fn asm(cmd: &clap::ArgMatches) -> STDRESULT {
     // }
     let doc = lang::Document::from_string(analyzer.read_stdin(),0);
     if let Some(ws_path) = cmd.get_one::<String>("workspace") {
-        match lsp_types::Url::from_directory_path(ws_path) {
+        match lang::uri_from_path_str(ws_path) {
             Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
             Err(_) => return Err(Box::new(lang::Error::PathNotFound))
         }

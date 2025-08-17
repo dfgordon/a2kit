@@ -234,7 +234,7 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
         diagnostics.push(basic_diag(rng,mess,severity));
     };
 
-    let (asm,gen,is_end) = ctx.cond_asm();
+    let (asm,r#gen,is_end) = ctx.cond_asm();
     if is_end {
         return Ok(Navigation::Exit);
     }
@@ -253,7 +253,7 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     } else if curs.depth()>1 && node.kind() != "label_def" && node.is_named() {
         ctx.running_docstring = String::new();
     }
-    if gen && child.is_some() && node.kind()=="label_def" {
+    if r#gen && child.is_some() && node.kind()=="label_def" {
         let ck = child.unwrap().kind();
         if ck == "global_label" {
             if symbols.global_defined(&txt) {
@@ -334,7 +334,7 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             ctx.trigs.unset_vars = true;
         }
         return Ok(Navigation::GotoSibling);
-    } else if gen && node.kind() == "label_ref" && node.parent().unwrap().kind() == "arg_ent" {
+    } else if r#gen && node.kind() == "label_ref" && node.parent().unwrap().kind() == "arg_ent" {
         let f = register(&txt,loc,&node,symbols,None,ctx,vec![]);
         if f & merlin::symbol_flags::EXT > 0 && f & merlin::symbol_flags::ENT > 0 {
             push(rng,"label is both EXT and ENT in the same module",lsp::DiagnosticSeverity::ERROR);
@@ -362,7 +362,7 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             register_child(&txt,loc,&node,symbols,ctx,fwd);
         }
         return Ok(Navigation::GotoSibling);
-    } else if gen && (node.kind() == "psop_put" || node.kind() == "psop_use") && (src.typ==SourceType::Master || src.typ==SourceType::Module) {
+    } else if r#gen && (node.kind() == "psop_put" || node.kind() == "psop_use") && (src.typ==SourceType::Master || src.typ==SourceType::Module) {
         return Ok(Navigation::Descend);
     } else if asm && node.kind()=="psop_xc" {
         // this only needs to update, XC diagnostics are in another pass

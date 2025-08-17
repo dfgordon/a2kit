@@ -117,7 +117,7 @@ impl DiskServer {
     /// Write any sequential data (BASIC tokens, text, binary) and commit to real disk.
     /// N.b. the path that was used at mount time is assumed valid.
     pub fn write(&mut self,path: &str,dat: &[u8],typ: ItemType) -> STDRESULT {
-        if let Some(disk) = self.disk.as_mut() {
+        match self.disk.as_mut() { Some(disk) => {
             let mut fimg = disk.new_fimg(None, true, path)?;
             match typ {
                 ItemType::IntegerTokens | ItemType::ApplesoftTokens => fimg.pack_tok(dat,typ,None)?,
@@ -128,18 +128,18 @@ impl DiskServer {
             disk.put(&fimg)?;
             crate::save_img(disk, &self.path_to_img)?;
             Ok(())
-        } else {
+        } _ => {
             Err(Box::new(CommandError::InvalidCommand))
-        }
+        }}
     }
     /// Delete a file or directory.
     /// There is no overwriting in a2kit, but the client will often want to do so.
     /// So the workaround, as usual, is delete first.
     pub fn delete(&mut self,path: &str) -> STDRESULT {
-        if let Some(disk) = self.disk.as_mut() {
+        match self.disk.as_mut() { Some(disk) => {
             disk.delete(path)
-        } else {
+        } _ => {
             Err(Box::new(CommandError::InvalidCommand))
-        }
+        }}
     }
 }

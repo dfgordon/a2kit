@@ -5,8 +5,7 @@ use crate::{STDRESULT,DYNERR};
 use crate::bios::skew;
 
 /// Get the ordered physical track-sector list and sector size for any block.
-/// This might become private when major version advances.
-pub fn get_ts_list(addr: Block,kind: &DiskKind) -> Result<(Vec<[usize;2]>,usize),DYNERR> {
+fn get_ts_list(addr: Block,kind: &DiskKind) -> Result<(Vec<[usize;2]>,usize),DYNERR> {
 	match addr {
 		Block::D13([t,s]) => Ok((vec![[t,s]],256)),
 		Block::DO([t,s]) => Ok((vec![[t,skew::DOS_LSEC_TO_DOS_PSEC[s]]],256)),

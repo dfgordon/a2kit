@@ -4,7 +4,9 @@
 //! Image types handled include WOZ, G64, and NIB.
 //! Special handling can be triggered by elements of the `ZoneFormat` struct.
 //! 
-//! For Apple tracks, time is normalized to the resolution of a flux track, 1 tick = 125 ns.
+//! There is an assumed tick normalization for each kind of disk:
+//! * Apple 5.25 inch - 125000 ps
+//! * Apple 3.5 inch - 62500 ps
 
 use crate::img::{NibbleError,FieldCode};
 use super::{SectorKey,ZoneFormat,Method,FluxCells};
@@ -622,7 +624,7 @@ impl TrackEngine {
         }
         return Ok((addr_map,size_map));
     }
-    /// Create a GCR track based on the given ZoneFormat.
+    /// Create a GCR track based on the given ZoneFormat (currently Apple only).
     /// * skey - standard address components, in general will be transformed by fmt
     /// * buf_len - length of the buffer in which track bits will be loaded (usually padded, only used as a check)
     /// * fmt - defines the track format to be used
@@ -636,9 +638,13 @@ impl TrackEngine {
         for i in 0..4 {
             log::trace!("marker {} {}",i,hex::encode(&fmt.markers[i].key));
         }
+        let double_speed = match fmt.speed_kbps {
+            500 => true,
+            _ => false
+        };
         let bit_count = get_and_check_bit_count(buf_len, fmt)?;
         let sectors = fmt.sector_count();
-        let mut cells = FluxCells::new_woz_bits(0, bit_vec::BitVec::from_elem(bit_count,self.nib_filter));
+        let mut cells = FluxCells::new_woz_bits(0, bit_vec::BitVec::from_elem(bit_count,self.nib_filter),0,double_speed);
         self.write_sync_gap(&mut cells,0,fmt);
         for theta in 0..sectors {
             // address field

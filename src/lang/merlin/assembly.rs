@@ -244,7 +244,7 @@ pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option
             let mut parser = tree_sitter::Parser::new();
             parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into()).expect("failed to load language");
             let dummy_code = [" lda ",txt,"\n"].concat();
-            if let Some(tree) = parser.parse(&dummy_code,None) {
+            match parser.parse(&dummy_code,None) { Some(tree) => {
                 let mut curs = tree.root_node().walk();
                 curs.goto_first_child(); // operation
                 curs.goto_first_child(); // lda
@@ -252,9 +252,9 @@ pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option
                 curs.goto_first_child(); // addr
                 curs.goto_first_child(); // expr
                 eval_any_expr(&curs.node(),&dummy_code,pc,symbols,scope,true)
-            } else {
+            } _ => {
                 Err(Box::new(Error::ExpressionEvaluation))
-            }
+            }}
         } else {
             if let Some(child) = arg_node.child(0) {
                 if let Some(grandchild) = child.child(0) {

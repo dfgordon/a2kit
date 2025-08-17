@@ -95,11 +95,11 @@ pub fn is_name_valid(name: &str) -> bool {
 }
 
 pub fn is_xname_valid(xname: &str) -> bool {
-    if let Ok((user,name)) = split_user_filename(xname) {
+    match split_user_filename(xname) { Ok((user,name)) => {
         is_name_valid(&name) && user < 16
-    } else {
+    } _ => {
         false
-    }
+    }}
 }
 
 /// put the filename bytes as an ASCII string, result can be tested for validity

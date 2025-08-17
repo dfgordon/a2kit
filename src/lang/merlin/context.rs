@@ -57,7 +57,7 @@ pub struct Fold {
     /// whether to assemble inside this fold
     pub asm: bool,
     /// whether to generate symbols inside this fold
-    pub gen: bool,
+    pub r#gen: bool,
     /// is this an `END` fold
     pub is_end: bool,
     /// start of the fold
@@ -109,9 +109,9 @@ impl Triggers {
 }
 
 impl Fold {
-    fn new(kind: String,active: bool,asm: bool,gen: bool,is_end: bool,start: lsp::Location) -> Self {
+    fn new(kind: String,active: bool,asm: bool,r#gen: bool,is_end: bool,start: lsp::Location) -> Self {
         Self {
-            kind,active,asm,gen,is_end,start
+            kind,active,asm,r#gen,is_end,start
         }
     }
 }
@@ -168,7 +168,7 @@ impl Context {
     /// returns conditional assembly booleans (asm,gen,is_end)
     pub fn cond_asm(&self) -> (bool,bool,bool) {
         match self.fold_stack.last() {
-            Some(fold) => (fold.asm || self.fold_just_started,fold.gen || self.fold_just_started,fold.is_end),
+            Some(fold) => (fold.asm || self.fold_just_started,fold.r#gen || self.fold_just_started,fold.is_end),
             None => (true,true,false)
         }
     }
@@ -238,7 +238,7 @@ impl Context {
         let mut start_locs = Vec::new();
         let mut diag = Vec::new();
         let (parent_asm,parent_gen,parent_end) = match self.fold_stack.last() {
-            Some(fold) => (fold.asm,fold.gen,fold.is_end),
+            Some(fold) => (fold.asm,fold.r#gen,fold.is_end),
             None => (true,true,false)
         };
         if parent_end {
@@ -261,7 +261,7 @@ impl Context {
                         start_locs.push(prev.start.clone());
                         self.close_one_fold(&mut diag);
                         let (grand_asm,grand_gen) = match self.fold_stack.last() {
-                            Some(fold) => (fold.asm,fold.gen),
+                            Some(fold) => (fold.asm,fold.r#gen),
                             None => (true,true)
                         };
                         self.fold_stack.push(Fold::new(kind.to_string(),
@@ -439,7 +439,7 @@ impl Context {
     }
     pub fn close_one_fold(&mut self, diagnostics: &mut Vec<lsp::Diagnostic>) {
         if let Some(fold) = self.fold_stack.pop() {
-            if fold.active && !fold.gen {
+            if fold.active && !fold.r#gen {
                 let message = match fold.kind.as_str() {
                     "psop_do" => "assembly disabled by DO",
                     "psop_if" => "assembly disabled by IF",
@@ -548,11 +548,11 @@ impl Context {
         if needs_exit {
             self.exit_scope(symbols);
         }
-        if let Some(sym) = symbols.globals.get(name) {
+        match symbols.globals.get(name) { Some(sym) => {
             self.symbol_stack.push(sym.clone());
-        } else if let Some(sym) = symbols.macros.get(name) {
+        } _ => { match symbols.macros.get(name) { Some(sym) => {
             self.symbol_stack.push(sym.clone());
-        }
+        } _ => {}}}}
     }
     /// Remove symbols from the scope stack, and merge changes with main store.
     /// In Merlin, EOM exits all prior macro scopes, so this can pop multiple scopes at once.

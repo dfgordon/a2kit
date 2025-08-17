@@ -51,7 +51,7 @@ impl Asm {
         }
     }
     pub fn visit(&mut self,
-        curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbols: &mut Symbols, diagnostics: &mut Vec<lsp::Diagnostic>)
+        curs: &TreeCursor, ctx: &mut Context, _ws: &Workspace, symbols: &mut Symbols, diagnostics: &mut Vec<lsp::Diagnostic>)
         -> Result<Navigation,DYNERR> {
 
         let node = curs.node();

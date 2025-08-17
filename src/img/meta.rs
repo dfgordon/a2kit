@@ -118,7 +118,7 @@ macro_rules! putString {
 /// ```
 #[macro_export]
 macro_rules! putStringBuf {
-    ($val:ident,$key:ident,$typ:ident,$slf:ident.$($x:ident).+,$pad:expr) => {
+    ($val:ident,$key:ident,$typ:ident,$slf:ident.$($x:ident).+,$pad:expr_2021) => {
         if meta::match_key($key,&[&$typ,$(stringify!($x)),+]) {
             return meta::set_metadata_utf8($val,&mut $slf.$($x).+,$pad);
         }

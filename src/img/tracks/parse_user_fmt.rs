@@ -188,6 +188,7 @@ impl ZoneFormat {
         let flux_code = img::FluxCode::from_str(&parse_str(&obj["flux_code"],"flux_code")?)?;
         let addr_nibs = img::FieldCode::from_str(&parse_str(&obj["addr_nibs"],"addr_nibs")?)?;
         let data_nibs = img::FieldCode::from_str(&parse_str(&obj["data_nibs"],"data_nibs")?)?;
+        let speed_kbps = parse_usize(&obj["speed_kbps"],"speed_kbps")?;
         let motor_range = parse_usize_list(&obj["motor_range"],"motor_range")?;
         let heads = parse_usize_list(&obj["heads"],"heads")?;
         let capacity = parse_usize_list(&obj["capacity"],"capacity")?;
@@ -229,6 +230,7 @@ impl ZoneFormat {
             flux_code,
             addr_nibs,
             data_nibs,
+            speed_kbps,
             motor_start: motor_range[0],
             motor_end: motor_range[1],
             motor_step: motor_range[2],

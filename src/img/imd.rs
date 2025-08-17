@@ -98,13 +98,13 @@ pub struct Imd {
 impl Track {
     fn create(track_num: usize, layout: &super::TrackLayout) -> Self {
         let zone = layout.zone(track_num);
-        let mode = match (layout.flux_code[zone],layout.data_rate[zone]) {
-            (super::FluxCode::FM,super::DataRate::R250Kbps) => Mode::Fm250Kbps,
-            (super::FluxCode::FM,super::DataRate::R300Kbps) => Mode::Fm300Kbps,
-            (super::FluxCode::FM,super::DataRate::R500Kbps) => Mode::Fm500Kbps,
-            (super::FluxCode::MFM,super::DataRate::R250Kbps) => Mode::Mfm250Kbps,
-            (super::FluxCode::MFM,super::DataRate::R300Kbps) => Mode::Mfm300Kbps,
-            (super::FluxCode::MFM,super::DataRate::R500Kbps) => Mode::Mfm500Kbps,
+        let mode = match (layout.flux_code[zone],layout.speed_kbps[zone]) {
+            (super::FluxCode::FM,250) => Mode::Fm250Kbps,
+            (super::FluxCode::FM,300) => Mode::Fm300Kbps,
+            (super::FluxCode::FM,500) => Mode::Fm500Kbps,
+            (super::FluxCode::MFM,250) => Mode::Mfm250Kbps,
+            (super::FluxCode::MFM,300) => Mode::Mfm300Kbps,
+            (super::FluxCode::MFM,500) => Mode::Mfm500Kbps,
             _ => panic!("unhandled track mode")
         };
         let default_map: Vec<u8> = (1..layout.sectors[0] as u8 + 1).collect();
@@ -669,10 +669,14 @@ impl img::DiskImage for Imd {
     }
     fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
         let trk_obj = &self.tracks[trk];
-        let flux_code = match Mode::from_u8(trk_obj.mode) {
-            Some(Mode::Fm250Kbps) | Some(Mode::Fm300Kbps) | Some(Mode::Fm500Kbps) => img::FluxCode::FM,
-            Some(Mode::Mfm250Kbps) | Some(Mode::Mfm300Kbps) | Some(Mode::Mfm500Kbps) => img::FluxCode::MFM,
-            None => img::FluxCode::None
+        let (flux_code,speed_kbps) = match Mode::from_u8(trk_obj.mode) {
+            Some(Mode::Fm250Kbps) => (img::FluxCode::FM,250),
+            Some(Mode::Fm300Kbps) => (img::FluxCode::FM,300),
+            Some(Mode::Fm500Kbps) => (img::FluxCode::FM,500),
+            Some(Mode::Mfm250Kbps) => (img::FluxCode::MFM,250),
+            Some(Mode::Mfm300Kbps) => (img::FluxCode::MFM,300),
+            Some(Mode::Mfm500Kbps) => (img::FluxCode::MFM,500),
+            None => (img::FluxCode::None,0)
         };
         let phys_head = (trk_obj.head & HEAD_MASK) as usize;
         let mut addr_map: Vec<[u8;4]> = Vec::new();
@@ -685,6 +689,7 @@ impl img::DiskImage for Imd {
             cylinder: trk_obj.cylinder as usize,
             fraction: [0,1],
             head: phys_head,
+            speed_kbps,
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,

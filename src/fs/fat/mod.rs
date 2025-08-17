@@ -19,7 +19,7 @@ use std::fmt::Write;
 use log::{trace,debug,error};
 use types::*;
 use directory::*;
-use super::Block;
+use super::{Block,Attributes};
 use crate::img;
 use crate::bios::{bpb,fat};
 use crate::{DYNERR,STDRESULT};
@@ -134,7 +134,7 @@ impl Disk {
         // By this time layout or size has already been used to create the `DiskImage`.
         let mut ans = true;
         // first look at boot sector, but only for logging
-        if let Ok(boot) = img.read_sector(0,0,1) {
+        match img.read_sector(0,0,1) { Ok(boot) => {
             if boot[0]!=0xeb {
                 debug!("JMP mismatch {}",boot[0]);
             }
@@ -145,13 +145,13 @@ impl Disk {
             if !boot_str.contains(s1) && !boot_str.contains(s2) && !boot_str.contains(s3) {
                 debug!("no string matches");
             }
-        } else {
+        } _ => {
             debug!("boot sector was not readable");
             ans = false;
-        }
+        }}
         // buffer a temporary boot sector for this disk kind.
         // we only use this to analyze the FAT.
-        if let Ok(boot) = bpb::BootSector::create(&img.kind()) {
+        match bpb::BootSector::create(&img.kind()) { Ok(boot) => {
             let mut buf = Vec::new();
             let sec1 = boot.res_secs() as u64;
             for isec in sec1..sec1+boot.fat_secs() {
@@ -183,10 +183,10 @@ impl Disk {
                     break;
                 }
             }
-        } else {
+        } _ => {
             debug!("could not guess FAT parameters");
             ans = false;
-        }
+        }}
         ans
     }
     fn get_chs(&self,ptr: &Ptr) -> Result<[usize;3],DYNERR> {
@@ -409,7 +409,7 @@ impl Disk {
                 self.write_block(&vec![0;block_size], 0, root_cluster,0)?;
                 if vol_name.len()>0 {
                     let mut label = Entry::create_label(vol_name,time);
-                    label.set_attr(directory::VOLUME_ID | directory::ARCHIVE);
+                    label.set_attr(Attributes::new().vol(true).backup(true));
                     let mut loc = EntryLocation {
                         cluster1: Some(Ptr::Cluster(root_cluster)),
                         entry: Ptr::Entry(0),
@@ -425,7 +425,7 @@ impl Disk {
                     let mut dir = Directory::new();
                     dir.expand(self.boot_sector.root_dir_entries() as usize);
                     let mut label = Entry::create_label(vol_name,time);
-                    label.set_attr(directory::VOLUME_ID | directory::ARCHIVE);
+                    label.set_attr(Attributes::new().vol(true).backup(true));
                     let mut loc = EntryLocation {
                         cluster1: None,
                         entry: Ptr::Entry(0),
@@ -829,44 +829,39 @@ impl Disk {
         let mut prev: usize = 0;
         for count in 0..fimg.end() {
             if let Some(data) = fimg.chunks.get(&count) {
-                if let Some(curr) = self.get_available_block()? {
+                match self.get_available_block()? { Some(curr) => {
                     self.write_block(data, prev, curr, 0)?;
                     if count==0 {
                         entry.set_cluster(curr);
                     }
                     prev = curr;
-                } else {
+                } _ => {
                     panic!("unexpectedly ran out of disk space");
-                }
+                }}
             } else {
                 error!("FAT file image had a hole which is not allowed");
                 return Err(Box::new(Error::WriteFault));
             }
         }
-        entry.set_attr(directory::ARCHIVE);
+        entry.set_attr(Attributes::new().backup(true));
         self.writeback_directory_entry(loc,&entry)?;
         return Ok(entry.eof());
     }
     /// modify a file entry, optionally change attributes, rename; attempt to rename read-only file will fail.
-    fn modify(&mut self,loc: &mut EntryLocation,maybe_set: Option<u8>,maybe_clear: Option<u8>,maybe_new_name: Option<&str>) -> STDRESULT {  
+    fn modify(&mut self,loc: &mut EntryLocation,mut attrib: Attributes,maybe_new_name: Option<&str>) -> STDRESULT {  
         let mut entry = loc.dir.get_entry(&loc.entry);
         if entry.get_attr(directory::READ_ONLY) && maybe_new_name.is_some() {
             return Err(Box::new(Error::WriteProtect));
         }
-        if let Some(mask) = maybe_set {
-            entry.set_attr(mask);
-        }
-        if let Some(mask) = maybe_clear {
-            entry.clear_attr(mask);
-        }
         if let Some(new_name) = maybe_new_name {
             if pack::is_name_valid(new_name) {
                 entry.rename(new_name);
+                attrib = attrib.backup(true);
             } else {
                 return Err(Box::new(Error::Syntax));
             }
         }
-        entry.set_attr(directory::ARCHIVE);
+        entry.set_attr(attrib);
         self.writeback_directory_entry(loc,&entry)
     }
     /// Output FAT directory as a vector of paths that match a glob, calls itself recursively
@@ -1055,6 +1050,9 @@ impl super::DiskFS for Disk {
                         if entry_type==EntryType::VolumeLabel || entry_type==EntryType::Free {
                             continue;
                         }
+                        if entry_type==EntryType::LongName {
+                            log::warn!("a long name was not handled");
+                        }
                         let entry = dir.get_entry(&Ptr::Entry(i));
                         let name_and_ext = entry.name(false);
                         let mut split = name_and_ext.split(".").collect::<Vec<&str>>();
@@ -1101,7 +1099,7 @@ impl super::DiskFS for Disk {
     }
     fn create(&mut self,path: &str) -> STDRESULT {
         let (name,mut loc) = self.prepare_to_write(path)?;
-        if let Some(new_cluster) = self.get_available_block()? {
+        match self.get_available_block()? { Some(new_cluster) => {
             let parent_cluster = match loc.cluster1 {
                 Some(c) => c.unwrap(),
                 None => 0 // this holds even for FAT32
@@ -1109,9 +1107,9 @@ impl super::DiskFS for Disk {
             let (entry, dir_data) = Entry::create_subdir(&name,parent_cluster,new_cluster,self.boot_sector.block_size() as usize,None);
             self.write_block(&dir_data, 0, new_cluster, 0)?;
             self.writeback_directory_entry(&mut loc,&entry)    
-        } else {
+        } _ => {
             Err(Box::new(Error::DiskFull))
-        }
+        }}
     }
     fn delete(&mut self,path: &str) -> STDRESULT {
         let (maybe_parent,finfo) = self.goto_path(path)?;
@@ -1153,15 +1151,7 @@ impl super::DiskFS for Disk {
             None => panic!("file with no parent directory {}",path)
         }
     }
-    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
-        error!("FAT does not support operation");
-        Err(Box::new(Error::Syntax))
-    }
-    fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        error!("FAT does not support operation");
-        Err(Box::new(Error::Syntax))
-    }
-    fn lock(&mut self,path: &str) -> STDRESULT {
+    fn set_attrib(&mut self,path: &str,attrib: Attributes,_password: Option<&str>) -> STDRESULT {
         let (maybe_parent,finfo) = self.goto_path(path)?;
         match maybe_parent {
             Some(parent) => {
@@ -1171,28 +1161,10 @@ impl super::DiskFS for Disk {
                     entry: Ptr::Entry(finfo.idx),
                     dir
                 };
-                self.modify(&mut loc,Some(directory::READ_ONLY),None,None)
+                self.modify(&mut loc,attrib,None)
             },
             None => {
                 error!("cannot lock root");
-                Err(Box::new(Error::General))
-            }
-        }
-    }
-    fn unlock(&mut self,path: &str) -> STDRESULT {
-        let (maybe_parent,finfo) = self.goto_path(path)?;
-        match maybe_parent {
-            Some(parent) => {
-                let dir = self.get_directory(&parent.cluster1)?;
-                let mut loc = EntryLocation {
-                    cluster1: parent.cluster1,
-                    entry: Ptr::Entry(finfo.idx),
-                    dir
-                };
-                self.modify(&mut loc,None,Some(directory::READ_ONLY),None)
-            },
-            None => {
-                error!("cannot unlock root");
                 Err(Box::new(Error::General))
             }
         }
@@ -1208,7 +1180,7 @@ impl super::DiskFS for Disk {
                     entry: Ptr::Entry(finfo.idx),
                     dir
                 };
-                self.modify(&mut loc,None,None,Some(name))
+                self.modify(&mut loc,Attributes::new(),Some(name))
             },
             None => {
                 error!("cannot rename root");
@@ -1231,10 +1203,10 @@ impl super::DiskFS for Disk {
                     dir
                 };
                 match new_type {
-                    "sys" => self.modify(&mut loc,Some(SYSTEM),None,None),
-                    "reg" => self.modify(&mut loc,None,Some(SYSTEM),None),
-                    "hid" => self.modify(&mut loc,Some(HIDDEN),None,None),
-                    "vis" => self.modify(&mut loc,None,Some(HIDDEN),None),
+                    "sys" => self.modify(&mut loc,Attributes::new().system(true),None),
+                    "reg" => self.modify(&mut loc,Attributes::new().system(false),None),
+                    "hid" => self.modify(&mut loc,Attributes::new().hidden(true),None),
+                    "vis" => self.modify(&mut loc,Attributes::new().hidden(false),None),
                     _ => {
                         error!("valid types are sys, reg, hid, vis");
                         Err(Box::new(Error::General))

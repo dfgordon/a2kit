@@ -330,7 +330,7 @@ impl Disk
             log::error!("invalid pascal filename");
             return Err(Box::new(Error::BadFormat));
         }
-        if let (Some(idx),dir) = self.get_file_entry(name)? {
+        match self.get_file_entry(name)? { (Some(idx),dir) => {
             let entry = &dir.entries[idx];
             let mut ans = new_fimg(BLOCK_SIZE,false,name)?;
             let mut buf = vec![0;BLOCK_SIZE];
@@ -347,9 +347,9 @@ impl Disk
             ans.eof = u32::to_le_bytes(BLOCK_SIZE as u32*ans.chunks.len() as u32 - u16::from_le_bytes(entry.bytes_remaining) as u32).to_vec();
             ans.modified = entry.mod_date.to_vec();
             return Ok(ans);
-        } else {
+        } _ => {
             return Err(Box::new(Error::NoFile));
-        }
+        }}
     }
     /// Write any file using the sparse file format.  The caller must ensure that the
     /// chunks are sequential (Pascal only supports sequential data).  This is easy:
@@ -371,7 +371,7 @@ impl Disk
             let fs_type_usize = fimg.get_ftype();
             let eof_usize = fimg.get_eof();
             if let Some(fs_type) = FileType::from_usize(fs_type_usize) {
-                if let Some(beg) = self.get_available_blocks(data_blocks as u16)? {
+                match self.get_available_blocks(data_blocks as u16)? { Some(beg) => {
                     let i = u16::from_le_bytes(dir.header.num_files) as usize;
                     if i < dir.entries.len() {
                         log::debug!("using entry {}",i);
@@ -397,10 +397,10 @@ impl Disk
                     }
                     log::error!("directory is full");
                     return Err(Box::new(Error::NoRoom));
-                } else {
+                } _ => {
                     log::error!("not enough contiguous space");
                     return Err(Box::new(Error::NoRoom));
-                }
+                }}
             } else {
                 log::error!("unknown file type");
                 return Err(Box::new(Error::BadMode));
@@ -426,7 +426,7 @@ impl Disk
         if !is_name_valid(name, false) {
             return Err(Box::new(Error::BadFormat));
         }
-        if let (Some(idx),mut dir) = self.get_file_entry(name)? {
+        match self.get_file_entry(name)? { (Some(idx),mut dir) => {
             let entry = &mut dir.entries[idx];
             if let Some(new_name) = maybe_new_name {
                 if !is_name_valid(new_name,false) {
@@ -443,9 +443,9 @@ impl Disk
             }
             self.save_directory(&dir)?;
             return Ok(());
-        } else {
+        } _ => {
             return Err(Box::new(Error::NoFile));
-        }
+        }}
     }
 }
 
@@ -593,7 +593,7 @@ impl super::DiskFS for Disk {
         Err(Box::new(Error::DevErr))
     }
     fn delete(&mut self,name: &str) -> STDRESULT {
-        if let (Some(idx),mut dir) = self.get_file_entry(name)? {
+        match self.get_file_entry(name)? { (Some(idx),mut dir) => {
             for i in idx..dir.entries.len() {
                 if i+1 < dir.entries.len() {
                     dir.entries[i] = dir.entries[i+1];
@@ -606,24 +606,12 @@ impl super::DiskFS for Disk {
             dir.header.num_files = u16::to_le_bytes(u16::from_le_bytes(dir.header.num_files)-1);
             self.save_directory(&dir)?;
             return Ok(());
-        } else {
+        } _ => {
             return Err(Box::new(Error::NoFile));
-        }
+        }}
     }
-    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
+    fn set_attrib(&mut self,_path: &str,_permissions: crate::fs::Attributes,_password: Option<&str>) -> STDRESULT {
         log::error!("pascal does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        log::error!("pascal does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn lock(&mut self,_name: &str) -> STDRESULT {
-        log::error!("pascal implementation does not support operation");
-        Err(Box::new(Error::DevErr))
-    }
-    fn unlock(&mut self,_name: &str) -> STDRESULT {
-        log::error!("pascal implementation does not support operation");
         Err(Box::new(Error::DevErr))
     }
     fn rename(&mut self,old_name: &str,new_name: &str) -> STDRESULT {

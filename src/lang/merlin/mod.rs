@@ -60,6 +60,7 @@
 use lsp_types as lsp;
 use std::collections::{HashSet,HashMap};
 use std::fmt;
+use std::str::FromStr;
 
 use super::node_text;
 
@@ -251,7 +252,7 @@ pub struct Symbols {
 
 #[derive(Clone)]
 pub struct Workspace {
-    pub ws_folders: Vec<lsp::Url>,
+    pub ws_folders: Vec<lsp::Uri>,
 	/// array of documents in this workspace
     pub docs: Vec<super::Document>,
 	/// map from an include file uri to all master uri that `put` it
@@ -456,8 +457,8 @@ impl Symbols {
         let mut ans = Vec::new();
         let mut master = "unknown".to_string();
         // parse the display doc URI first so it is used if master does not parse
-        if let Ok(url) = lsp::Url::parse(&self.display_doc_uri) {
-            if let Ok(path) = url.to_file_path() {
+        if let Ok(uri) = lsp::Uri::from_str(&self.display_doc_uri) {
+            if let Ok(path) = super::pathbuf_from_uri(&uri) {
                 if let Some(os) = path.file_name() {
                     if let Some(s) = os.to_str() {
                         master = s.to_string();
@@ -465,8 +466,8 @@ impl Symbols {
                 }
             }
         };
-        if let Ok(url) = lsp::Url::parse(&self.master_doc_uri) {
-            if let Ok(path) = url.to_file_path() {
+        if let Ok(uri) = lsp::Uri::from_str(&self.master_doc_uri) {
+            if let Ok(path) = super::pathbuf_from_uri(&uri) {
                 if let Some(os) = path.file_name() {
                     if let Some(s) = os.to_str() {
                         master = s.to_string();
@@ -479,69 +480,69 @@ impl Symbols {
         ans
     }
     pub fn mac_defined(&self,txt: &str) -> bool {
-        if let Some(sym) = self.macros.get(txt) {
+        match self.macros.get(txt) { Some(sym) => {
             sym.defs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn mac_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
-        if let Some(sym) = self.macros.get(txt) {
+        match self.macros.get(txt) { Some(sym) => {
             match sym.fwd_refs.get(loc) {
                 Some(fwd) => fwd.contains(&LabelType::Macro),
                 None => false
             }
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn global_declared_or_defined(&self,txt: &str) -> bool {
-        if let Some(sym) = self.globals.get(txt) {
+        match self.globals.get(txt) { Some(sym) => {
             sym.decs.len() + sym.defs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn global_declared(&self,txt: &str) -> bool {
-        if let Some(sym) = self.globals.get(txt) {
+        match self.globals.get(txt) { Some(sym) => {
             sym.decs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn global_defined(&self,txt: &str) -> bool {
-        if let Some(sym) = self.globals.get(txt) {
+        match self.globals.get(txt) { Some(sym) => {
             sym.defs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn global_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
-        if let Some(sym) = self.globals.get(txt) {
+        match self.globals.get(txt) { Some(sym) => {
             match sym.fwd_refs.get(loc) {
                 Some(fwd) => fwd.contains(&LabelType::Global),
                 None => false
             }
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn var_defined(&self,txt: &str) -> bool {
-        if let Some(sym) = self.vars.get(txt) {
+        match self.vars.get(txt) { Some(sym) => {
             sym.defs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn var_forward(&self,txt: &str,loc: &lsp::Location) -> bool {
-        if let Some(sym) = self.vars.get(txt) {
+        match self.vars.get(txt) { Some(sym) => {
             match sym.fwd_refs.get(loc) {
                 Some(fwd) => fwd.contains(&LabelType::Variable),
                 None => false
             }
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn child_defined(&self,txt: &str,scope: &Symbol) -> bool {
         if scope.flags & symbol_flags::MAC > 0 {
@@ -549,21 +550,21 @@ impl Symbols {
                 return count > 0;
             }
         }
-        if let Some(sym) = scope.children.get(txt) {
+        match scope.children.get(txt) { Some(sym) => {
             sym.defs.len() > 0
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     pub fn child_forward(&self,txt: &str,scope: &Symbol, loc: &lsp::Location) -> bool {
-        if let Some(sym) = scope.children.get(txt) {
+        match scope.children.get(txt) { Some(sym) => {
             match sym.fwd_refs.get(loc) {
                 Some(fwd) => fwd.contains(&LabelType::Local) || fwd.contains(&LabelType::MacroLocal),
                 None => false
             }
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
     /// should only be used if symbols have been updated
     pub fn adjust_line(&self,row: isize,line: &str,term: &str) -> String {

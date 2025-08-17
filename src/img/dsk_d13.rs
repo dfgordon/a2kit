@@ -130,6 +130,7 @@ impl img::DiskImage for D13 {
             cylinder: c,
             fraction: [0,4],
             head: h,
+            speed_kbps: 250,
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((5,3)),

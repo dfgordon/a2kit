@@ -772,6 +772,10 @@ impl Woz2 {
         let tmap_idx = img::woz::get_tmap_index(tkey.clone(),&self.kind)?;
         if self.tmap_pos != tmap_idx {
             log::debug!("goto {} of {}",tkey,self.kind);
+            let double_speed = match &self.kind {
+                img::DiskKind::D35(_) => true,
+                _ => false
+            };
             self.write_back_track()?;
             self.tmap_pos = tmap_idx;
             let (idx,is_flux) = self.try_motor(tmap_idx)?;
@@ -780,9 +784,9 @@ impl Woz2 {
             let mut new_cells = match is_flux {
                 true => {
                     log::debug!("this is a flux track");
-                    FluxCells::from_woz_flux(bits_or_bytes, &self.trks.bits[beg..end])
+                    FluxCells::from_woz_flux(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
                 },
-                false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end])
+                false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
             };
             if let Some(cells) = &self.cells {
                 new_cells.sync_to_other_track(cells);

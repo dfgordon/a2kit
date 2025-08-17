@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use super::pack::*;
 use colored::*;
 use super::types::*;
-use super::super::FileImage;
+use super::super::{Attributes,FileImage};
 use crate::DYNERR;
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
@@ -36,6 +36,33 @@ pub fn is_file_match<T: HasName>(valid_types: &Vec<StorageType>,name: &String,ob
     return false;
 }
 
+fn update_access(curr: u8,what: Attributes) -> u8 {
+    let mut ans = curr;
+    let mut change_flag = |setting: bool,flag: u8| {
+        if setting {
+            ans |= flag;
+        } else {
+            ans &= u8::MAX ^ flag;
+        }
+    };
+    if let Some(setting) = what.backup {
+        change_flag(setting,Access::Backup as u8);
+    }
+    if let Some(setting) = what.read {
+        change_flag(setting,Access::Read as u8);
+    }
+    if let Some(setting) = what.write {
+        change_flag(setting,Access::Write as u8);
+    }
+    if let Some(setting) = what.destroy {
+        change_flag(setting,Access::Destroy as u8);
+    }
+    if let Some(setting) = what.rename {
+        change_flag(setting,Access::Rename as u8);
+    }
+    ans
+}
+
 // Block   | Contents
 // -----------------------------
 // 0       | Loader
@@ -48,8 +75,6 @@ pub trait Header {
     fn file_count(&self) -> u16;
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
-    fn set_access(&mut self,what: Access,which: bool);
-    fn set_all_access(&mut self,what: u8);
     fn standardize(&mut self,offset: usize) -> Vec<usize>;
 }
 
@@ -72,7 +97,6 @@ pub trait HasName {
 }
 
 pub trait Directory: DiskStruct + HasEntries {
-    fn total_blocks(&self) -> Option<usize>;
     fn parent_entry_loc(&self) -> Option<EntryLocation>;
     fn inc_file_count(&mut self);
     fn dec_file_count(&mut self);
@@ -207,15 +231,15 @@ impl Entry {
     pub fn eof(&self) -> usize {
         return u32::from_le_bytes([self.eof[0],self.eof[1],self.eof[2],0]) as usize;
     }
-    pub fn aux(&self) -> u16 {
-        return u16::from_le_bytes(self.aux_type);
-    }
+    // pub fn aux(&self) -> u16 {
+    //     return u16::from_le_bytes(self.aux_type);
+    // }
     pub fn set_aux(&mut self,aux: u16) {
         self.aux_type = u16::to_le_bytes(aux);
     }
-    pub fn ftype(&self) -> u8 {
-        return self.file_type;
-    }
+    // pub fn ftype(&self) -> u8 {
+    //     return self.file_type;
+    // }
     pub fn set_ftype(&mut self,typ: u8) {
         self.file_type = typ;
     }
@@ -250,7 +274,7 @@ impl Entry {
         ans.create_time = pack_time(create_time);
         ans.vers = 0;
         ans.min_vers = 0;
-        ans.access = STD_ACCESS | DIDCHANGE;
+        ans.access = STD_ACCESS | Access::Backup as u8;
         ans.aux_type = u16::to_le_bytes(0);
         ans.last_mod = pack_time(create_time);
         ans.header_ptr = u16::to_le_bytes(header_ptr);
@@ -282,17 +306,10 @@ impl Entry {
     pub fn get_access(&self,what: Access) -> bool {
         return self.access & what as u8 > 0;
     }
-    pub fn set_access(&mut self,what: Access,which: bool) {
-        if which {
-            self.access |= what as u8;
-        } else {
-            self.access &= u8::MAX ^ what as u8;
-        }
+    pub fn set_access(&mut self,what: Attributes) {
+        self.access = update_access(self.access, what);
     }
-    // pub fn get_all_access(&self) -> u8 {
-    //     self.access
-    // }
-    pub fn set_all_access(&mut self,what: u8) {
+    pub fn overwrite_all_access(&mut self,what: u8) {
         self.access = what;
     }
     /// Panics if `name` is invalid
@@ -393,16 +410,6 @@ impl Header for VolDirHeader {
     fn dec_file_count(&mut self) {
         self.file_count = u16::to_le_bytes(u16::from_le_bytes(self.file_count)-1);
     }
-    fn set_access(&mut self,what: Access,which: bool) {
-        if which {
-            self.access |= what as u8;
-        } else {
-            self.access &= u8::MAX ^ what as u8;
-        }
-    }
-    fn set_all_access(&mut self,what: u8) {
-        self.access = what;
-    }
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start
         let mut ans: Vec<usize> = Vec::new();
@@ -428,16 +435,6 @@ impl Header for SubDirHeader {
     }
     fn dec_file_count(&mut self) {
         self.file_count = u16::to_le_bytes(u16::from_le_bytes(self.file_count)-1);
-    }
-    fn set_access(&mut self,what: Access,which: bool) {
-        if which {
-            self.access |= what as u8;
-        } else {
-            self.access &= u8::MAX ^ what as u8;
-        }
-    }
-    fn set_all_access(&mut self,what: u8) {
-        self.access = what;
     }
     fn standardize(&mut self,offset: usize) -> Vec<usize> {
         // these are relative to the block start
@@ -688,9 +685,6 @@ impl HasName for SubDirHeader {
 }
 
 impl Directory for KeyBlock<VolDirHeader> {
-    fn total_blocks(&self) -> Option<usize> {
-        Some(u16::from_le_bytes(self.header.total_blocks) as usize)
-    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         None
     }
@@ -709,9 +703,6 @@ impl Directory for KeyBlock<VolDirHeader> {
 }
 
 impl Directory for KeyBlock<SubDirHeader> {
-    fn total_blocks(&self) -> Option<usize> {
-        None
-    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         return Some(EntryLocation {
             block: u16::from_le_bytes(self.header.parent_ptr),
@@ -733,9 +724,6 @@ impl Directory for KeyBlock<SubDirHeader> {
 }
 
 impl Directory for EntryBlock {
-    fn total_blocks(&self) -> Option<usize> {
-        None
-    }
     fn parent_entry_loc(&self) -> Option<EntryLocation> {
         panic!("attempt to get parent from EntryBlock");
     }

@@ -30,11 +30,10 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::Write;
 use a2kit_macro::DiskStruct;
-use log::{trace,info,debug,warn,error};
 use types::*;
 use pack::*;
 use directory::*;
-use super::Block;
+use super::{Block,Attributes};
 use crate::bios::dpb::DiskParameterBlock;
 use crate::img;
 use crate::fs::FileImage;
@@ -83,19 +82,19 @@ fn std_access_and_typ(xname: &str) -> Result<(Vec<u8>,Vec<u8>),DYNERR> {
 /// This is used to test images, as well as being called during FS operations.
 fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> Option<Directory> {
     if dpb.disk_capacity() != img.byte_capacity() {
-        debug!("size mismatch: DPB has {}, img has {}",dpb.disk_capacity(),img.byte_capacity());
+        log::debug!("size mismatch: DPB has {}, img has {}",dpb.disk_capacity(),img.byte_capacity());
         return None;
     } else {
-        debug!("size matched: DPB and img both have {}",dpb.disk_capacity());
+        log::debug!("size matched: DPB and img both have {}",dpb.disk_capacity());
     }
     let mut buf: Vec<u8> = Vec::new();
     for iblock in 0..dpb.dir_blocks() {
-        if let Ok(dat) = img.read_block(Block::CPM((iblock,dpb.bsh,dpb.off))) {
+        match img.read_block(Block::CPM((iblock,dpb.bsh,dpb.off))) { Ok(dat) => {
             buf.append(&mut dat.clone());
-        } else {
-            debug!("cannot read CP/M block {}",iblock);
+        } _ => {
+            log::debug!("cannot read CP/M block {}",iblock);
             return None;
-        }
+        }}
     }
     let buf_size = dpb.dir_entries() * DIR_ENTRY_SIZE;
     Some(Directory::from_bytes(&buf[0..buf_size]).expect(RCH))
@@ -161,12 +160,12 @@ impl Disk
         // test the volume directory header
         if let Some(directory) = get_directory(img,dpb) {
             if let Err(_e) = directory.build_files(dpb,cpm_vers) {
-                debug!("Unable to build CP/M file directory");
+                log::debug!("Unable to build CP/M file directory");
                 return false;
             }
             return true;
         }
-        debug!("CP/M directory was not readable");
+        log::debug!("CP/M directory was not readable");
         return false;
     }
     fn get_directory(&mut self) -> Directory {
@@ -218,15 +217,15 @@ impl Disk
     fn num_free_extents(&self,dir: &Directory) -> usize {
         let mut ans: usize = 0;
         for i in 0..dir.num_entries() {
-            trace!("check entry {}",i);
+            log::trace!("check entry {}",i);
             match dir.get_type(&Ptr::ExtentEntry(i)) {
                 EntryType::Deleted | EntryType::Unknown => {
                     ans += 1
                 },
-                _ => { debug!("entry {} is used",i); }
+                _ => { log::debug!("entry {} is used",i); }
             }
         }
-        debug!("found {} free extents",ans);
+        log::debug!("found {} free extents",ans);
         return ans;
     }
     /// Read a block of data into buffer `data` starting at `offset` within the buffer.
@@ -284,7 +283,7 @@ impl Disk
     /// * `time.is_some()` causes creation of a label (maybe default name) and timestamps
     pub fn format(&mut self, vol_name: &str, time: Option<chrono::NaiveDateTime>) -> STDRESULT {
         if self.cpm_vers[0] >= 3 && vol_name.len()>0 && !is_name_valid(vol_name) {
-            error!("CP/M volume name invalid");
+            log::error!("CP/M volume name invalid");
             return Err(Box::new(Error::BadFormat));
         }
         // For CP/M 2, formatting is nothing more than filling all user sectors with
@@ -318,8 +317,8 @@ impl Disk
     }
     /// Read any file into a file image. Use `FileImage::sequence` to make the result sequential.
     fn read_file(&mut self,xname: &str) -> Result<FileImage,DYNERR> {
-        trace!("attempt to read {}",xname);
-        let dir = self.get_directory();
+        log::trace!("attempt to read {}",xname);
+        let mut dir = self.get_directory();
         let files = dir.build_files(&self.dpb,self.cpm_vers)?;
         if let Some(finfo) = get_file(xname,&files) {
             let pointers: Vec<&Ptr> = finfo.entries.values().collect();
@@ -327,7 +326,7 @@ impl Disk
             let mut buf = vec![0;self.dpb.block_size()];
             let mut block_count = 0;
             let mut prev_lx_count = 0;
-            for meta in pointers {
+            for meta in &pointers {
                 if let Some(fx) = dir.get_entry::<Extent>(&meta) {
                     // For CP/M the access info is encoded in the 8+3 filename.
                     // Furthermore, there is no type beyond the filename extension.
@@ -349,7 +348,7 @@ impl Disk
                     // Add any prior holes by adding to the block count, and check ordering
                     let curr_lx_count = fx.get_data_ptr().unwrap() + 1;
                     if curr_lx_count == prev_lx_count {
-                        error!("repeated extent index");
+                        log::error!("repeated extent index");
                         return Err(Box::new(Error::BadFormat));
                     }
                     let lx_lower_bound = (curr_lx_count - 1) & (usize::MAX ^ self.dpb.exm as usize);
@@ -360,11 +359,11 @@ impl Disk
                     // Get the data
                     for iblock in fx.get_block_list(&self.dpb) {
                         if iblock as usize >= self.dpb.user_blocks() {
-                            info!("possible extended data disk (not supported)");
+                            log::info!("possible extended data disk (not supported)");
                             return Err(Box::new(Error::ReadError));
                         }
                         if iblock>0 {
-                            debug!("read block {}",iblock);
+                            log::debug!("read block {}",iblock);
                             self.read_block(&mut buf, iblock as usize, 0)?;
                             ans.chunks.insert(block_count,buf.clone());
                         }
@@ -372,6 +371,11 @@ impl Disk
                     }
                     prev_lx_count = curr_lx_count;
                 }
+            }
+            // update the timestamp if applicable
+            if let (Some(lab),Some(lx0)) = (dir.find_label(),pointers.get(0)) {
+                Timestamp::maybe_set_access(&mut dir, &lab, &lx0, None)?;
+                self.save_directory(&dir)?;
             }
             return Ok(ans);
         }
@@ -383,12 +387,12 @@ impl Disk
         let (base,typ) = string_to_file_name(name);
         let img_typ = fimg.fs_type.clone();
         if typ[0]!=img_typ[0] || typ[1]!=img_typ[1] || typ[2]!=img_typ[2] {
-            warn!("CP/M file image type and extension are inconsistent");
+            log::warn!("CP/M file image type and extension are inconsistent");
         }
         let (flgs1,flgs2) = match fimg.access.len() {
             11 => (fimg.access[0..8].to_vec(),fimg.access[8..11].to_vec()),
             _ => {
-                warn!("CP/M file image has bad access field (ignoring)");
+                log::warn!("CP/M file image has bad access field (ignoring)");
                 (vec![0;8],vec![0;3])
             }
         };
@@ -404,8 +408,8 @@ impl Disk
     }
     /// Update extent data and save to directory buffer
     fn close_extent(&self,entry_ptr: &Ptr,fx: &mut Extent,dir: &mut Directory,lx_count: usize,is_last: bool,fimg: &FileImage) {
-        trace!("close extent with index {}",lx_count-1);
-        trace!("block pointers {:?}",fx.block_list);
+        log::trace!("close extent with index {}",lx_count-1);
+        log::trace!("block pointers {:?}",fx.block_list);
         fx.set_data_ptr(Ptr::ExtentData(lx_count-1));
         let eof = fimg.get_eof();
         let mut remainder = eof % self.dpb.extent_capacity();
@@ -419,13 +423,13 @@ impl Disk
     fn write_file(&mut self,xname: &str,fimg: &FileImage) -> Result<usize,DYNERR> {
         let (user,name) = split_user_filename(xname)?;
         if !is_name_valid(&name) {
-            error!("invalid CP/M filename");
+            log::error!("invalid CP/M filename");
             return Err(Box::new(Error::BadFormat));
         }
         let mut dir = self.get_directory();
         let files = dir.build_files(&self.dpb,self.cpm_vers)?;
         if get_file(xname,&files).is_some() {
-            error!("overwriting is not allowed");
+            log::error!("overwriting is not allowed");
             return Err(Box::new(Error::FileExists));
         }
         // this is a new file
@@ -451,8 +455,8 @@ impl Disk
         if extents==0 {
             extents = 1;
         }
-        debug!("file requires {} data blocks and {} extents",data_blocks,extents);
-        debug!("{} data blocks and {} extents are available",self.num_free_blocks(&dir),self.num_free_extents(&dir));
+        log::debug!("file requires {} data blocks and {} extents",data_blocks,extents);
+        log::debug!("{} data blocks and {} extents are available",self.num_free_blocks(&dir),self.num_free_extents(&dir));
         if (self.num_free_blocks(&dir) as usize) < data_blocks {
             return Err(Box::new(Error::DiskFull));
         }
@@ -471,14 +475,14 @@ impl Disk
         let mut maybe_entry1: Option<Ptr> = None;
         for x in 0..extents {
             // loop over 16K logical extents
-            debug!("write physical extent {}",x);
+            log::debug!("write physical extent {}",x);
             let mut lx_used_in_x = 0;
             for lx in 0..lx_per_x {
                 for loc_slot in 0..slots_per_lx {
                     let glob_slot = x*slots_per_extent + lx*slots_per_lx + loc_slot;
                     if fimg.chunks.contains_key(&glob_slot) {
                         let iblock = self.get_available_block(&dir).unwrap();
-                        trace!("map logical extent {} slot {} to block {}",lx,loc_slot,iblock);
+                        log::trace!("map logical extent {} slot {} to block {}",lx,loc_slot,iblock);
                         // if there is no extent yet create it
                         if maybe_fx==None {
                             (entry_ptr,maybe_fx) = self.open_extent(&name,user,fimg,&dir,&mut maybe_entry1);
@@ -496,7 +500,7 @@ impl Disk
             if x+1 < extents {
                 lx_used_in_x = lx_per_x;
             }
-            debug!("extent used {} logical extents",lx_used_in_x);
+            log::debug!("extent used {} logical extents",lx_used_in_x);
             // update totals and save the extent to the directory buffer
             lx_count_tot += lx_used_in_x;
             if let Some(fx) = maybe_fx.as_mut() {
@@ -512,7 +516,6 @@ impl Disk
         }
         // update the timestamp if applicable
         if let (Some(lab),Some(lx0)) = (dir.find_label(),maybe_entry1) {
-            debug!("creating timestamp for entry {}",lx0.unwrap());
             Timestamp::maybe_set_create(&mut dir, &lab, &lx0, None)?;
         }
         // save the directory changes
@@ -525,7 +528,7 @@ impl Disk
     fn modify(&mut self,old_xname: &str,maybe_new_xname: Option<&str>,access: [i8;11]) -> STDRESULT {
         let (_,old_name) = split_user_filename(old_xname)?;
         if !is_name_valid(&old_name) {
-            error!("invalid CP/M filename");
+            log::error!("invalid CP/M filename");
             return Err(Box::new(Error::BadFormat));
         }
         let mut dir = self.get_directory();
@@ -535,15 +538,15 @@ impl Disk
             if let Some(new_xname) = maybe_new_xname {
                 let (new_user,new_name) = split_user_filename(new_xname)?;
                 if !is_name_valid(&new_name) {
-                    error!("invalid CP/M filename");
+                    log::error!("invalid CP/M filename");
                     return Err(Box::new(Error::BadFormat));
                 }
-                debug!("renaming to {}, user {}",new_name,new_user);
+                log::debug!("renaming to {}, user {}",new_name,new_user);
                 if get_file(new_xname,&files).is_none() {
                     for entry in finfo.entries.values() {
                         if let Some(mut fx) = dir.get_entry::<Extent>(&entry) {
                             if fx.get_flags()[8]>0 {
-                                error!("{} is read only, unlock first",old_name);
+                                log::error!("{} is read only, unlock first",old_name);
                                 return Err(Box::new(Error::FileReadOnly));
                             }
                             let (base,typ) = string_to_file_name(&new_name);
@@ -572,10 +575,79 @@ impl Disk
                     dir.set_entry(&entry,&fx);
                 }
             }
+            if let (Some(lab),Some(lx0)) = (dir.find_label(),finfo.entries.values().next()) {
+                Timestamp::maybe_set_update(&mut dir, &lab, &lx0, None)?;
+            }
             self.save_directory(&dir)?;
             return Ok(());
         } else {
             return Err(Box::new(Error::FileNotFound));
+        }
+    }
+    fn protect(&mut self,xname: &str,permissions: Attributes,password: &str) -> STDRESULT {
+        if password.len()==0 || !is_password_valid(password) {
+            log::error!("password is invalid");
+            return Err(Box::new(Error::BadFormat));
+        }
+        let mut dir = self.get_directory();
+        if dir.find_label().is_none() {
+            log::error!("no label on this disk, cannot protect");
+            return Err(Box::new(Error::BadFormat));
+        }
+        let files = dir.build_files(&self.dpb,self.cpm_vers)?;
+        if let Some(_) = get_file(xname,&files) {
+            let (user,name_string) = split_user_filename(xname)?;
+            let (name,typ) = string_to_file_name(&name_string);
+            // first try updating an existing one
+            for i in 0..dir.num_entries() {
+                if let Some(mut px) = dir.get_entry::<Password>(&Ptr::ExtentEntry(i)) {
+                    if px.user==user+16 && px.name==name && px.typ==typ {
+                        px.merge(password,permissions);
+                        dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &px);
+                        return self.save_directory(&dir);
+                    }
+                }
+            }
+            // if we are still here we need to make a new one
+            let mut completion: i32 = 0;
+            let new_px = Password::create(password, user, &name_string, permissions);
+            for i in 0..dir.num_entries() {
+                if let Some(mut lab) = dir.get_entry::<Label>(&Ptr::ExtentEntry(i)) {
+                    // TODO: is this protecting the label, or enabling file protection?
+                    lab.protect(true);
+                    dir.set_entry::<Label>(&Ptr::ExtentEntry(i), &lab);
+                    completion += 1;
+                }
+                if dir.get_type(&Ptr::ExtentEntry(i))==EntryType::Deleted {
+                    dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &new_px);
+                    completion += 1;
+                }
+                if completion==2 {
+                    return self.save_directory(&dir);
+                }
+            }
+            return Err(Box::new(Error::DirectoryFull));
+        }
+        return Err(Box::new(Error::FileNotFound));        
+    }
+    fn unprotect(&mut self,xname: &str) -> STDRESULT {
+        let mut found = false;
+        let mut dir = self.get_directory();
+        log::debug!("removing password for {}",xname);
+        let (user,name_string) = split_user_filename(xname)?;
+        let (name,typ) = string_to_file_name(&name_string);
+        for i in 0..dir.num_entries() {
+            if let Some(mut px) = dir.get_entry::<Password>(&Ptr::ExtentEntry(i)) {
+                if px.user==user+16 && px.name==name && px.typ==typ {
+                    px.user = DELETED;
+                    dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &px);
+                    found = true;
+                }
+            }
+        }
+        match found {
+            true => self.save_directory(&dir),
+            false => Err(Box::new(Error::FileNotFound))
         }
     }
 }
@@ -666,7 +738,7 @@ impl super::DiskFS for Disk {
         display::tree(&dir,&self.dpb,include_meta,indent)
     }
     fn create(&mut self,_path: &str) -> STDRESULT {
-        error!("CP/M implementation does not support operation");
+        log::error!("CP/M implementation does not support operation");
         return Err(Box::new(Error::Select));
     }
     fn delete(&mut self,xname: &str) -> STDRESULT {
@@ -677,7 +749,7 @@ impl super::DiskFS for Disk {
             for ptr in &pointers {
                 if let Some(mut fx) = dir.get_entry::<Extent>(ptr) {
                     if fx.get_flags()[8]>0 {
-                        error!("{} is read only, unlock first",xname);
+                        log::error!("{} is read only, unlock first",xname);
                         return Err(Box::new(Error::FileReadOnly));
                     }
                     fx.user = DELETED;
@@ -690,82 +762,22 @@ impl super::DiskFS for Disk {
             return Err(Box::new(Error::FileNotFound));
         }
     }
-    fn protect(&mut self,xname: &str,password: &str,read: bool,write: bool,delete: bool) -> STDRESULT {
-        if password.len()==0 || !is_password_valid(password) {
-            error!("password is invalid");
-            return Err(Box::new(Error::BadFormat));
-        }
-        let mut dir = self.get_directory();
-        if !read && !write && !delete {
-            error!("no flag specified, perhaps use unprotect");
-            return Err(Box::new(Error::BadFormat));
-        }
-        if dir.find_label().is_none() {
-            error!("no label on this disk, cannot protect");
-            return Err(Box::new(Error::BadFormat));
-        }
-        let files = dir.build_files(&self.dpb,self.cpm_vers)?;
-        if let Some(_) = get_file(xname,&files) {
-            let (user,name_string) = split_user_filename(xname)?;
-            let (name,typ) = string_to_file_name(&name_string);
-            let new_px = Password::create(password, user, &name_string, read, write, delete);
-            // first try updating an existing one
-            for i in 0..dir.num_entries() {
-                if let Some(old_px) = dir.get_entry::<Password>(&Ptr::ExtentEntry(i)) {
-                    if old_px.user==user+16 && old_px.name==name && old_px.typ==typ {
-                        dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &new_px);
-                        return self.save_directory(&dir);
-                    }
-                }
-            }
-            // if we are still here we need to make a new one
-            let mut completion: i32 = 0;
-            for i in 0..dir.num_entries() {
-                if let Some(mut lab) = dir.get_entry::<Label>(&Ptr::ExtentEntry(i)) {
-                    // TODO: is this protecting the label, or enabling file protection?
-                    lab.protect(true);
-                    dir.set_entry::<Label>(&Ptr::ExtentEntry(i), &lab);
-                    completion += 1;
-                }
-                if dir.get_type(&Ptr::ExtentEntry(i))==EntryType::Deleted {
-                    dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &new_px);
-                    completion += 1;
-                }
-                if completion==2 {
-                    return self.save_directory(&dir);
-                }
-            }
-            return Err(Box::new(Error::DirectoryFull));
-        }
-        return Err(Box::new(Error::FileNotFound));        
-    }
-    fn unprotect(&mut self,xname: &str) -> STDRESULT {
-        let mut found = false;
-        let mut dir = self.get_directory();
-        debug!("removing password for {}",xname);
-        let (user,name_string) = split_user_filename(xname)?;
-        let (name,typ) = string_to_file_name(&name_string);
-        for i in 0..dir.num_entries() {
-            if let Some(mut px) = dir.get_entry::<Password>(&Ptr::ExtentEntry(i)) {
-                if px.user==user+16 && px.name==name && px.typ==typ {
-                    px.user = DELETED;
-                    dir.set_entry::<Password>(&Ptr::ExtentEntry(i), &px);
-                    found = true;
-                }
+    fn set_attrib(&mut self,xname: &str,permissions: Attributes,maybe_password: Option<&str>) -> STDRESULT {
+        if let Some(password) = maybe_password {
+            if password.len() == 0 {
+                return self.unprotect(xname);
+            } else {
+                return self.protect(xname,permissions,password);
             }
         }
-        match found {
-            true => self.save_directory(&dir),
-            false => Err(Box::new(Error::FileNotFound))
+        match permissions.write {
+            Some(false) => self.modify(xname,None,[0,0,0,0,0,0,0,0,1,0,0]),
+            Some(true) => self.modify(xname,None,[0,0,0,0,0,0,0,0,-1,0,0]),
+            None => {
+                log::warn!("set access resulted in no changes");
+                Ok(())
+            }
         }
-    }
-    fn lock(&mut self,xname: &str) -> STDRESULT {
-        // CP/M v2 or higher uses bit 7 of typ[0] for read only
-        return self.modify(xname,None,[0,0,0,0,0,0,0,0,1,0,0]);
-    }
-    fn unlock(&mut self,xname: &str) -> STDRESULT {
-        // CP/M v2 or higher uses bit 7 of typ[0] for read only
-        return self.modify(xname,None,[0,0,0,0,0,0,0,0,-1,0,0]);
     }
     fn rename(&mut self,old_xname: &str,new_xname: &str) -> STDRESULT {
         return self.modify(old_xname,Some(new_xname),[0;11]);
@@ -778,7 +790,7 @@ impl super::DiskFS for Disk {
             return self.modify(xname,None,[0,0,0,0,0,0,0,0,0,-1,0]);
         }
         else {
-            error!("new type must be `dir` or `sys`");
+            log::error!("new type must be `dir` or `sys`");
             return Err(Box::new(Error::Select));
         }
     }
@@ -807,11 +819,11 @@ impl super::DiskFS for Disk {
     }
     fn put(&mut self,fimg: &FileImage) -> Result<usize,DYNERR> {
         if fimg.file_system!=FS_NAME {
-            error!("cannot write {} file image to cpm",fimg.file_system);
+            log::error!("cannot write {} file image to cpm",fimg.file_system);
             return Err(Box::new(Error::Select));
         }
         if fimg.chunk_len!=self.dpb.block_size() {
-            error!("chunk length {} is incompatible with the DPB for this CP/M",fimg.chunk_len);
+            log::error!("chunk length {} is incompatible with the DPB for this CP/M",fimg.chunk_len);
             return Err(Box::new(Error::Select));
         }
         self.write_file(&fimg.full_path,fimg)

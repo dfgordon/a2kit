@@ -18,7 +18,7 @@ use log::{trace,debug,error};
 use types::*;
 use pack::*;
 use directory::*;
-use super::Block;
+use super::{Block,Attributes};
 use crate::img;
 use crate::{DYNERR,STDRESULT};
 
@@ -362,7 +362,7 @@ impl Disk {
         for _try in 0..100 {
             let mut dir = self.get_directory(curr as usize)?;
             if dir.next()==0 {
-                if let Some(avail) = self.get_available_block()? {
+                match self.get_available_block()? { Some(avail) => {
                     // update the parent entry
                     entry.set_eof(entry.eof()+512);
                     entry.delta_blocks(1);
@@ -375,9 +375,9 @@ impl Disk {
                     dir.set_links(Some(curr),Some(0));
                     self.write_block(&dir.to_bytes(),avail as usize,0)?;
                     return Ok(EntryLocation { block: avail, idx: 1});
-                } else {
+                } _ => {
                     return Err(Box::new(Error::DiskFull));
-                }
+                }}
             }
             curr = dir.next();
         }
@@ -399,15 +399,15 @@ impl Disk {
             curr = dir.next();
             if curr==0 {
                 dir = self.get_directory(key_block as usize)?;
-                if let Some(parent_loc) = dir.parent_entry_loc() {
+                match dir.parent_entry_loc() { Some(parent_loc) => {
                     return match self.expand_directory(&parent_loc) {
                         Ok(loc) => Ok(loc),
                         Err(e) => Err(e)
                     }
-                } else {
+                } _ => {
                     // this is the volume directory which we cannot expand
                     return Err(Box::new(Error::DirectoryFull));
-                }
+                }}
             }
         }
         error!("directory block count not plausible, aborting");
@@ -503,7 +503,7 @@ impl Disk {
                 l if l==n-1 => file_types.clone(),
                 _ => vec![StorageType::SubDirEntry]
             };
-            if let Some(loc) = self.search_entries(&file_types_now, &subdir, curr)? {
+            match self.search_entries(&file_types_now, &subdir, curr)? { Some(loc) => {
                 // success conditions:
                 // 1. this is the terminus
                 // 2. this is the last subdirectory, terminus is empty, directory was requested
@@ -512,9 +512,9 @@ impl Disk {
                 }
                 let entry = self.read_entry(&loc)?;
                 curr = entry.get_ptr();
-            } else {
+            } _ => {
                 return Err(Box::new(Error::PathNotFound));
-            }
+            }}
         }
         return Err(Box::new(Error::PathNotFound));
     }
@@ -663,30 +663,30 @@ impl Disk {
             return Err(Box::new(Error::Syntax));
         }
         // find the parent key block, entry location, and new data block (or new key block if directory)
-        if let Ok(key_block) = self.find_dir_key_block(&parent_path) {
+        match self.find_dir_key_block(&parent_path) { Ok(key_block) => {
             if let Some(_loc) = self.search_entries(&types, &name, key_block)? {
                 return Err(Box::new(Error::DuplicateFilename));
             }
             match self.get_available_entry(key_block) {
                 Ok(loc) => {
-                    if let Some(new_block) = self.get_available_block()? {
+                    match self.get_available_block()? { Some(new_block) => {
                         return Ok((name,key_block,loc,new_block));
-                    } else {
+                    } _ => {
                         return Err(Box::new(Error::DiskFull));
-                    }
+                    }}
                 },
                 Err(e) => return Err(e)
             }
-        } else {
+        } _ => {
             return Err(Box::new(Error::PathNotFound));
-        }
+        }}
     }
     // Write a data block or account for a hole.
     // It is up to the creator of SparseFileData to ensure that the first block is not empty. 
     fn write_data_block_or_not(&mut self,count: usize,end: usize,ent: &mut Entry,buf_maybe: Option<&Vec<u8>>) -> Result<u16,DYNERR> {
         let mut eof = ent.eof();
         if let Some(buf) = buf_maybe {
-            if let Some(data_block) = self.get_available_block()? {
+            match self.get_available_block()? { Some(data_block) => {
                 self.write_block(&buf,data_block as usize,0)?;
                 eof += match count {
                     c if c+1 < end => 512,
@@ -695,10 +695,10 @@ impl Disk {
                 ent.delta_blocks(1);
                 ent.set_eof(eof);
                 return Ok(data_block);
-            } else {
+            } _ => {
                 error!("block not available, but it should have been");
                 return Err(Box::new(Error::DiskFull));
-            }
+            }}
         } else {
             eof += 512;
             ent.set_eof(eof);
@@ -845,30 +845,19 @@ impl Disk {
         if eof>0 {
             entry.set_eof(eof);
         }
-        entry.set_all_access(fimg.access[0]);
+        entry.overwrite_all_access(fimg.access[0]);
         self.write_entry(&loc,&entry)?;
         return Ok(eof);
     }
-    /// modify a file entry, optionally lock, unlock, rename, retype; attempt to change already locked file will fail.
-    fn modify(&mut self,loc: &EntryLocation,maybe_lock: Option<bool>,maybe_new_name: Option<&str>,
+    /// modify a file entry, optionally set access, rename, retype; attempt to change already locked file will fail.
+    fn modify(&mut self,loc: &EntryLocation,permissions: Attributes,maybe_new_name: Option<&str>,
         maybe_new_type: Option<&str>,maybe_new_aux: Option<u16>) -> STDRESULT {  
         let dir = self.get_directory(loc.block as usize)?;
         let mut entry = dir.get_entry(&loc);
         if !entry.get_access(Access::Rename) && maybe_new_name!=None {
             return Err(Box::new(Error::WriteProtected));
         }
-        if let Some(lock) = maybe_lock {
-            if lock {
-                entry.set_access(Access::Destroy,false);
-                entry.set_access(Access::Rename,false);
-                entry.set_access(Access::Write,false);
-            } else {
-                entry.set_access(Access::Read,true);
-                entry.set_access(Access::Destroy,true);
-                entry.set_access(Access::Rename,true);
-                entry.set_access(Access::Write,true);
-            }
-        }
+        entry.set_access(permissions);
         if let Some(new_name) = maybe_new_name {
             entry.rename(new_name);
         }
@@ -1075,7 +1064,7 @@ impl super::DiskFS for Disk {
         }
         if let Ok(ptr) = self.find_dir_key_block(path) {
             let mut dir = self.get_directory(ptr as usize)?;
-            if let Some(parent_loc) = dir.parent_entry_loc() {
+            match dir.parent_entry_loc() { Some(parent_loc) => {
                 let mut parent_dir = self.get_directory(parent_loc.block as usize)?;
                 if dir.file_count()>0 {
                     return Err(Box::new(Error::WriteProtected));
@@ -1097,45 +1086,33 @@ impl super::DiskFS for Disk {
                 }
                 error!("directory block count not plausible, aborting");
                 return Err(Box::new(Error::EndOfData));
-            } else {
+            } _ => {
                 return Err(Box::new(Error::WriteProtected));
-            }
+            }}
         }
         return Err(Box::new(Error::PathNotFound));
     }
-    fn protect(&mut self,_path: &str,_password: &str,_read: bool,_write: bool,_delete: bool) -> STDRESULT {
-        error!("ProDOS does not support operation");
-        Err(Box::new(Error::Syntax))
-    }
-    fn unprotect(&mut self,_path: &str) -> STDRESULT {
-        error!("ProDOS does not support operation");
-        Err(Box::new(Error::Syntax))
-    }
-    fn lock(&mut self,path: &str) -> STDRESULT {
-        match self.find_file(path) {
-            Ok(loc) => {
-                self.modify(&loc,Some(true),None,None,None)
-            },
-            Err(e) => Err(e)
-        }
-    }
-    fn unlock(&mut self,path: &str) -> STDRESULT {
-        match self.find_file(path) {
-            Ok(loc) => {
-                self.modify(&loc,Some(false),None,None,None)
-            },
-            Err(e) => Err(e)
-        }
-    }
-    fn rename(&mut self,path: &str,name: &str) -> STDRESULT {
-        self.ok_to_rename(path, name)?;
+    fn set_attrib(&mut self,path: &str,permissions: Attributes,_password: Option<&str>) -> STDRESULT {
         if let Ok(loc) = self.find_file(path) {
-            return self.modify(&loc,None,Some(name),None,None);
+            return self.modify(&loc,permissions,None,None,None);
         }
         if let Ok(ptr) = self.find_dir_key_block(path) {
             let dir = self.get_directory(ptr as usize)?;
             if let Some(parent_loc) = dir.parent_entry_loc() {
-                return self.modify(&parent_loc,None,Some(name),None,None);
+                return self.modify(&parent_loc,permissions,None,None,None);
+            }
+        }
+        return Err(Box::new(Error::PathNotFound));
+    }
+    fn rename(&mut self,path: &str,name: &str) -> STDRESULT {
+        self.ok_to_rename(path, name)?;
+        if let Ok(loc) = self.find_file(path) {
+            return self.modify(&loc,Attributes::new(),Some(name),None,None);
+        }
+        if let Ok(ptr) = self.find_dir_key_block(path) {
+            let dir = self.get_directory(ptr as usize)?;
+            if let Some(parent_loc) = dir.parent_entry_loc() {
+                return self.modify(&parent_loc,Attributes::new(),Some(name),None,None);
             }
         }
         return Err(Box::new(Error::PathNotFound));
@@ -1144,7 +1121,7 @@ impl super::DiskFS for Disk {
         match u16::from_str(sub_type) {
             Ok(aux) => match self.find_file(path) {
                 Ok(loc) => {
-                    self.modify(&loc, None, None,Some(new_type),Some(aux))
+                    self.modify(&loc, Attributes::new(), None,Some(new_type),Some(aux))
                 },
                 Err(e) => Err(e)
             }

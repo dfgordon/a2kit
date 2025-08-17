@@ -103,7 +103,7 @@ impl Nib {
             self.write_back_track();
             self.track_pos = track;
             let bit_count = self.trk_cap * 8;
-            self.cells = FluxCells::from_woz_bits(bit_count,self.get_trk_bits_ref(tkey.clone())?);
+            self.cells = FluxCells::from_woz_bits(bit_count,self.get_trk_bits_ref(tkey.clone())?,0,false);
         }
         img::woz::get_motor_pos(tkey, &self.kind)
     }
@@ -175,7 +175,7 @@ impl img::DiskImage for Nib {
         match buf.len() {
             l if l==35*TRACK_BYTE_CAPACITY_NIB => {
                 let data = buf.to_vec();
-                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NIB*8, &data[0..TRACK_BYTE_CAPACITY_NIB]);
+                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NIB*8, &data[0..TRACK_BYTE_CAPACITY_NIB],0,false);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),
@@ -186,17 +186,17 @@ impl img::DiskImage for Nib {
                     cells,
                     track_pos: 0,
                 };
-                if let Ok(Some(_sol)) = disk.get_track_solution(0) {
+                match disk.get_track_solution(0) { Ok(Some(_sol)) => {
                     log::debug!("setting disk kind to {}",disk.kind);
                     return Ok(disk);
-                } else {
+                } _ => {
                     log::debug!("Looks like NIB, but could not solve track 0");
                     return Err(DiskStructError::UnexpectedValue);
-                }
+                }}
             },
             l if l==35*TRACK_BYTE_CAPACITY_NB2 => {
                 let data = buf.to_vec();
-                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NB2*8, &data[0..TRACK_BYTE_CAPACITY_NB2]);
+                let cells = FluxCells::from_woz_bits(TRACK_BYTE_CAPACITY_NB2*8, &data[0..TRACK_BYTE_CAPACITY_NB2],0,false);
                 let mut disk = Self {
                     kind: img::names::A2_DOS33_KIND,
                     fmt: Some(img::tracks::DiskFormat::apple_525_16(8)),
@@ -207,13 +207,13 @@ impl img::DiskImage for Nib {
                     cells,
                     track_pos: usize::MAX
                 };
-                if let Ok(Some(_sol)) = disk.get_track_solution(0) {
+                match disk.get_track_solution(0) { Ok(Some(_sol)) => {
                     log::debug!("setting disk kind to {}",disk.kind);
                     return Ok(disk);
-                } else {
+                } _ => {
                     log::debug!("Looks like NB2, but could not solve track 0");
                     return Err(DiskStructError::UnexpectedValue);
-                }
+                }}
             }
             _ => {
                 log::debug!("Buffer size {} fails to match nib or nb2",buf.len());

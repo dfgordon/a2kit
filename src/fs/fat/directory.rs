@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use chrono::{NaiveDate,NaiveTime};
 use log::{debug,warn,trace};
 use super::types::*;
-use crate::fs::FileImage;
+use crate::fs::{FileImage,Attributes};
 use crate::{STDRESULT,DYNERR};
 
 // a2kit_macro automatically derives `new`, `to_bytes`, `from_bytes`, and `length` from a DiskStruct.
@@ -30,14 +30,43 @@ pub const VOLUME_ID: u8 = 8;
 pub const DIRECTORY: u8 = 16;
 pub const ARCHIVE: u8 = 32;
 pub const LONG_NAME: u8 = 15;
-pub const LONG_NAME_SUB: u8 = 63;
+//pub const LONG_NAME_SUB: u8 = 63;
+
+fn update_attrib(curr: u8,what: Attributes) -> u8 {
+    let mut ans = curr;
+    let mut change_flag = |setting: bool,flag: u8| {
+        if setting {
+            ans |= flag;
+        } else {
+            ans &= u8::MAX ^ flag;
+        }
+    };
+    if let Some(setting) = what.backup {
+        change_flag(setting,ARCHIVE);
+    }
+    if let Some(setting) = what.write {
+        change_flag(!setting,READ_ONLY);
+    }
+    if let Some(setting) = what.hidden {
+        change_flag(setting,HIDDEN);
+    }
+    if let Some(setting) = what.system {
+        change_flag(setting,SYSTEM);
+    }
+    if let Some(setting) = what.dir {
+        change_flag(setting,DIRECTORY);
+    }
+    if let Some(setting) = what.vol {
+        change_flag(setting,VOLUME_ID);
+    }
+    ans
+}
 
 /// Convenient collection of information about a file.
 /// Flags are broken out into their own variables.
 /// This is the value of the map produced by Directory::build_files.
 #[derive(Clone)]
 pub struct FileInfo {
-    pub is_root: bool,
     pub wildcard: String,
     pub idx: usize,
     pub name: String,
@@ -48,8 +77,6 @@ pub struct FileInfo {
     pub volume_id: bool,
     pub directory: bool,
     pub archived: bool,
-    pub long_name: bool,
-    pub long_name_sub: bool,
     pub create_date: Option<NaiveDate>,
     pub create_time: Option<NaiveTime>,
     pub write_date: Option<NaiveDate>,
@@ -112,7 +139,6 @@ impl FileInfo {
     /// for FAT12 or FAT16 set cluster1=0
     pub fn create_root(cluster1: usize) -> Self {
         Self {
-            is_root: true,
             wildcard: String::new(),
             idx: 0,
             name: "".to_string(),
@@ -123,8 +149,6 @@ impl FileInfo {
             volume_id: false,
             directory: true,
             archived: false,
-            long_name: false,
-            long_name_sub: false,
             create_date: None,
             create_time: None,
             write_date: None,
@@ -140,7 +164,6 @@ impl FileInfo {
     /// represent file info as a wildcard pattern
     pub fn create_wildcard(pattern: &str) -> Self {
         Self {
-            is_root: false,
             wildcard: String::from(pattern),
             idx: 0,
             name: "".to_string(),
@@ -151,8 +174,6 @@ impl FileInfo {
             volume_id: false,
             directory: true,
             archived: false,
-            long_name: false,
-            long_name_sub: false,
             create_date: None,
             create_time: None,
             write_date: None,
@@ -307,13 +328,9 @@ impl Entry {
     pub fn get_attr(&self,mask: u8) -> bool {
         (self.attr & mask) > 0
     }
-    /// set bits high wherever mask is high (attr | mask)
-    pub fn set_attr(&mut self,mask: u8) {
-        self.attr |= mask;
-    }
-    /// set bits low wherever mask is high (attr & !mask)
-    pub fn clear_attr(&mut self,mask: u8) {
-        self.attr &= !mask;
+    /// set, unset, or leave the given attributes
+    pub fn set_attr(&mut self,attrib: Attributes) {
+        self.attr = update_attrib(self.attr, attrib);
     }
     pub fn standardize(offset: usize) -> Vec<usize> {
         // relative to the entry start
@@ -435,7 +452,6 @@ impl Directory {
             cluster1 += (u16::MAX as usize) * (u16::from_le_bytes(entry.cluster1_high) as usize);
         }
         let finfo: FileInfo = FileInfo {
-            is_root: false,
             wildcard: String::new(),
             idx: entry_idx,
             name,
@@ -446,8 +462,6 @@ impl Directory {
             volume_id: (entry.attr & VOLUME_ID) > 0,
             directory: (entry.attr & DIRECTORY) > 0,
             archived: (entry.attr & ARCHIVE) > 0,
-            long_name: (entry.attr & LONG_NAME) > 0,
-            long_name_sub: (entry.attr & LONG_NAME_SUB) > 0,
             write_date: super::pack::unpack_date(entry.write_date),
             write_time: super::pack::unpack_time(entry.write_time,0),
             create_date: super::pack::unpack_date(entry.creation_date),

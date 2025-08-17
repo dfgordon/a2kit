@@ -34,12 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * CLI `get` can be coerced into formatting output for the console
 * macro expansions handle `]0` (Merlin 16 or higher)
 * additional diagnostics and settings for Merlin server
+* more fine grained control of permissions
 
 ### Breaking Changes (CLI)
 
 * The `mkdsk --kind` values are changed
     - ambiguous kinds such as `5.25in` are no longer allowed
     - every floppy kind is in the form of a triple `<PKG-VEND-FMT>`
+* Subcommands `lock`, `unlock`, `protect`, and `unprotect` are replaced by `access`
 * Scripts that depend on `geometry` output will need to be reviewed
 * Error return types have changed in some cases
 
@@ -51,7 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * various public entities are eliminated from `img::woz`
 * changes to `DiskImage` trait
     - eliminated `track_2_ch`, `ch_2_track`
-* enumeration `img::NibbleCode` is eliminated 
+* changes to `DiskFS` trait
+    - permissions are controlled by `set_attrib`, while `lock`, `unlock`, `protect`, and `unprotect` are eliminated
+* enumerations `img::NibbleCode` and `img::DataRate` are eliminated 
 * removed functions `lang::merlin::eval_if`, `img::imd::cpm_blocking`
 * trait function args or return values changed: `Renumber::build_edits`, `Packing::get_load_address`
 * language parsers use tree-sitter 0.25

@@ -19,7 +19,7 @@ use crate::fs::Block;
 use crate::{STDRESULT,DYNERR,getByte,putByte,getByteEx};
 
 macro_rules! verified_get_byte {
-    ($slf:ident.$ibuf:ident,$ptr:ident,$loc:expr) => {
+    ($slf:ident.$ibuf:ident,$ptr:ident,$loc:expr_2021) => {
         match $ptr < $slf.$ibuf.len() {
             true => {
                 $ptr += 1;
@@ -34,7 +34,7 @@ macro_rules! verified_get_byte {
 }
 
 macro_rules! verified_get_slice {
-    ($slf:ident.$ibuf:ident,$ptr:ident,$len:expr,$loc:expr) => {
+    ($slf:ident.$ibuf:ident,$ptr:ident,$len:expr_2021,$loc:expr_2021) => {
         match $ptr + $len <= $slf.$ibuf.len() {
             true => {
                 $ptr += $len;
@@ -49,7 +49,7 @@ macro_rules! verified_get_slice {
 }
 
 macro_rules! optional_get_slice {
-    ($ibuf:ident,$ptr:ident,$len:expr,$loc:expr) => {
+    ($ibuf:ident,$ptr:ident,$len:expr_2021,$loc:expr_2021) => {
         match $ptr + $len <= $ibuf.len() {
             true => {
                 $ptr += $len;
@@ -495,13 +495,13 @@ impl Td0 {
         // The following applies to the whole disk, yet the flux code is also packed in
         // a high bit in each track header - how to resolve if there is a conflict
         // is not strictly known.
-        let encoded_rate = match (layout.data_rate[0],layout.flux_code[0]) {
-            (super::DataRate::R250Kbps,super::FluxCode::FM) => 0x80,
-            (super::DataRate::R300Kbps,super::FluxCode::FM) => 0x81,
-            (super::DataRate::R500Kbps,super::FluxCode::FM) => 0x82,
-            (super::DataRate::R250Kbps,super::FluxCode::MFM) => 0x00,
-            (super::DataRate::R300Kbps,super::FluxCode::MFM) => 0x01,
-            (super::DataRate::R500Kbps,super::FluxCode::MFM) => 0x02,
+        let encoded_rate = match (layout.speed_kbps[0],layout.flux_code[0]) {
+            (250,super::FluxCode::FM) => 0x80,
+            (300,super::FluxCode::FM) => 0x81,
+            (500,super::FluxCode::FM) => 0x82,
+            (250,super::FluxCode::MFM) => 0x00,
+            (300,super::FluxCode::MFM) => 0x01,
+            (500,super::FluxCode::MFM) => 0x02,
             _ => {
                 panic!("unsupported data rate and flux encoding");
             }
@@ -829,14 +829,14 @@ impl img::DiskImage for Td0 {
                 }
                 // CRC for sector data
                 // We will not stop for bad sector CRC, but do warn
-                if let Ok(unpacked_data) = sec.unpack() {
+                match sec.unpack() { Ok(unpacked_data) => {
                     let expected_sector_crc = crc16(0,&unpacked_data);
                     if sec.header.crc != (expected_sector_crc & 0xff) as u8 {
                         warn!("sector CRC mismatch in sector record {} with id {}",i,sec.header.id);
                     }
-                } else {
+                } _ => {
                     trace!("no sector data - skip CRC");
-                }
+                }}
                 trk.sectors.push(sec);
             }
             ans.tracks.push(trk);
@@ -939,6 +939,12 @@ impl img::DiskImage for Td0 {
             cylinder: trk_obj.header.cylinder as usize,
             fraction: [0,1],
             head: (trk_obj.header.head & HEAD_MASK) as usize,
+            speed_kbps: match self.header.data_rate & 0b11 {
+                0 => 250,
+                1 => 300,
+                2 => 500,
+                _ => 0
+            },
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,

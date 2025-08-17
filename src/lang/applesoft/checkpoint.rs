@@ -175,7 +175,7 @@ impl CheckpointManager {
             symbols: Arc::new(Symbols::new())
         }
     }
-    pub fn update_doc(&mut self,uri: lsp::Url, txt: String, version: Option<i32>) {
+    pub fn update_doc(&mut self,uri: lsp::Uri, txt: String, version: Option<i32>) {
         self.doc.uri = uri;
         self.doc.text = txt;
         self.doc.version = version;
