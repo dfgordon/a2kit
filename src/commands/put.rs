@@ -106,7 +106,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
                 Some(a) => Some(usize::from_str(a)?),
                 _ => None
             };
-            let mut disk = crate::create_fs_from_file_pro(img_path,fmt.as_ref())?;
+            let mut disk = crate::create_fs_from_file(img_path,fmt.as_ref())?;
 
             // Handle block ranges
             if typ == ItemType::Block {
@@ -186,7 +186,7 @@ pub fn mput(cmd: &clap::ArgMatches) -> STDRESULT {
     let path_to_img = cmd.get_one::<String>("dimg").unwrap();
     let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
-    let mut disk = crate::create_fs_from_file_pro(&path_to_img,fmt.as_ref())?;
+    let mut disk = crate::create_fs_from_file(&path_to_img,fmt.as_ref())?;
 
     for fimg_value in json_list.members() {
         let mut fimg = FileImage::from_json(&fimg_value.to_string())?;

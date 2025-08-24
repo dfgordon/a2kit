@@ -63,12 +63,13 @@
 //! 
 //! A simple example follows:
 //! ```rs
+//! use a2kit::img::{Track,Sector};
 //! // DiskImage can be stateful and therefore is always mutable
 //! let mut img = a2kit::create_img_from_file("disk.woz")?;
 //! // Unlike DiskFS, we cannot access files, only tracks and sectors
-//! let sector_data = img.read_sector(0,0,0)?;
+//! let sector_data = img.read_sector(Track::Num(0),Sector::Num(0))?;
 //! // Disk images are *always* buffered, so writing only affects memory
-//! img.write_sector(0,0,1,&sector_data)?;
+//! img.write_sector(Track::Num(0),Sector::Num(1),&sector_data)?;
 //! // Save the changes to local storage
 //! a2kit::save_img(&mut img,"disk.woz")?;
 //! ```
@@ -130,11 +131,11 @@ pub fn save_img(disk: &mut Box<dyn DiskFS>,img_path: &str) -> STDRESULT {
 /// If the file system cannot be identified we have `Ok(None)`.
 /// If the file system is identified, but broken, we have `Err(_)`.
 /// If `Ok(Some(_))`, the file system takes ownership of the disk image.
-fn try_img(mut img: Box<dyn DiskImage>,mabye_fmt: Option<&DiskFormat>) -> Result<Option<Box<dyn DiskFS>>,DYNERR> {
-    if let Some(fmt) = mabye_fmt {
+fn try_img(mut img: Box<dyn DiskImage>,maybe_fmt: Option<&DiskFormat>) -> Result<Option<Box<dyn DiskFS>>,DYNERR> {
+    if let Some(fmt) = maybe_fmt {
         img.change_format(fmt.clone())?;
     }
-    if fs::dos3x::Disk::test_img(&mut img) {
+    if fs::dos3x::Disk::test_img(&mut img,maybe_fmt) {
         info!("identified DOS 3.x file system");
         return Ok(Some(Box::new(fs::dos3x::Disk::from_img(img)?)));
     }
@@ -179,7 +180,7 @@ fn try_img(mut img: Box<dyn DiskImage>,mabye_fmt: Option<&DiskFormat>) -> Result
 /// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
 /// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
 /// Optional `maybe_fmt` can be used to specify a proprietary format (if `None` standard formats will be tried).
-fn create_fs_from_bytestream_pro(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
     let ext = match maybe_ext {
         Some(x) => x.to_string().to_lowercase(),
         None => "".to_string()
@@ -270,12 +271,6 @@ fn create_fs_from_bytestream_pro(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
     }
     warn!("cannot match any file system");
     return Err(Box::new(fs::Error::FileSystemMismatch));
-}
-
-/// Given a bytestream return a DiskFS, or Err if the bytestream cannot be interpreted.
-/// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
-pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskFS>,DYNERR> {
-    create_fs_from_bytestream_pro(disk_img_data,maybe_ext,None)
 }
 
 /// Given a bytestream return a disk image without any file system.
@@ -402,6 +397,7 @@ pub fn create_img_from_file(img_path: &str) -> Result<Box<dyn DiskImage>,DYNERR>
     create_img_from_bytestream(&disk_img_data,maybe_ext)
 }
 
+/// If the path is given call `create_img_from_file`, otherwise call `create_img_from_stdin`
 pub fn create_img_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<Box<dyn DiskImage>,DYNERR> {
     match maybe_img_path {
         Some(img_path) => create_img_from_file(img_path),
@@ -409,50 +405,38 @@ pub fn create_img_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<
     }
 }
 
-fn create_fs_from_stdin_pro(maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+/// Calls `create_fs_from_bytestream` getting the bytes from stdin.
+/// All image types and file systems will be tried heuristically.
+/// If `maybe_fmt` is `None` deduce a standard format.
+pub fn create_fs_from_stdin(maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
     let mut disk_img_data = Vec::new();
     if atty::is(atty::Stream::Stdin) {
         error!("pipe a disk image or use `-d` option");
         return Err(Box::new(commands::CommandError::InvalidCommand));
     }
     std::io::stdin().read_to_end(&mut disk_img_data)?;
-    create_fs_from_bytestream_pro(&disk_img_data, None, maybe_fmt)
-}
-
-/// Calls `create_fs_from_bytestream` getting the bytes from stdin.
-/// All image types and file systems will be tried heuristically.
-pub fn create_fs_from_stdin() -> Result<Box<dyn DiskFS>,DYNERR> {
-    create_fs_from_stdin_pro(None)
-}
-
-fn create_fs_from_file_pro(img_path: &str,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
-    let disk_img_data = buffer_file(img_path,MAX_FILE_SIZE)?;
-    let maybe_ext = match img_path.split('.').last() {
-        Some(ext) if KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) => Some(ext),
-        _ => None
-    };
-    create_fs_from_bytestream_pro(&disk_img_data,maybe_ext,maybe_fmt)
+    create_fs_from_bytestream(&disk_img_data, None, maybe_fmt)
 }
 
 /// Calls `create_fs_from_bytestream` getting the bytes from a file.
 /// The pathname must already be in the right format for the file system.
 /// File extension will be used to restrict image types that are tried,
 /// unless the extension is unknown, in which case all will be tried.
-pub fn create_fs_from_file(img_path: &str) -> Result<Box<dyn DiskFS>,DYNERR> {
-    create_fs_from_file_pro(img_path,None)
+/// If `maybe_fmt` is `None` deduce a standard format.
+pub fn create_fs_from_file(img_path: &str,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+    let disk_img_data = buffer_file(img_path,MAX_FILE_SIZE)?;
+    let maybe_ext = match img_path.split('.').last() {
+        Some(ext) if KNOWN_FILE_EXTENSIONS.contains(&ext.to_lowercase()) => Some(ext),
+        _ => None
+    };
+    create_fs_from_bytestream(&disk_img_data,maybe_ext,maybe_fmt)
 }
 
-fn create_fs_from_file_or_stdin_pro(maybe_img_path: Option<&String>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
+/// If the path is given call `create_fs_from_file`, otherwise call `create_fs_from_stdin`
+fn create_fs_from_file_or_stdin(maybe_img_path: Option<&String>,maybe_fmt: Option<&DiskFormat>) -> Result<Box<dyn DiskFS>,DYNERR> {
     match maybe_img_path {
-        Some(img_path) => create_fs_from_file_pro(img_path,maybe_fmt),
-        None => create_fs_from_stdin_pro(maybe_fmt)
-    }
-}
-
-pub fn create_fs_from_file_or_stdin(maybe_img_path: Option<&String>) -> Result<Box<dyn DiskFS>,DYNERR> {
-    match maybe_img_path {
-        Some(img_path) => create_fs_from_file(img_path),
-        None => create_fs_from_stdin()
+        Some(img_path) => create_fs_from_file(img_path,maybe_fmt),
+        None => create_fs_from_stdin(maybe_fmt)
     }
 }
 

@@ -21,6 +21,7 @@ use types::*;
 use directory::*;
 use super::{Block,Attributes};
 use crate::img;
+use crate::img::{Track,Sector};
 use crate::bios::{bpb,fat};
 use crate::{DYNERR,STDRESULT};
 
@@ -79,11 +80,11 @@ impl Disk {
     pub fn from_img(mut img: Box<dyn img::DiskImage>,maybe_boot: Option<bpb::BootSector>) -> Result<Self,DYNERR> {
         let mut boot_sector = match maybe_boot {
             None => {
-                let buf = img.read_sector(0, 0, 1)?;
+                let buf = img.read_sector(Track::Num(0), Sector::Num(1))?;
                 bpb::BootSector::from_bytes(&buf)?
             },
             Some(b) => {
-                img.write_sector(0, 0, 1, &b.to_bytes())?;
+                img.write_sector(Track::Num(0), Sector::Num(1), &b.to_bytes())?;
                 b
             }
         };
@@ -121,7 +122,7 @@ impl Disk {
     /// Test an image for the FAT file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
         // test the boot sector to see if this is FAT
-        if let Ok(boot) = img.read_sector(0,0,1) {
+        if let Ok(boot) = img.read_sector(Track::Num(0),Sector::Num(1)) {
             return bpb::BootSector::verify(&boot);
         }
         debug!("boot sector was not readable");
@@ -134,7 +135,7 @@ impl Disk {
         // By this time layout or size has already been used to create the `DiskImage`.
         let mut ans = true;
         // first look at boot sector, but only for logging
-        match img.read_sector(0,0,1) { Ok(boot) => {
+        match img.read_sector(Track::Num(0),Sector::Num(1)) { Ok(boot) => {
             if boot[0]!=0xeb {
                 debug!("JMP mismatch {}",boot[0]);
             }
@@ -156,7 +157,7 @@ impl Disk {
             let sec1 = boot.res_secs() as u64;
             for isec in sec1..sec1+boot.fat_secs() {
                 debug!("load FAT at sec {}",isec);
-                let mut sec_buf = match img.read_sector(0, 0, 1 + isec as usize) {
+                let mut sec_buf = match img.read_sector(Track::Num(0), Sector::Num(1 + isec as usize)) {
                     Ok(b) => b,
                     Err(_) => {
                         debug!("could not read FAT");
@@ -196,7 +197,7 @@ impl Disk {
         };
         let psec = lsec % self.boot_sector.secs_per_track() as usize;
         let trk = lsec / self.boot_sector.secs_per_track() as usize;
-        if trk >= self.img.track_count() {
+        if trk >= self.img.end_track() {
             return Err(Box::new(Error::SectorNotFound));
         }
         let head = trk % self.boot_sector.heads() as usize;
@@ -221,7 +222,7 @@ impl Disk {
             let mut ans = Vec::new();
             for isec in sec1..sec1+fat_secs {
                 let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
-                let mut buf = self.img.read_sector(cyl,head,sec)?;
+                let mut buf = self.img.read_sector(Track::CH((cyl,head)),Sector::Num(sec))?;
                 ans.append(&mut buf);
             }
             for fat in 1..num_fats {
@@ -230,7 +231,7 @@ impl Disk {
                 let mut bak = Vec::new();
                 for isec in sec1..sec1+fat_secs {
                     let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
-                    let mut buf = self.img.read_sector(cyl,head,sec)?;
+                    let mut buf = self.img.read_sector(Track::CH((cyl,head)),Sector::Num(sec))?;
                     bak.append(&mut buf);
                 }
                 let cluster_end = fat::FIRST_DATA_CLUSTER as u32 + self.boot_sector.cluster_count_usable() as u32;
@@ -262,7 +263,7 @@ impl Disk {
         for _fat in 0..num_fats {
             for isec in sec1..sec1+fat_secs {
                 let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(isec as usize))?;
-                self.img.write_sector(cyl,head,sec,&buf[offset..])?;
+                self.img.write_sector(Track::CH((cyl,head)),Sector::Num(sec),&buf[offset..])?;
                 offset += self.boot_sector.sec_size() as usize;
             }
             offset = 0;
@@ -369,9 +370,9 @@ impl Disk {
         for lsec in 0..self.boot_sector.tot_sec() as usize {
             let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec))?;
             if lsec < self.boot_sector.first_data_sec() as usize {
-                self.img.write_sector(c,h,s,&zeroes)?;
+                self.img.write_sector(Track::CH((c,h)),Sector::Num(s),&zeroes)?;
             } else {
-                self.img.write_sector(c,h,s,&f6)?;
+                self.img.write_sector(Track::CH((c,h)),Sector::Num(s),&f6)?;
             }
         }
         // Create a BPB tail
@@ -389,7 +390,7 @@ impl Disk {
         // write the boot sector (perhaps rewriting).
         // may be written again if FAT32.
         trace!("write boot sector");
-        self.img.write_sector(0,0,1,&self.boot_sector.to_bytes())?;
+        self.img.write_sector(Track::Num(0),Sector::Num(1),&self.boot_sector.to_bytes())?;
 
         // FAT entry one is the media type
         trace!("setup the first FAT");
@@ -572,7 +573,7 @@ impl Disk {
                 debug!("get FAT{} root at logical sector {}",self.typ,sec_rng[0]);
                 for lsec in (sec_rng[0] as usize)..(sec_rng[1] as usize) {
                     let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(lsec))?;
-                    buf.append(&mut self.img.read_sector(cyl, head, sec)?);
+                    buf.append(&mut self.img.read_sector(Track::CH((cyl,head)), Sector::Num(sec))?);
                 }
                 Directory::from_bytes(&buf)?
             }
@@ -654,7 +655,7 @@ impl Disk {
                     data.append(&mut loc.dir.get_raw_entry(&Ptr::Entry(i)).to_vec());
                 }
                 let [cyl,head,sec] = self.get_chs(&Ptr::LogicalSector(lsec))?;
-                self.img.write_sector(cyl, head, sec, &data)
+                self.img.write_sector(Track::CH((cyl,head)), Sector::Num(sec), &data)
             }
         }
     }
@@ -1325,20 +1326,20 @@ impl super::DiskFS for Disk {
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
         // Not meant for FAT32
         self.writeback_fat_buffer().expect("disk error");
-        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap(),None).expect("read error");
         // compare the FATs
         for lsec in self.boot_sector.res_secs() as usize..self.boot_sector.root_dir_sec_rng()[0] as usize {
             let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec)).expect("bad sector access");
-            let actual = self.img.read_sector(c,h,s).expect("bad sector access");
-            let expected = emulator_disk.get_img().read_sector(c, h, s).expect("bad sector access");
+            let actual = self.img.read_sector(Track::CH((c,h)),Sector::Num(s)).expect("bad sector access");
+            let expected = emulator_disk.get_img().read_sector(Track::CH((c, h)), Sector::Num(s)).expect("bad sector access");
             assert_eq!(actual,expected," at sector {}",lsec)
         }
         // compare root directory
         let [beg,end] = self.boot_sector.root_dir_sec_rng();
         for lsec in beg..end {
             let [c,h,s] = self.get_chs(&Ptr::LogicalSector(lsec as usize)).expect("bad sector access");
-            let mut actual = self.img.read_sector(c,h,s).expect("bad sector access");
-            let mut expected = emulator_disk.get_img().read_sector(c, h, s).expect("bad sector access");
+            let mut actual = self.img.read_sector(Track::CH((c,h)),Sector::Num(s)).expect("bad sector access");
+            let mut expected = emulator_disk.get_img().read_sector(Track::CH((c, h)), Sector::Num(s)).expect("bad sector access");
             let offsets = Entry::standardize(0);
             for i in 0..self.boot_sector.sec_size() as usize {
                 let rel_offset = i%32;

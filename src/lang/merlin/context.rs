@@ -605,8 +605,14 @@ impl Context {
     pub fn unused_macros_setting(&self) -> Option<lsp::DiagnosticSeverity> {
         self.config.flag.unused_macros
     }
+    pub fn unused_macros_in_context_setting(&self) -> Option<lsp::DiagnosticSeverity> {
+        self.config.flag.unused_macros_in_context
+    }
     pub fn unused_labels_setting(&self) -> Option<lsp::DiagnosticSeverity> {
         self.config.flag.unused_labels
+    }
+    pub fn unused_labels_in_context_setting(&self) -> Option<lsp::DiagnosticSeverity> {
+        self.config.flag.unused_labels_in_context
     }
     pub fn dup_mac_locs(&self) -> Option<lsp::DiagnosticSeverity> {
         self.config.flag.dup_mac_locs
@@ -649,4 +655,13 @@ impl Context {
         log::debug!("do not descend, no checkpointed document found");
         return None;
 	}
+    pub fn is_include(&self) -> bool {
+        if let Some(src) = self.curr_source() {
+            return match src.typ {
+                SourceType::Put | SourceType::Use => true,
+                _ => false
+            };
+        }
+        false
+    }
 }

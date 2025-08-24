@@ -69,8 +69,8 @@
 
 use std::fmt::Write;
 use std::u8;
-use super::DiskKind;
-use super::tracks::{TrackKey,SectorKey,DiskFormat,ZoneFormat};
+use super::{Track,SectorHood,DiskKind};
+use super::tracks::{DiskFormat,ZoneFormat};
 
 use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
@@ -177,64 +177,64 @@ pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-/// Check that `tkey` is valid for the given `kind`
-fn verify_track_key(tkey: TrackKey,kind: &DiskKind) -> STDRESULT {
+/// Check that `trk` is valid for the given `kind`
+fn verify_track_key(trk: Track,kind: &DiskKind) -> STDRESULT {
 	let trouble = match *kind {
 		DiskKind::D525(_) => {
-			match tkey {
-				TrackKey::Track(t) => t > 34,
-				TrackKey::CH((c,h)) => c > 34 || h > 0,
-				TrackKey::Motor((m,h)) => m > 159 || h > 0
+			match trk {
+				Track::Num(t) => t > 34,
+				Track::CH((c,h)) => c > 34 || h > 0,
+				Track::Motor((m,h)) => m > 159 || h > 0
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==1 => {
-			match tkey {
-				TrackKey::Track(t) => t > 79,
-				TrackKey::CH((c,h)) => c > 79 || h > 0,
-				TrackKey::Motor((m,h)) => m > 79 || h > 0
+			match trk {
+				Track::Num(t) => t > 79,
+				Track::CH((c,h)) => c > 79 || h > 0,
+				Track::Motor((m,h)) => m > 79 || h > 0
 			}
 
 		},
 		DiskKind::D35(layout) if layout.sides[0]==2 => {
-			match tkey {
-				TrackKey::Track(t) => t > 159,
-				TrackKey::CH((c,h)) => c > 79 || h > 1,
-				TrackKey::Motor((m,h)) => m > 79 || h > 1
+			match trk {
+				Track::Num(t) => t > 159,
+				Track::CH((c,h)) => c > 79 || h > 1,
+				Track::Motor((m,h)) => m > 79 || h > 1
 			}
 		},
 		_ => panic!("unsupported disk kind")
 	};
 	if trouble {
-		log::error!("{} is out of range",tkey);
-		Err(Box::new(super::Error::TrackCountMismatch))
+		log::error!("{} is out of range",trk);
+		Err(Box::new(super::Error::TrackNotFound))
 	} else {
 		Ok(())
 	}
 }
 
 /// return [motor,head,width]
-pub fn get_motor_pos(tkey: TrackKey,kind: &DiskKind) -> Result<[usize;3],DYNERR> {
-	verify_track_key(tkey.clone(),kind)?;
+pub fn get_motor_pos(trk: Track,kind: &DiskKind) -> Result<[usize;3],DYNERR> {
+	verify_track_key(trk.clone(),kind)?;
 	let ans = match *kind {
 		DiskKind::D525(_) => {
-			match tkey {
-				TrackKey::Track(t) => [t*4,0,4],
-				TrackKey::CH((c,_)) => [c*4,0,4],
-				TrackKey::Motor((m,_)) => [m,0,4]
+			match trk {
+				Track::Num(t) => [t*4,0,4],
+				Track::CH((c,_)) => [c*4,0,4],
+				Track::Motor((m,_)) => [m,0,4]
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==1 => {
-			match tkey {
-				TrackKey::Track(t) => [t,0,1],
-				TrackKey::CH((c,_)) => [c,0,1],
-				TrackKey::Motor((m,_)) => [m,0,1]
+			match trk {
+				Track::Num(t) => [t,0,1],
+				Track::CH((c,_)) => [c,0,1],
+				Track::Motor((m,_)) => [m,0,1]
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==2 => {
-			match tkey {
-				TrackKey::Track(t) => [t/2,t%2,1],
-				TrackKey::CH((c,h)) => [c,h,1],
-				TrackKey::Motor((m,h)) => [m,h,1]
+			match trk {
+				Track::Num(t) => [t/2,t%2,1],
+				Track::CH((c,h)) => [c,h,1],
+				Track::Motor((m,h)) => [m,h,1]
 			}
 		},
 		_ => panic!("unsupported disk kind")
@@ -242,29 +242,29 @@ pub fn get_motor_pos(tkey: TrackKey,kind: &DiskKind) -> Result<[usize;3],DYNERR>
 	Ok(ans)
 }
 
-/// Get the TMAP index, after verifying the `tkey` is valid for this `kind`.
-pub fn get_tmap_index(tkey: TrackKey,kind: &DiskKind) -> Result<usize,DYNERR> {
-	verify_track_key(tkey.clone(),kind)?;
+/// Get the TMAP index, after verifying the `trk` is valid for this `kind`.
+pub fn get_tmap_index(trk: Track,kind: &DiskKind) -> Result<usize,DYNERR> {
+	verify_track_key(trk.clone(),kind)?;
 	let tmap_idx = match *kind {
 		DiskKind::D525(_) => {
-			match tkey {
-				TrackKey::Track(t) => t*4,
-				TrackKey::CH((c,_)) => c*4,
-				TrackKey::Motor((m,_)) => m
+			match trk {
+				Track::Num(t) => t*4,
+				Track::CH((c,_)) => c*4,
+				Track::Motor((m,_)) => m
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==1 => {
-			match tkey {
-				TrackKey::Track(t) => t,
-				TrackKey::CH((c,_)) => c,
-				TrackKey::Motor((m,_)) => m
+			match trk {
+				Track::Num(t) => t,
+				Track::CH((c,_)) => c,
+				Track::Motor((m,_)) => m
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==2 => {
-			match tkey {
-				TrackKey::Track(t) => t,
-				TrackKey::CH((c,h)) => c*2+h,
-				TrackKey::Motor((m,h)) => m*2+h
+			match trk {
+				Track::Num(t) => t,
+				Track::CH((c,h)) => c*2+h,
+				Track::Motor((m,h)) => m*2+h
 			}
 		},
 		_ => panic!("unsupported disk kind")
@@ -273,21 +273,21 @@ pub fn get_tmap_index(tkey: TrackKey,kind: &DiskKind) -> Result<usize,DYNERR> {
 }
 
 /// Create a track key for this TMAP index.
-pub fn tkey_from_tmap_idx(tmap_idx: usize,kind: &DiskKind) -> TrackKey {
+pub fn trk_from_tmap_idx(tmap_idx: usize,kind: &DiskKind) -> Track {
 	match *kind {
-		DiskKind::D525(_) => TrackKey::Motor((tmap_idx,0)),
-		DiskKind::D35(layout) if layout.sides[0]==1 => TrackKey::Motor((tmap_idx,0)),
-		DiskKind::D35(layout) if layout.sides[0]==2 => TrackKey::Motor((tmap_idx/2,tmap_idx%2)),
+		DiskKind::D525(_) => Track::Motor((tmap_idx,0)),
+		DiskKind::D35(layout) if layout.sides[0]==1 => Track::Motor((tmap_idx,0)),
+		DiskKind::D35(layout) if layout.sides[0]==2 => Track::Motor((tmap_idx/2,tmap_idx%2)),
 		_ => panic!("unsupported disk kind")
 	}
 }
 
 /// Get the sector key for this TMAP index.
 /// Can panic if arguments are invalid.
-pub fn get_sector_key(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> SectorKey {
+pub fn get_sector_key(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> SectorHood {
 	match *kind {
-		DiskKind::D525(_) => SectorKey::a2_525(vol,(tmap_idx as u8+1)/4),
-		DiskKind::D35(layout) => SectorKey::a2_35(
+		DiskKind::D525(_) => SectorHood::a2_525(vol,(tmap_idx as u8+1)/4),
+		DiskKind::D35(layout) => SectorHood::a2_35(
 			(tmap_idx / layout.sides[zone]) as u8,
 			(tmap_idx % layout.sides[zone]) as u8
 		),
@@ -301,7 +301,7 @@ pub fn get_sector_key(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> Se
 /// `slot` is the index into the TRKS array (the value of the TMAP/FLUX entry to search for).
 /// Returns `Some((motor_pos, sec_key, is_flux))`, or `None` if there are no entries for `slot`.
 /// Can panic if arguments are invalid.
-pub fn get_trks_slot_id(vol: u8,slot: usize,tmap: &[u8],maybe_fmap: Option<&[u8]>,kind: &super::DiskKind) -> Option<(u8,SectorKey,bool)> {
+pub fn get_trks_slot_id(vol: u8,slot: usize,tmap: &[u8],maybe_fmap: Option<&[u8]>,kind: &super::DiskKind) -> Option<(u8,SectorHood,bool)> {
 	let mut candidates = Vec::new();
 	let mut is_flux = Vec::new();
 	for i in 0..tmap.len() {

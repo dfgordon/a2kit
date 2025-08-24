@@ -2,7 +2,8 @@
 use std::path::Path;
 use std::collections::HashMap;
 use a2kit::fs::pascal::types::BLOCK_SIZE;
-use a2kit::fs::{Block,pascal,DiskFS};
+use a2kit::fs::{pascal,DiskFS};
+use a2kit::bios::Block;
 
 // Some sample programs to test
 // Indentation is important
@@ -59,7 +60,7 @@ fn read_small() {
     // Formatting: CiderPress, writing: MicroM8:
     // This tests small Pascal source files
     let img = std::fs::read(&Path::new("tests").join("pascal-smallfiles.do")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("file not found");
 
     // check source 1
     let txt = emulator_disk.read_text("hello.text").expect("error");

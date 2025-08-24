@@ -3,8 +3,8 @@ use std::str::FromStr;
 use crate::bios::{bpb,dpb};
 use crate::fs::{DiskFS,cpm,dos3x,prodos,pascal,fat};
 use crate::img;
-use crate::img::{DiskKind,DiskImage,DiskImageType,names};
-use crate::img::tracks::{DiskFormat,TrackKey};
+use crate::img::{Track,DiskKind,DiskImage,DiskImageType,names};
+use crate::img::tracks::{DiskFormat};
 use super::CommandError;
 use crate::{STDRESULT,DYNERR};
 
@@ -41,7 +41,7 @@ macro_rules! cpm_patterns {
     };
 }
 
-fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap: Option<&String>,fmt: &Option<DiskFormat>,flux: &Vec<TrackKey>) -> Result<u8,DYNERR> {
+fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap: Option<&String>,fmt: &Option<DiskFormat>,flux: &Vec<Track>) -> Result<u8,DYNERR> {
     let vol = match maybe_vol {
         Some(vstr) => match u8::from_str_radix(vstr,10) {
             Ok(v) => v,
@@ -83,7 +83,7 @@ fn verify_mkimage(img_typ: &DiskImageType,maybe_vol: Option<&String>,maybe_wrap:
 
 /// Create an image of a specific kind of disk.  If the pairing is not explicitly allowed
 /// return an error.  N.b. there is no file system selection whatever at this point.
-fn mkimage(img_typ: &DiskImageType,maybe_wrap: Option<&String>,maybe_vol: Option<&String>,kind: &DiskKind,fmt: Option<DiskFormat>,flux: Vec<TrackKey>) -> Result<Box<dyn DiskImage>,DYNERR> {
+fn mkimage(img_typ: &DiskImageType,maybe_wrap: Option<&String>,maybe_vol: Option<&String>,kind: &DiskKind,fmt: Option<DiskFormat>,flux: Vec<Track>) -> Result<Box<dyn DiskImage>,DYNERR> {
     let vol = verify_mkimage(img_typ,maybe_vol,maybe_wrap,&fmt,&flux)?;
     match (img_typ,*kind) {
         (DiskImageType::D13,names::A2_DOS32_KIND) => Ok(Box::new(img::dsk_d13::D13::create(35))),
@@ -134,8 +134,12 @@ fn mkblank(img_typ: &DiskImageType,kind: &DiskKind,_maybe_wrap: Option<&String>)
 }
 
 fn mkdos3x(vol: Option<&String>,boot: bool,img: Box<dyn DiskImage>) -> Result<Vec<u8>,DYNERR> {
-    if img.byte_capacity()!=35*13*256 && img.byte_capacity()!=35*16*256 {
-        log::error!("disk image capacity {} not consistent with DOS 3.x",img.byte_capacity());
+    if img.nominal_capacity().is_none() {
+        log::error!("disk image did not support nominal capacity check");
+        return Err(Box::new(CommandError::UnsupportedFormat));
+    }
+    if img.nominal_capacity().unwrap()!=35*13*256 && img.nominal_capacity().unwrap()!=35*16*256 {
+        log::error!("disk image capacity {} not consistent with DOS 3.x",img.nominal_capacity().unwrap());
         return Err(Box::new(CommandError::OutOfRange));
     }
     let kind = img.kind(); // need to copy since img will be moved

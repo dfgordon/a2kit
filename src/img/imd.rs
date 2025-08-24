@@ -9,13 +9,12 @@
 use chrono;
 use num_traits::FromPrimitive;
 use num_derive::FromPrimitive;
-use log::{warn,info,trace,debug,error};
 use a2kit_macro::{DiskStructError,DiskStruct};
 use crate::fs::cpm::types::RECORD_SIZE;
 use crate::img;
-use crate::img::meta;
-use crate::bios::skew;
-use crate::fs::Block;
+use crate::img::{DiskImage,meta};
+use crate::bios::{skew,blocks};
+use crate::bios::Block;
 use crate::img::names::*;
 use crate::{STDRESULT,DYNERR,putString};
 
@@ -67,7 +66,7 @@ pub fn is_slice_uniform(slice: &[u8]) -> bool {
 pub struct Track {
     mode: u8,
     cylinder: u8,
-    head: u8,
+    head_flags: u8,
     sectors: u8,
     sector_shift: u8,
     /// In these maps we suppose the order corresponds to geometry.
@@ -149,7 +148,7 @@ impl Track {
         Self {
             mode: mode as u8,
             cylinder: (track_num / layout.sides[zone]) as u8,
-            head,
+            head_flags: head,
             sectors: layout.sectors[zone] as u8,
             sector_shift,
             sector_map,
@@ -184,7 +183,7 @@ impl Track {
             let sec_size = self.get_sec_buf_size(self.track_buf[ptr]);
             let slice = &self.track_buf[ptr..ptr+sec_size];
             if sec_size > 2 && is_slice_uniform(&slice[1..]) {
-                trace!("compressing cyl {} head {} sec {}",self.cylinder,self.head & HEAD_MASK,self.sector_map[isec as usize]);
+                log::trace!("compressing cyl {} head {} sec {}",self.cylinder,self.head_flags & HEAD_MASK,self.sector_map[isec as usize]);
                 track_buf.push(slice[0]+1); // adding 1 gives the id of the compressed data
                 track_buf.push(slice[1]); // first element is all we need
             } else {
@@ -195,7 +194,7 @@ impl Track {
         Self {
             mode: self.mode,
             cylinder: self.cylinder,
-            head: self.head,
+            head_flags: self.head_flags,
             sectors: self.sectors,
             sector_shift: self.sector_shift,
             sector_map: self.sector_map.clone(),
@@ -214,7 +213,7 @@ impl Track {
             let sec_size = self.get_sec_buf_size(self.track_buf[ptr]);
             let slice = &self.track_buf[ptr..ptr+sec_size];
             if sec_size == 2 {
-                trace!("expanding cyl {} head {} sec {}",self.cylinder,self.head & HEAD_MASK,self.sector_map[isec as usize]);
+                log::trace!("expanding cyl {} head {} sec {}",self.cylinder,self.head_flags & HEAD_MASK,self.sector_map[isec as usize]);
                 track_buf.push(slice[0]-1); // subtracting 1 gives the id of the expanded data
                 for _i in 0..(1 << self.sector_shift) {
                     track_buf.append(&mut [slice[1];RECORD_SIZE].to_vec());
@@ -227,7 +226,7 @@ impl Track {
         Self {
             mode: self.mode,
             cylinder: self.cylinder,
-            head: self.head,
+            head_flags: self.head_flags,
             sectors: self.sectors,
             sector_shift: self.sector_shift,
             sector_map: self.sector_map.clone(),
@@ -255,7 +254,7 @@ impl DiskStruct for Track {
         Self {
             mode: 0,
             cylinder: 0,
-            head: 0,
+            head_flags: 0,
             sectors: 0,
             sector_shift: 0,
             sector_map: Vec::new(),
@@ -271,7 +270,7 @@ impl DiskStruct for Track {
     }
     fn to_bytes(&self) -> Vec<u8> {
         [
-            vec![self.mode,self.cylinder,self.head,self.sectors,self.sector_shift],
+            vec![self.mode,self.cylinder,self.head_flags,self.sectors,self.sector_shift],
             self.sector_map.clone(),
             self.cylinder_map.clone(),
             self.head_map.clone(),
@@ -288,27 +287,27 @@ impl DiskStruct for Track {
         check(bytes,5)?;
         self.mode = bytes[0];
         self.cylinder = bytes[1];
-        self.head = bytes[2];
+        self.head_flags = bytes[2];
         self.sectors = bytes[3];
         self.sector_shift = bytes[4];
-        debug!("Cylinder {}, Head {}: {} sectors x {} bytes",self.cylinder,self.head & HEAD_MASK,self.sectors,SECTOR_SIZE_BASE << self.sector_shift);
+        log::debug!("Cylinder {}, Head {}: {} sectors x {} bytes",self.cylinder,self.head_flags & HEAD_MASK,self.sectors,SECTOR_SIZE_BASE << self.sector_shift);
         let mut ptr: usize = 5;
         check(bytes,ptr+self.sectors as usize)?;
         self.sector_map = bytes[ptr..ptr+self.sectors as usize].to_vec();
-        trace!("sector map {:?}",self.sector_map);
+        log::trace!("sector map {:?}",self.sector_map);
         ptr += self.sectors as usize;
-        if self.head & CYL_MAP_FLAG == CYL_MAP_FLAG {
+        if self.head_flags & CYL_MAP_FLAG == CYL_MAP_FLAG {
             check(bytes,ptr+self.sectors as usize)?;
             self.cylinder_map = bytes[ptr..ptr+self.sectors as usize].to_vec();
-            debug!("found cylinder map {:?}",self.cylinder_map);
+            log::debug!("found cylinder map {:?}",self.cylinder_map);
             ptr += self.sectors as usize;
         } else {
             self.cylinder_map = Vec::new();
         }
-        if self.head & HEAD_MAP_FLAG == HEAD_MAP_FLAG {
+        if self.head_flags & HEAD_MAP_FLAG == HEAD_MAP_FLAG {
             check(bytes,ptr+self.sectors as usize)?;
             self.head_map = bytes[ptr..ptr+self.sectors as usize].to_vec();
-            debug!("found head map {:?}",self.head_map);
+            log::debug!("found head map {:?}",self.head_map);
             ptr += self.sectors as usize;
         } else {
             self.head_map = Vec::new();
@@ -334,7 +333,7 @@ impl Imd {
         let now = chrono::Local::now().naive_local();
         let header = "IMD 1.19: ".to_string() + &now.format("%d-%m-%Y %H:%M:%S").to_string();
         let creator_str = "a2kit v".to_string() + env!("CARGO_PKG_VERSION");
-        debug!("header {}",header);
+        log::debug!("header {}",header);
         let (heads,tracks) = match kind {
             img::DiskKind::D3(layout) |
             img::DiskKind::D35(layout) |
@@ -359,46 +358,109 @@ impl Imd {
     }
     fn get_track_mut(&mut self,cyl: usize,head: usize) -> Result<&mut Track,img::Error> {
         for trk in &mut self.tracks {
-            if trk.cylinder as usize==cyl && (trk.head & HEAD_MASK) as usize==head {
+            if trk.cylinder as usize==cyl && (trk.head_flags & HEAD_MASK) as usize==head {
                 return Ok(trk);
             }
         }
-        debug!("cannot find cyl {} head {}",cyl,head);
+        log::debug!("cannot find cyl {} head {}",cyl,head);
         Err(img::Error::SectorAccess)
     }
-    fn check_user_area_up_to_cyl(&self,cyl: usize,off: u16) -> STDRESULT {
+    fn check_user_area_up_to_cyl(&self,trk: super::Track,off: u16) -> STDRESULT {
+        let [cyl,_] = self.get_rz(trk)?;
         let sectors = self.tracks[off as usize].sectors;
         let sector_shift = self.tracks[off as usize].sector_shift;
         if cyl*self.heads >= self.tracks.len() {
             log::error!("track {} was requested, max is {}",cyl*self.heads,self.tracks.len()-1);
-            return Err(Box::new(super::Error::TrackCountMismatch));
+            return Err(Box::new(super::Error::TrackNotFound));
         }
         for i in off as usize..cyl*self.heads+1 {
             let trk = &self.tracks[i];
             if trk.sectors!=sectors || trk.sector_shift!=sector_shift {
-                warn!("heterogeneous layout in user tracks");
-                return Err(Box::new(super::Error::ImageTypeMismatch));
+                log::warn!("heterogeneous layout in user tracks");
+                return Err(Box::new(super::Error::GeometryMismatch));
             }
         }
         Ok(())
     }
-    fn get_skew(&self,head: usize) -> Result<Vec<u8>,DYNERR> {
-        match (self.kind,head) {
-            (super::names::IBM_CPM1_KIND,_) => Ok(skew::CPM_1_LSEC_TO_PSEC.to_vec()),
-            (super::names::AMSTRAD_SS_KIND,_) => Ok((1..10).collect()),
-            (super::DiskKind::D525(IBM_SSDD_9),_) => Ok((1..10).collect()),
-            (super::names::OSBORNE1_SD_KIND,_) => Ok(skew::CPM_LSEC_TO_OSB1_PSEC.to_vec()),
-            (super::names::OSBORNE1_DD_KIND,_) => Ok(vec![1,2,3,4,5]),
-            (super::names::KAYPROII_KIND,_) => Ok((0..10).collect()),
-            (super::names::KAYPRO4_KIND,0) => Ok((0..10).collect()),
-            (super::names::KAYPRO4_KIND,_) => Ok((10..20).collect()),
-            (super::names::TRS80_M2_CPM_KIND,_) => Ok((1..17).collect()),
-            (super::names::NABU_CPM_KIND,_) => Ok(skew::CPM_LSEC_TO_NABU_PSEC.to_vec()),
+    /// Apply the skew transformation for this disk, if the sector discriminant is
+    /// an explicit address return an error.
+    fn skew(&self,trk: super::Track,sec: super::Sector) -> Result<super::Sector,DYNERR> {
+        let [_,head] = self.get_rz(trk)?;
+        let table = match (self.kind,head) {
+            (super::names::IBM_CPM1_KIND,_) => skew::CPM_1_LSEC_TO_PSEC.to_vec(),
+            (super::names::AMSTRAD_SS_KIND,_) => (1..10).collect(),
+            (super::DiskKind::D525(IBM_SSDD_9),_) => (1..10).collect(),
+            (super::names::OSBORNE1_SD_KIND,_) => skew::CPM_LSEC_TO_OSB1_PSEC.to_vec(),
+            (super::names::OSBORNE1_DD_KIND,_) => vec![1,2,3,4,5],
+            (super::names::KAYPROII_KIND,_) => (0..10).collect(),
+            (super::names::KAYPRO4_KIND,0) => (0..10).collect(),
+            (super::names::KAYPRO4_KIND,_) => (10..20).collect(),
+            (super::names::TRS80_M2_CPM_KIND,_) => (1..17).collect(),
+            (super::names::NABU_CPM_KIND,_) => skew::CPM_LSEC_TO_NABU_PSEC.to_vec(),
             _ => {
-                warn!("could not find skew table");
-                return Err(Box::new(super::Error::ImageTypeMismatch))
+                log::warn!("could not find skew table");
+                return Err(Box::new(super::Error::DiskKindMismatch))
             }
+        };
+        match sec {
+            super::Sector::Num(n) => Ok(super::Sector::Num(table[n-1] as usize)),
+            _ => Err(Box::new(super::Error::BadContext))
         }
+    }
+    fn seek_sector(&mut self,trk: super::Track,sec: super::Sector) -> Result<usize,DYNERR> {
+        let [cyl, head] = self.get_rz(trk)?;
+        let track = self.get_track_mut(cyl,head)?;
+        let cyl_map = match track.head_flags & CYL_MAP_FLAG > 0 {
+            true => track.cylinder_map.clone(),
+            false => vec![cyl as u8;track.sectors as usize]
+        };
+        let head_map = match track.head_flags & HEAD_MAP_FLAG > 0 {
+            true => track.head_map.clone(),
+            false => vec![head as u8;track.sectors as usize]
+        };
+        let chs = match sec {
+            // seek using internal mappings
+            super::Sector::Num(id) => {
+                let mut ans = [0xff,0xff,id as u8,0xff];
+                for i in 0..track.sector_map.len() {
+                    if id as u8 == track.sector_map[i] {
+                        ans[0] = cyl_map[i];
+                        ans[1] = head_map[i];
+                        ans[3] = track.sector_shift;
+                    }
+                }
+                ans
+            },
+            // seek an explicit CHS provided by the caller
+            super::Sector::Addr((_,v)) => {
+                if v.len() < 4 {
+                    log::error!("address is too short");
+                    return Err(Box::new(img::Error::SectorAccess));
+                }
+                [v[0],v[1],v[2],v[3]]
+            }
+        };
+        log::trace!("seeking sector {:02X}{:02X}{:02X}{:02X}",chs[0],chs[1],chs[2],chs[3]);
+        // advance to the requested sector
+        for _i in 0..track.sector_map.len() {
+            let (sec_idx,buf_idx) = track.adv_sector();
+            let curr = [cyl_map[sec_idx], head_map[sec_idx],track.sector_map[sec_idx], track.sector_shift];
+            if chs == curr {
+                log::trace!("found sector {:02X}{:02X}{:02X}{:02X}",chs[0],chs[1],chs[2],chs[3]);
+                return match SectorData::from_u8(track.track_buf[buf_idx]) {
+                    Some(SectorData::Normal) | Some(SectorData::NormalDeleted) => Ok(buf_idx),
+                    Some(SectorData::Error) | Some(SectorData::ErrorDeleted) => Ok(buf_idx),
+                    _ => {
+                        log::debug!("data type {} not expected",track.track_buf[buf_idx]);
+                        Err(Box::new(img::Error::SectorAccess))
+                    }
+                };
+            }
+            log::trace!("skip sector {:02X}{:02X}{:02X}{:02X}",curr[0],curr[1],curr[2],curr[3]);
+        }
+        log::error!("sector {:02X}{:02X}{:02X}{:02X} not found",chs[0],chs[1],chs[2],chs[3]);
+        log::debug!("sector map {:?}",track.sector_map);
+        Err(Box::new(img::Error::SectorAccess))
     }
 }
 
@@ -406,42 +468,61 @@ impl img::DiskImage for Imd {
     fn track_count(&self) -> usize {
         self.tracks.len()
     }
+    fn end_track(&self) -> usize {
+        match self.tracks.last() {
+            Some(track) => track.cylinder as usize * self.heads + (track.head_flags & HEAD_MASK) as usize + 1,
+            None => 0
+        }
+    }
     fn num_heads(&self) -> usize {
         self.heads
     }
-    fn byte_capacity(&self) -> usize {
+    fn nominal_capacity(&self) -> Option<usize> {
+        let mut ans = 0;
+        let normalized_count = match self.tracks.len() {
+            41 => 40,
+            81 | 82 => 80,
+            161 | 162 => 160,
+            c => c
+        };
+        for i in 0..normalized_count {
+            let psec_size = SECTOR_SIZE_BASE << self.tracks[i].sector_shift;
+            ans += self.tracks[i].sectors as usize * psec_size;
+        }
+        Some(ans)
+    }
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
         let mut ans = 0;
         for trk in &self.tracks {
             let mut idx = 0;
             let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
             for curr in &trk.sector_map {
-                //trace!("sizing cyl {} head {} sector {}",trk.cylinder,trk.head & HEAD_MASK,curr);
+                //log::trace!("sizing cyl {} head {} sector {}",trk.cylinder,trk.head_flags & HEAD_MASK,curr);
                 ans += match SectorData::from_u8(trk.track_buf[idx]) {
                     Some(SectorData::Normal) | Some(SectorData::NormalDeleted) => psec_size,
                     Some(SectorData::Error) | Some(SectorData::ErrorDeleted) => psec_size,
                     _ => {
-                        debug!("cyl {} head {} sector {} is marked unreadable, not counted",trk.cylinder,trk.head & HEAD_MASK,curr);
+                        log::debug!("cyl {} head {} sector {} is marked unreadable, not counted",trk.cylinder,trk.head_flags & HEAD_MASK,curr);
                         0
                     }
                 };
                 idx += trk.get_sec_buf_size(trk.track_buf[idx]);
             }
         }
-        ans
+        Ok(ans)
     }
     fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
-        trace!("reading {}",addr);
+        log::trace!("reading {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
                 let secs_per_track = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let mut ans: Vec<u8> = Vec::new();
                 let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
-                let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
-                for [cyl,head,lsec] in chs_list {
-                    self.check_user_area_up_to_cyl(cyl, off)?;
-                    let skew_table = self.get_skew(head)?;
-                    match self.read_sector(cyl,head,skew_table[lsec-1] as usize) {
+                let ts_list = blocks::cpm::std_blocking(deblocked_ts_list, sector_shift,self.heads)?;
+                for (trk,lsec) in ts_list {
+                    self.check_user_area_up_to_cyl(trk, off)?;
+                    match self.read_sector(trk,self.skew(trk,lsec)?) {
                         Ok(mut slice) => {
                             ans.append(&mut slice);
                         },
@@ -454,10 +535,10 @@ impl img::DiskImage for Imd {
                 let secs_per_track = self.tracks[0].sectors;
                 let mut ans: Vec<u8> = Vec::new();
                 let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
-                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
-                for [cyl,head,lsec] in chs_list {
-                    self.check_user_area_up_to_cyl(cyl, 0)?;
-                    match self.read_sector(cyl,head,lsec) {
+                let ts_list = blocks::fat::std_blocking(deblocked_ts_list,self.heads)?;
+                for (trk,lsec) in ts_list {
+                    self.check_user_area_up_to_cyl(trk, 0)?;
+                    match self.read_sector(trk,lsec) {
                         Ok(mut slice) => {
                             ans.append(&mut slice);
                         },
@@ -470,20 +551,19 @@ impl img::DiskImage for Imd {
         }
     }
     fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT {
-        trace!("writing {}",addr);
+        log::trace!("writing {}",addr);
         match addr {
             Block::CPM((_block,_bsh,off)) => {
                 let secs_per_track = self.tracks[off as usize].sectors;
                 let sector_shift = self.tracks[off as usize].sector_shift;
                 let deblocked_ts_list = addr.get_lsecs((secs_per_track << sector_shift) as usize);
-                let chs_list = skew::cpm_blocking(deblocked_ts_list, sector_shift,self.heads)?;
+                let ts_list = blocks::cpm::std_blocking(deblocked_ts_list, sector_shift,self.heads)?;
                 let mut src_offset = 0;
                 let psec_size = SECTOR_SIZE_BASE << sector_shift;
-                let padded = super::quantize_block(dat, chs_list.len()*psec_size);
-                for [cyl,head,lsec] in chs_list {
-                    self.check_user_area_up_to_cyl(cyl, off)?;
-                    let skew_table = self.get_skew(head)?;
-                    match self.write_sector(cyl,head,skew_table[lsec-1] as usize,&padded[src_offset..src_offset+psec_size].to_vec()) {
+                let padded = super::quantize_block(dat, ts_list.len()*psec_size);
+                for (trk,lsec) in ts_list {
+                    self.check_user_area_up_to_cyl(trk, off)?;
+                    match self.write_sector(trk,self.skew(trk,lsec)?,&padded[src_offset..src_offset+psec_size].to_vec()) {
                         Ok(_) => src_offset += SECTOR_SIZE_BASE << sector_shift,
                         Err(e) => return Err(e)
                     }
@@ -495,12 +575,12 @@ impl img::DiskImage for Imd {
                 let secs_per_track = self.tracks[0].sectors;
                 let sec_size = 128 << self.tracks[0].sector_shift as usize;
                 let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
-                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                let ts_list = blocks::fat::std_blocking(deblocked_ts_list,self.heads)?;
                 let mut src_offset = 0;
-                let padded = super::quantize_block(dat, chs_list.len()*sec_size);
-                for [cyl,head,lsec] in chs_list {
-                    self.check_user_area_up_to_cyl(cyl, 0)?;
-                    match self.write_sector(cyl,head,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
+                let padded = super::quantize_block(dat, ts_list.len()*sec_size);
+                for (trk,lsec) in ts_list {
+                    self.check_user_area_up_to_cyl(trk, 0)?;
+                    match self.write_sector(trk,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
                         Ok(_) => src_offset += sec_size,
                         Err(e) => return Err(e)
                     }
@@ -510,57 +590,21 @@ impl img::DiskImage for Imd {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        trace!("seeking sector {} (R)",sec);
+    fn read_sector(&mut self,trk: super::Track,sec: super::Sector) -> Result<Vec<u8>,DYNERR> {
+        let buf_idx = self.seek_sector(trk,sec)?;
+        let [cyl, head] = self.get_rz(trk)?;
         let trk = self.get_track_mut(cyl,head)?;
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
-        // advance to the requested sector
-        for _i in 0..trk.sector_map.len() {
-            let (sec_idx,buf_idx) = trk.adv_sector();
-            let curr = trk.sector_map[sec_idx] as usize;
-            if sec==curr {
-                trace!("reading sector {}",sec);
-                return match SectorData::from_u8(trk.track_buf[buf_idx]) {
-                    Some(SectorData::Normal) | Some(SectorData::NormalDeleted) => Ok(trk.track_buf[buf_idx+1..buf_idx+1+psec_size].to_vec()),
-                    Some(SectorData::Error) | Some(SectorData::ErrorDeleted) => Ok(trk.track_buf[buf_idx+1..buf_idx+1+psec_size].to_vec()),
-                    _ => {
-                        debug!("cyl {} head {} sector {}: data type {} not expected",cyl,head,sec,trk.track_buf[buf_idx]);
-                        Err(Box::new(img::Error::SectorAccess))
-                    }
-                };
-            }
-            trace!("skip sector {}",curr);
-        }
-        error!("sector {} not found",sec);
-        debug!("sector map {:?}",trk.sector_map);
-        Err(Box::new(img::Error::SectorAccess))
+        Ok(trk.track_buf[buf_idx+1..buf_idx+1+psec_size].to_vec())
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
-        trace!("seeking sector {} (W)",sec);
+    fn write_sector(&mut self,trk: super::Track,sec: super::Sector,dat: &[u8]) -> STDRESULT {
+        let buf_idx = self.seek_sector(trk,sec)?;
+        let [cyl, head] = self.get_rz(trk)?;
         let trk = self.get_track_mut(cyl,head)?;
         let psec_size = SECTOR_SIZE_BASE << trk.sector_shift;
         let padded = super::quantize_block(dat, psec_size);
-        // advance to the requested sector
-        for _i in 0..trk.sector_map.len() {
-            let (sec_idx,buf_idx) = trk.adv_sector();
-            let curr = trk.sector_map[sec_idx] as usize;
-            if sec==curr {
-                trace!("writing sector {}",sec);
-                return match SectorData::from_u8(trk.track_buf[buf_idx]) {
-                    Some(SectorData::Normal) | Some(SectorData::NormalDeleted) | Some(SectorData::Error) | Some(SectorData::ErrorDeleted) => {
-                        trk.track_buf[buf_idx+1..buf_idx+1+psec_size].copy_from_slice(&padded);
-                        Ok(())
-                    },
-                    _ => {
-                        debug!("cyl {} head {} sector {}: data type {} not expected",cyl,head,sec,trk.track_buf[buf_idx]);
-                        Err(Box::new(img::Error::SectorAccess))
-                    }
-                };
-            }
-            trace!("skip sector {}",curr);
-        }
-        error!("sector {} not found",sec);
-        Err(Box::new(img::Error::SectorAccess))
+        trk.track_buf[buf_idx+1..buf_idx+1+psec_size].copy_from_slice(&padded);
+        Ok(())
     }
     fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         if data.len()<29 {
@@ -568,10 +612,10 @@ impl img::DiskImage for Imd {
         }
         let header = data[0..29].to_vec();
         match header[0..6] {
-            [73,77,68,32,48,46] => info!("identified IMD v0.x header"),
-            [73,77,68,32,49,46] => info!("identified IMD v1.x header"),
+            [73,77,68,32,48,46] => log::info!("identified IMD v0.x header"),
+            [73,77,68,32,49,46] => log::info!("identified IMD v1.x header"),
             [73,77,68,32,x,y] => {
-                warn!("IMD header found but with unknown major version {}.{}...",x-48,y-48);
+                log::warn!("IMD header found but with unknown major version {}.{}...",x-48,y-48);
                 return Err(DiskStructError::UnexpectedValue);
             }
             _ => return Err(DiskStructError::UnexpectedValue)
@@ -596,14 +640,18 @@ impl img::DiskImage for Imd {
             while ptr<data.len() {
                 let compressed = Track::from_bytes_adv(&data[ptr..],&mut ptr)?;
                 if compressed.sector_shift==0xff {
-                    warn!("inhomogeneous sector sizes are not supported");
+                    log::warn!("inhomogeneous sector sizes are not supported");
                     return Err(DiskStructError::IllegalValue);
                 }
                 ans.tracks.push(compressed.expand());
             }
             // TODO: this works for now, but we should have the IMD object set up a pattern
             // that can be explicitly matched against the disk kind.
-            ans.kind = match (ans.byte_capacity(),ans.tracks[0].sectors) {
+            match ans.nominal_capacity() {
+                Some(cap) => log::debug!("disk capacity {}",cap),
+                None => return Err(DiskStructError::UnexpectedValue)
+            }
+            ans.kind = match (ans.nominal_capacity().unwrap(),ans.tracks[0].sectors) {
                 (l,8) if l==DSDD_77.byte_capacity() => img::DiskKind::D8(DSDD_77),
                 (l,8) if l==IBM_SSDD_8.byte_capacity() => img::DiskKind::D525(IBM_SSDD_8),
                 (l,9) if l==IBM_SSDD_9.byte_capacity() => img::DiskKind::D525(IBM_SSDD_9),
@@ -628,8 +676,8 @@ impl img::DiskImage for Imd {
                 _ => img::DiskKind::Unknown
             };
             for trk in &ans.tracks {
-                if (trk.head & HEAD_MASK) as usize >= ans.heads {
-                    ans.heads = (trk.head & HEAD_MASK) as usize + 1;
+                if (trk.head_flags & HEAD_MASK) as usize >= ans.heads {
+                    ans.heads = (trk.head_flags & HEAD_MASK) as usize + 1;
                 }
             }
             return Ok(ans);
@@ -659,15 +707,16 @@ impl img::DiskImage for Imd {
         }
         return ans;
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
-        error!("IMD images have no track bits");
+    fn get_track_buf(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
+        log::error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
-        error!("IMD images have no track bits");
+    fn set_track_buf(&mut self,_trk: super::Track,_dat: &[u8]) -> STDRESULT {
+        log::error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {
+    fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {
+        let trk = self.get_track(trk)?;
         let trk_obj = &self.tracks[trk];
         let (flux_code,speed_kbps) = match Mode::from_u8(trk_obj.mode) {
             Some(Mode::Fm250Kbps) => (img::FluxCode::FM,250),
@@ -678,14 +727,14 @@ impl img::DiskImage for Imd {
             Some(Mode::Mfm500Kbps) => (img::FluxCode::MFM,500),
             None => (img::FluxCode::None,0)
         };
-        let phys_head = (trk_obj.head & HEAD_MASK) as usize;
-        let mut addr_map: Vec<[u8;4]> = Vec::new();
+        let phys_head = (trk_obj.head_flags & HEAD_MASK) as usize;
+        let mut addr_map: Vec<[u8;5]> = Vec::new();
         for i in 0..trk_obj.sectors as usize {
             let c = match trk_obj.cylinder_map.len()>i { true=>trk_obj.cylinder_map[i] as usize, false=>trk_obj.cylinder as usize };
             let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>phys_head };
-            addr_map.push([c.try_into()?,h.try_into()?,trk_obj.sector_map[i],trk_obj.sector_shift]);
+            addr_map.push([c.try_into()?,h.try_into()?,trk_obj.sector_map[i],trk_obj.sector_shift,0]);
         }
-        Ok(Some(img::TrackSolution {
+        Ok(img::TrackSolution {
             cylinder: trk_obj.cylinder as usize,
             fraction: [0,1],
             head: phys_head,
@@ -693,13 +742,14 @@ impl img::DiskImage for Imd {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            addr_type: "CHS*".to_string(),
+            addr_type: "CHSFK".to_string(),
+            addr_mask: [255,255,255,0,0],
             addr_map,
             size_map: vec![SECTOR_SIZE_BASE << trk_obj.sector_shift;trk_obj.sectors as usize]
-        }))
+        })
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
-        error!("IMD images have no track bits");
+    fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
+        log::error!("IMD images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }
     fn display_track(&self,_bytes: &[u8]) -> String {
@@ -722,12 +772,12 @@ impl img::DiskImage for Imd {
             meta::test_metadata(key_path, self.what_am_i())?;
             let imd = self.what_am_i().to_string();
             if meta::match_key(key_path,&[&imd,"header"]) {
-                warn!("skipping read-only `header`");
+                log::warn!("skipping read-only `header`");
                 return Ok(())
             }
             putString!(val,key_path,imd,self.comment);
         }
-        error!("unresolved key path {:?}",key_path);
+        log::error!("unresolved key path {:?}",key_path);
         Err(Box::new(img::Error::MetadataMismatch))
     }
 }

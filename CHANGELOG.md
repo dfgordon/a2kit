@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * macro expansions handle `]0` (Merlin 16 or higher)
 * additional diagnostics and settings for Merlin server
 * more fine grained control of permissions
+* sector search by explicit address
 
 ### Breaking Changes (CLI)
 
@@ -51,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `TrackBits` trait is eliminated
 * `parse_escaped_ascii` is eliminated, `escaped_ascii_to_bytes` args changed
 * various public entities are eliminated from `img::woz`
+* `Block` enumeration moved to `bios` module, things moved around within `bios`
 * changes to `DiskImage` trait
-    - eliminated `track_2_ch`, `ch_2_track`
+    - arguments to many functions use abstract `Track` and `Sector` in place of CHS indices
 * changes to `DiskFS` trait
     - permissions are controlled by `set_attrib`, while `lock`, `unlock`, `protect`, and `unprotect` are eliminated
 * enumerations `img::NibbleCode` and `img::DataRate` are eliminated 
@@ -65,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - in `merlin::settings`
 * changes to public interfaces
     - create functions for woz images
+* module `lang::linenum` is private
 
 ## [3.7.0] - 2025-03-22
 

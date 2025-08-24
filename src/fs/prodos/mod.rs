@@ -75,7 +75,10 @@ impl Disk {
     /// The DiskFS takes ownership of the image.
     /// The image may or may not be formatted.
     pub fn from_img(img: Box<dyn img::DiskImage>) -> Result<Self,DYNERR> {
-        let total_blocks = img.byte_capacity()/512;
+        if img.nominal_capacity().is_none() {
+            return Err(Box::new(Error::IOError));
+        }
+        let total_blocks = img.nominal_capacity().unwrap()/512;
         Ok(Self {
             img,
             total_blocks,
@@ -1216,7 +1219,7 @@ impl super::DiskFS for Disk {
     }
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
         self.writeback_bitmap_buffer().expect("disk error");
-        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap(),None).expect("read error");
         let vhdr = self.get_vol_header().expect("disk error");
         for block in 0..vhdr.total_blocks() {
             let addr = Block::PO(block as usize);

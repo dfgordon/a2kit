@@ -2,7 +2,8 @@
 use std::path::Path;
 use std::fmt::Write;
 use std::collections::HashMap;
-use a2kit::fs::{Block,prodos,DiskFS};
+use a2kit::fs::{prodos,DiskFS};
+use a2kit::bios::Block;
 use a2kit::fs::prodos::types::BLOCK_SIZE;
 use a2kit::lang::applesoft;
 use a2kit::commands::ItemType;
@@ -67,7 +68,7 @@ fn read_small() {
     // Formatting: Copy2Plus, writing: Virtual II:
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("prodos-smallfiles.do")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("file not found");
 
     // check the BASIC program
     let mut lib_tokens = get_tokens("disk_builder.abas");
@@ -132,7 +133,7 @@ fn read_big() {
     // Formatting: Copy2Plus, Writing: Virtual II
     // This tests a seedling, a sapling, and two trees (both sparse)
     let img = std::fs::read(&Path::new("tests").join("prodos-bigfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("could not interpret image");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program, this is a seedling file
@@ -273,7 +274,7 @@ fn read_big_woz1() {
 
     let buf = Path::new("tests").join("prodos-bigfiles.woz");
     let woz1_path = buf.to_str().expect("could not get path");
-    let mut disk = a2kit::create_fs_from_file(woz1_path).expect("could not interpret image");
+    let mut disk = a2kit::create_fs_from_file(woz1_path,None).expect("could not interpret image");
     let ignore = disk.standardize(2);
     disk.compare(&Path::new("tests").join("prodos-bigfiles.dsk"),&ignore);    
 }

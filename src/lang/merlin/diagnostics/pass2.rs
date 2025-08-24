@@ -38,12 +38,22 @@ fn visit_verify_macro_def(node: &Node, loc: lsp::Location, ctx: &mut Context, sy
     let child = node.named_child(0);
     let (rng,txt) = ctx.node_spec(&node);
     if node.kind()=="macro_def" {
-        if let Some(severity) = ctx.unused_macros_setting() {
-            match symbols.is_macro_referenced(&txt,15) {
-                Ok(true) => {},
-                Ok(false) => push(rng,"macro is never referenced in current context",severity),
-                Err(_) => push(rng,"nesting depth exceeds 15",lsp::DiagnosticSeverity::ERROR)
-            }
+        match (ctx.unused_macros_in_context_setting(),ctx.unused_macros_setting(),ctx.is_include()) {
+            (Some(severity),_,true) => {
+                match symbols.is_macro_referenced(&txt,15) {
+                    Ok(true) => {},
+                    Ok(false) => push(rng,"macro is not referenced in current context",severity),
+                    Err(_) => push(rng,"nesting depth exceeds 15",lsp::DiagnosticSeverity::ERROR)
+                }
+            },
+            (_,Some(severity),false) => {
+                match symbols.is_macro_referenced(&txt,15) {
+                    Ok(true) => {},
+                    Ok(false) => push(rng,"macro is never referenced",severity),
+                    Err(_) => push(rng,"nesting depth exceeds 15",lsp::DiagnosticSeverity::ERROR)
+                }
+            },
+            _ => {}
         }
         let is_new_mac_scope = match ctx.curr_scope() {
             Some(scope) => scope.flags & flg::MAC == 0,
@@ -206,10 +216,18 @@ pub fn visit_verify(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
     else if node.kind() == "var_mac" {
         push(rng, "macro substitution variable referenced outside macro", lsp::DiagnosticSeverity::ERROR);
     } else if child.is_some() && node.kind()=="label_def" {
-        if let Some(severity) = ctx.unused_labels_setting() {
-            if !symbols.is_label_referenced_or_ent(&txt, ctx.curr_scope()) {
-                push(rng,"label is never referenced",severity);
-            }
+        match (ctx.unused_labels_in_context_setting(),ctx.unused_labels_setting(),ctx.is_include()) {
+            (Some(severity),_,true) => {
+                if !symbols.is_label_referenced_or_ent(&txt, ctx.curr_scope()) {
+                    push(rng,"label is not referenced in current context",severity);
+                }
+            },
+            (_,Some(severity),false) => {
+                if !symbols.is_label_referenced_or_ent(&txt, ctx.curr_scope()) {
+                    push(rng,"label is never referenced",severity);
+                }
+            },
+            _ => {}
         }
         let ck = child.unwrap().kind();
         if ck == "global_label" {

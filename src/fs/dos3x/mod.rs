@@ -22,6 +22,7 @@ use pack::*;
 use directory::*;
 use super::Block;
 use crate::img;
+use crate::DiskFormat;
 
 use crate::{STDRESULT,DYNERR};
 
@@ -127,10 +128,9 @@ impl Disk
         return false;
     }
     /// Test an image to see if it already contains DOS 3.x.
-    pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+    pub fn test_img(img: &mut Box<dyn img::DiskImage>, maybe_fmt: Option<&DiskFormat>) -> bool {
         let tlen = img.track_count();
-        // TODO: track count check should depend on whether we have a user-format or not
-        if tlen < 35 || tlen > 40 {
+        if (tlen < 35 || tlen > 40) && maybe_fmt.is_none() {
             log::debug!("track count {} is unexpected",tlen);
             return false;
         }
@@ -155,7 +155,7 @@ impl Disk
             None => {
                 log::debug!("open VTOC buffer");
                 // We can use physical addressing for either DOS if sector = 0
-                let buf = self.img.read_sector(VTOC_TRACK as usize, 0, 0)?;
+                let buf = self.img.read_sector(img::Track::Num(VTOC_TRACK as usize), img::Sector::Num(0))?;
                 self.maybe_vtoc = match VTOC::from_bytes(&buf) {
                     Ok(vtoc) => {
                         log::debug!("vtoc tracks {} sectors {} version {}",vtoc.tracks,vtoc.sectors,vtoc.version);
@@ -200,7 +200,7 @@ impl Disk
         };
         log::debug!("writeback VTOC buffer");
         // We can use physical addressing for either DOS if sector = 0
-        self.img.write_sector(VTOC_TRACK as usize, 0, 0, &buf)
+        self.img.write_sector(img::Track::Num(VTOC_TRACK as usize), img::Sector::Num(0), &buf)
     }
     fn addr(&self,ts: [u8;2]) -> Block {
         match self.img.kind() {
@@ -946,7 +946,7 @@ impl super::DiskFS for Disk {
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
         let vconst = self.get_vtoc_constants().expect("could not get VTOC buffer");
         self.writeback_vtoc_buffer().expect("could not write back VTOC buffer");
-        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap(),None).expect("read error");
         for track in 0..vconst.tracks as usize {
             for sector in 0..vconst.sectors as usize {
                 let addr = self.addr([track as u8,sector as u8]);

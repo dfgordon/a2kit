@@ -162,6 +162,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("trunc").long("trunc").help("truncate raw at EOF if possible").action(ArgAction::SetTrue))
             .arg(pro_arg())
             .arg(method_arg())
+            .arg(Arg::new("explicit").long("explicit").help("supply an explicit hex address").value_name("HEX").required(false))
             .arg(console_arg())
             .about("read from stdin, local, or disk image, write to stdout")
             .after_help([RNG_HELP,"\n\n",WOZ_HELP,"\n\n",IN_HELP].concat())
@@ -175,6 +176,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(false))
             .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
             .arg(pro_arg())
+            .arg(Arg::new("explicit").long("explicit").help("supply an explicit hex address").value_name("HEX").required(false))
             .about("read from stdin, write to local or disk image")
             .after_help([RNG_HELP,"\n\n",WOZ_HELP].concat())
     );

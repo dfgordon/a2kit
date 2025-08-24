@@ -1,7 +1,8 @@
 // test of FAT file system
 use std::path::Path;
 use std::fmt::Write;
-use a2kit::fs::{fat,DiskFS,Block};
+use a2kit::fs::{fat,DiskFS};
+use a2kit::bios::Block;
 use std::collections::HashMap;
 
 fn get_builder(filename: &str) -> String {

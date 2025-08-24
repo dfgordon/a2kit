@@ -19,6 +19,7 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
     let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
     let img_path = cmd.get_one::<String>("dimg").expect(RCH);
     let fmt = super::get_fmt(cmd)?;
+    let maybe_explicit_list = cmd.get_one::<String>("explicit");
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {
@@ -28,13 +29,16 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
                         img.change_format(fmt)?;
                     }
                     let mut ptr = 0;
-                    let sec_list = super::parse_sector_request(&dest_path,img.motor_steps_per_cyl())?;
+                    let mut sec_list = super::parse_sector_request(&dest_path,img.motor_steps_per_cyl())?;
+                    if let Some(explicit_list) = maybe_explicit_list {
+                        super::to_explicit(&explicit_list,&mut sec_list)?;
+                    }
                     let mut sec_len_list = Vec::new();
                     // Gather all the sector sizes, this must be done first so that
                     // we preserve angle-order during the write phase. An alternative would
                     // be to rely on the size as given by `get_chss`.
-                    for (tkey,skey) in &sec_list {
-                        let sec_len = img.read_pro_sector(tkey.clone(), skey.clone())?.len();
+                    for (trk,sec) in &sec_list {
+                        let sec_len = img.read_sector(*trk, sec.clone())?.len();
                         sec_len_list.push(sec_len);
                         ptr += sec_len;
                     }
@@ -46,12 +50,12 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
                     // Now write the sectors
                     ptr = 0;
                     for i in 0..sec_list.len() {
-                        img.write_pro_sector(sec_list[i].0.clone(),sec_list[i].1.clone(),&dat[ptr..])?;
+                        img.write_sector(sec_list[i].0,sec_list[i].1.clone(),&dat[ptr..])?;
                         ptr += sec_len_list[i];
                     }
                 },
                 ItemType::RawTrack => {
-                    img.set_pro_track_buf(super::request_one_track(&dest_path,img.motor_steps_per_cyl())?,dat)?
+                    img.set_track_buf(super::request_one_track(&dest_path,img.motor_steps_per_cyl())?,dat)?
                 },
                 ItemType::Track => {
                     error!("cannot copy nibbles, try using the raw track");

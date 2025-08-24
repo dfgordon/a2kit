@@ -3,17 +3,17 @@ use std::path::Path;
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use a2kit::fs::{cpm,DiskFS,Block};
+use a2kit::fs::{cpm,DiskFS};
+use a2kit::bios::Block;
 use a2kit::img::{dsk_do,names};
 use a2kit::bios::dpb::DiskParameterBlock;
+
+const RCH: &str = "unreachable was reached";
 
 // Some lines we entered in the emulator using ED.COM.
 // One thing to note: if we would use an odd number of
 // CP/M "sectors" (128 byte records) ED would leave copious
 // trailing data; so we are careful to fill an even number.
-
-const RCH: &str = "unreachable was reached";
-
 const ED_TEST: &str =
 "From the story \"Polaris\"
 by H.P. Lovecraft
@@ -39,7 +39,7 @@ fn read_small() {
     // Formatting: FORMAT.COM, writing: ED.COM, emulator: Virtual II
     // This tests small CP/M text files
     let img = std::fs::read(&Path::new("tests").join("cpm-smallfiles.dsk")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("file not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("file not found");
 
     // check text file
     let fimg = emulator_disk.get("POLARIS.TXT").expect("error");
@@ -153,7 +153,7 @@ fn rename_delete_dsk() {
     // MS-BASIC and PIP seem to put some buffered stuff into the data, so we cannot easily test the entire disk.
     // For now just see if the directory came out right.
 
-    let mut emulator_disk = a2kit::create_fs_from_file(&Path::new("tests").join("cpm-ren-del.dsk").to_str().unwrap()).expect("read error");
+    let mut emulator_disk = a2kit::create_fs_from_file(&Path::new("tests").join("cpm-ren-del.dsk").to_str().unwrap(),None).expect("read error");
     for block in 0..1 {
         let addr = Block::CPM((block,3,3));
         let actual = disk.get_img().read_block(addr).expect("bad sector access");

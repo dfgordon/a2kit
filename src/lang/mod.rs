@@ -15,7 +15,7 @@
 pub mod applesoft;
 pub mod integer;
 pub mod merlin;
-pub mod linenum;
+mod linenum;
 pub mod server;
 pub mod disk_server;
 

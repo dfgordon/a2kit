@@ -10,7 +10,7 @@ use a2kit_macro::{DiskStructError,DiskStruct};
 use a2kit_macro_derive::DiskStruct;
 use crate::img;
 use crate::img::meta;
-use crate::fs::Block;
+use crate::bios::Block;
 use crate::{STDRESULT,DYNERR,putHex,getHex,getHexEx,putString};
 
 /// These are all in the header branch
@@ -92,14 +92,18 @@ impl Dot2mg {
             img::names::A2_DOS33_KIND => [vol,1,0,0],
             _ => [0,0,0,0]
         };
-        let actual_blocks = raw_img.byte_capacity() as u32 / BLOCK_SIZE;
+        let capacity = match raw_img.nominal_capacity() {
+            Some(cap) => cap as u32,
+            None => return Err(Box::new(img::Error::ImageTypeMismatch))
+        };
+        let actual_blocks = capacity / BLOCK_SIZE;
         let (fmt,blocks,buf_len) = match raw_img.what_am_i() {
             // Some sources say blocks should be 0 unless we have fmt=1 (PO).
             // However, CiderPress, for one, will reject a DO with blocks=0.
             // So we will write the blocks unconditionally.
             // When we are reading, we ignore blocks unless fmt=1.
-            img::DiskImageType::DO => (0, actual_blocks, raw_img.byte_capacity() as u32),
-            img::DiskImageType::PO => (1, actual_blocks, raw_img.byte_capacity() as u32),
+            img::DiskImageType::DO => (0, actual_blocks, capacity),
+            img::DiskImageType::PO => (1, actual_blocks, capacity),
             img::DiskImageType::NIB => (2, actual_blocks, img::nib::TRACK_BYTE_CAPACITY_NIB as u32*35),
             _ => {
                 error!("attempt to wrap unsupported image type in 2MG");
@@ -135,11 +139,17 @@ impl img::DiskImage for Dot2mg {
     fn track_count(&self) -> usize {
         self.raw_img.track_count()
     }
+    fn end_track(&self) -> usize {
+        self.raw_img.end_track()
+    }
     fn num_heads(&self) -> usize {
         self.raw_img.num_heads()
     }
-    fn byte_capacity(&self) -> usize {
-        self.raw_img.byte_capacity()
+    fn nominal_capacity(&self) -> Option<usize> {
+        self.raw_img.nominal_capacity()
+    }
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
+        self.raw_img.actual_capacity()
     }
     fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
         self.raw_img.read_block(addr)
@@ -151,15 +161,15 @@ impl img::DiskImage for Dot2mg {
         }
         self.raw_img.write_block(addr,dat)
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        self.raw_img.read_sector(cyl,head,sec)
+    fn read_sector(&mut self,trk: super::Track,sec: super::Sector) -> Result<Vec<u8>,DYNERR> {
+        self.raw_img.read_sector(trk,sec)
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
+    fn write_sector(&mut self,trk: super::Track,sec: super::Sector,dat: &[u8]) -> STDRESULT {
         if self.header.flags[3]>127 {
             error!("2MG disk is write protected");
             return Err(Box::new(img::Error::SectorAccess));
         }
-        self.raw_img.write_sector(cyl,head,sec,dat)
+        self.raw_img.write_sector(trk,sec,dat)
     }
     fn from_bytes(data: &[u8]) -> Result<Self,DiskStructError> {
         if data.len()<64 {
@@ -237,7 +247,10 @@ impl img::DiskImage for Dot2mg {
                 }
             };
         }
-        if fmt==1 && blocks as usize * BLOCK_SIZE as usize != raw_img.byte_capacity() {
+        if raw_img.nominal_capacity().is_none() {
+            return Err(DiskStructError::UnexpectedSize);
+        }
+        if fmt==1 && blocks as usize * BLOCK_SIZE as usize != raw_img.nominal_capacity().unwrap() {
             error!("2MG block count does not match data size");
             return Err(DiskStructError::UnexpectedSize);
         }
@@ -283,17 +296,17 @@ impl img::DiskImage for Dot2mg {
         ans.append(&mut self.creator_info.as_bytes().to_vec());
         return ans;
     }
-    fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
-        self.raw_img.get_track_buf(cyl, head)
+    fn get_track_buf(&mut self,trk: super::Track) -> Result<Vec<u8>,DYNERR> {
+        self.raw_img.get_track_buf(trk)
     }
-    fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT {
-        self.raw_img.set_track_buf(cyl, head, dat)
+    fn set_track_buf(&mut self,trk: super::Track,dat: &[u8]) -> STDRESULT {
+        self.raw_img.set_track_buf(trk, dat)
     }
-    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
+    fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
         self.raw_img.get_track_solution(trk)
     }
-    fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR> {
-        self.raw_img.get_track_nibbles(cyl, head)
+    fn get_track_nibbles(&mut self,trk: super::Track) -> Result<Vec<u8>,DYNERR> {
+        self.raw_img.get_track_nibbles(trk)
     }
     fn display_track(&self,bytes: &[u8]) -> String {
         self.raw_img.display_track(bytes)

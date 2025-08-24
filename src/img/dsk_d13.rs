@@ -5,7 +5,7 @@
 //! For D13 we refuse any alternative orderings.
 
 use crate::img;
-use crate::fs::Block;
+use crate::bios::Block;
 use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
 use crate::{STDRESULT,DYNERR};
@@ -41,11 +41,17 @@ impl img::DiskImage for D13 {
     fn track_count(&self) -> usize {
         return self.tracks as usize;
     }
+    fn end_track(&self) -> usize {
+        return self.tracks as usize;
+    }
     fn num_heads(&self) -> usize {
         1
     }
-    fn byte_capacity(&self) -> usize {
-        return self.data.len();
+    fn nominal_capacity(&self) -> Option<usize> {
+        Some(self.data.len())
+    }
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
+        Ok(self.data.len())
     }
     fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
         trace!("read {}",addr);
@@ -69,17 +75,19 @@ impl img::DiskImage for D13 {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        if cyl>=self.track_count() || head>0 || sec>12 {
-            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,12);
+    fn read_sector(&mut self,trk: super::Track,sec: super::Sector) -> Result<Vec<u8>,DYNERR> {
+        let [cyl,head,sec] = self.get_rzq(trk,sec)?;
+        if cyl>=self.end_track() || head>0 || sec>12 {
+            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.end_track()-1,0,12);
             return Err(Box::new(img::Error::SectorAccess));
         }
         let offset = cyl*TRACK_SIZE + sec*SECTOR_SIZE;
         Ok(self.data[offset..offset+SECTOR_SIZE].to_vec())
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
-        if cyl>=self.track_count() || head>0 || sec>12 {
-            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.track_count()-1,0,12);
+    fn write_sector(&mut self,trk: super::Track,sec: super::Sector,dat: &[u8]) -> STDRESULT {
+        let [cyl,head,sec] = self.get_rzq(trk,sec)?;
+        if cyl>=self.end_track() || head>0 || sec>12 {
+            error!("exceeded bounds: maxima are cyl {}, head {}, sector {}",self.end_track()-1,0,12);
             return Err(Box::new(img::Error::SectorAccess));
         }
         let offset = cyl*TRACK_SIZE + sec*SECTOR_SIZE;
@@ -112,21 +120,21 @@ impl img::DiskImage for D13 {
     fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_buf(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+    fn set_track_buf(&mut self,_trk: super::Track,_dat: &[u8]) -> STDRESULT {
         error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        let [c,h] = self.get_rz(super::TrackKey::Track(trk))?;
-        let mut addr_map: Vec<[u8;4]> = Vec::new();
+    fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
+        let [c,h] = self.get_rz(trk)?;
+        let mut addr_map: Vec<[u8;5]> = Vec::new();
         for i in 0..13 {
-            addr_map.push([254,c.try_into()?,crate::bios::skew::DOS32_PHYSICAL[i].try_into()?,0]);
+            addr_map.push([254,c.try_into()?,crate::bios::skew::DOS32_PHYSICAL[i].try_into()?,0,0]);
         }
-        return Ok(Some(img::TrackSolution {
+        return Ok(img::TrackSolution {
             cylinder: c,
             fraction: [0,4],
             head: h,
@@ -134,12 +142,13 @@ impl img::DiskImage for D13 {
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((5,3)),
-            addr_type: "*TS".to_string(),
+            addr_type: "VTS".to_string(),
+            addr_mask: [0,0,255,0,0],
             addr_map,
             size_map: vec![256;13]
-        }));
+        });
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("D13 images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }

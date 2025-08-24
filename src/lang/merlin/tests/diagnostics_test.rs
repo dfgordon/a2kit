@@ -65,8 +65,8 @@ mod macros {
             "macro name matches a mnemonic",
             "folding range is never closed",
             "folding range is never closed",
-            "macro is never referenced in current context",
-            "macro is never referenced in current context",
+            "macro is never referenced",
+            "macro is never referenced",
         ]);
     }
     #[test]
@@ -86,7 +86,7 @@ mod macros {
     #[test]
     fn context() {
         super::test_diagnostics("test-mac-context.S", None, None, &[
-            "macro is never referenced in current context",
+            "macro is never referenced",
             "macro cannot be used here"
         ]);
     }
@@ -94,13 +94,13 @@ mod macros {
     fn termination() {
         super::test_diagnostics("test-mac-termination.S", None, None, &[
             "unmatched end of macro (EOM terminates all preceding MAC)",
-            "macro is never referenced in current context",
+            "macro is never referenced",
         ]);
     }
     #[test]
     fn pseudo_ops() {
         super::test_diagnostics("test-mac-psops.S", None, None, &[
-            "macro is never referenced in current context",
+            "macro is never referenced",
             "pseudo operation cannot be used in a macro",
             "pseudo operation cannot be used in a macro",
             "pseudo operation cannot be used in a macro"
@@ -113,7 +113,7 @@ mod macros {
             "macro substitution variable cannot label a line",
             "extension cannot evaluate, assuming true",
             "macro substitution variable referenced outside macro",
-            "macro is never referenced in current context",
+            "macro is never referenced",
             "macro substitution variable referenced outside macro",
             "macro substitution variable referenced outside macro",
         ]);
@@ -134,7 +134,7 @@ mod macros {
             "assembly disabled by DO",
             "evaluation was deferred",
             "forward reference check deferred",
-            "macro is never referenced in current context",
+            "macro is never referenced",
         ]);
     }
     #[test]
@@ -205,7 +205,7 @@ mod locals {
     #[test]
     fn local_in_macro() {
         super::test_diagnostics("test-loc-macro.S", None, None, &[
-            "macro is never referenced in current context",
+            "macro is never referenced",
             "cannot use local labels in a macro"
         ]);
     }

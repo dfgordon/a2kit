@@ -309,27 +309,6 @@ impl FluxCells {
     }
 }
 
-/// Encapsulates 3 ways a track might be idenfified
-#[derive(Clone,PartialEq)]
-pub enum TrackKey {
-    /// single index to a track, often `C * num_heads + H`
-    Track(usize),
-    /// cylinder and head
-    CH((usize, usize)),
-    /// stepper motor position and head, needed for, e.g., WOZ quarter tracks
-    Motor((usize, usize)),
-}
-
-/// Contains standard values that are used in forming a sector address.
-/// The ordinary sector number itself is supplied separately.
-/// Format objects determine how these values map to a specific address.
-pub struct SectorKey {
-    vol: u8,
-    cyl: u8,
-    head: u8,
-    aux: u8
-}
-
 /// bit pattern that marks off a sector address or data run,
 /// for FM/MFM the pattern shall include clock pulses
 #[derive(Clone)]
@@ -366,9 +345,6 @@ pub struct ZoneFormat {
     markers: [SectorMarker; 4],
     /// gaps at start of track, end of sector, end of data (often for syncing)
     gaps: [BitVec; 3],
-    /// Ordered expressions used to calculate human readable address bytes.
-    /// Variables may include (a0,a1,a2,...), i.e., the actual address bytes.
-    addr_extract_expr: Vec<String>,
     /// When reading replace `swap_nibs[i][0]` with `swap_nibs[i][1]`, when writing do the opposite.
     swap_nibs: Vec<[u8;2]>,
     /// Capacity of each sector, in some cases the possible values are tightly constrained
@@ -381,28 +357,28 @@ pub struct DiskFormat {
     zones: Vec<ZoneFormat>
 }
 
-impl fmt::Display for TrackKey {
+impl fmt::Display for img::Track {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CH((c, h)) => write!(f, "cyl {} head {}", c, h),
             Self::Motor((m, h)) => write!(f, "motor-pos {} head {}", m, h),
-            Self::Track(t) => write!(f, "track {}", t),
+            Self::Num(t) => write!(f, "track {}", t),
         }
     }
 }
 
-impl PartialOrd for TrackKey {
+impl PartialOrd for img::Track {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self,other) {
             (Self::CH(x),Self::CH(y)) => x.partial_cmp(y),
             (Self::Motor(x),Self::Motor(y)) => x.partial_cmp(y),
-            (Self::Track(x),Self::Track(y)) => x.partial_cmp(y),
+            (Self::Num(x),Self::Num(y)) => x.partial_cmp(y),
             _ => None
         }
     }
 }
 
-impl TrackKey {
+impl img::Track {
     /// jump in units of normal cylinder separation, if this is a `Track` discriminant an error is returned
     pub fn jump(&mut self, cyls: isize, new_head: Option<usize>, steps_per_cyl: usize) -> STDRESULT {
         match self {
@@ -425,13 +401,38 @@ impl TrackKey {
     }
 }
 
-impl fmt::Display for SectorKey {
+impl img::Sector {
+    /// consume this sector and create an explicit one
+    pub fn to_explicit(&mut self,hex_str: &str) -> STDRESULT {
+        let idx = match self {
+            Self::Num(n) => n,
+            Self::Addr((n,_)) => n
+        };
+        if hex_str.len() < 6 {
+            log::error!("sector address is too short");
+            return Err(Box::new(img::Error::SectorAccess));
+        }
+        *self = Self::Addr((*idx,hex::decode(hex_str)?));
+        Ok(())
+    }
+}
+
+impl fmt::Display for img::Sector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Num(n) => write!(f, "{}",n),
+            Self::Addr((n,a)) => write!(f, "{}:{:?}",n,a)
+        }
+    }
+}
+
+impl fmt::Display for img::SectorHood {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{},{},{},{}",self.vol,self.cyl,self.head,self.aux)
     }
 }
 
-impl SectorKey {
+impl img::SectorHood {
     fn get_fmt_vars(&self,sec: u8) -> Result<HashMap<String,String>,DYNERR> {
         let mut ctx = HashMap::new();
         ctx.insert("vol".to_string(),u8::to_string(&self.vol));
@@ -512,18 +513,74 @@ impl ZoneFormat {
     /// The inputs are transformed by expressions stored with the format.
     /// The formatter may rearrange the address, but it does *not* encode the address.
     /// The formatter can also compute simple checksums.
-    fn get_addr_for_formatting(&self,skey: &SectorKey,sec: u8) -> Result<Vec<u8>,DYNERR> {
+    fn get_addr_for_formatting(&self,hood: &img::SectorHood,sec: &img::Sector) -> Result<Vec<u8>,DYNERR> {
+        match sec {
+            img::Sector::Addr((_,addr)) => {
+                let mut ans = addr.clone();
+                match (addr.len(),self.addr_nibs) {
+                    (3,img::FieldCode::WOZ((4,4))) => ans.push(addr[0] ^ addr[1] ^ addr[2]),
+                    (4,img::FieldCode::WOZ((6,2))) => ans.push((addr[0] ^ addr[1] ^ addr[2] ^ addr[3]) & 63),
+                    _ => {}
+                }
+                Ok(ans)
+            },
+            img::Sector::Num(sec) => {
+                let mut ans = Vec::new();
+                let ctx = hood.get_fmt_vars((*sec).try_into()?)?;
+                for expr in &self.addr_fmt_expr {
+                    ans.push(eval_u8(expr,&ctx)?);
+                }
+                Ok(ans)
+            }
+        }
+    }
+    /// Get a sector address field to be matched against an actual address field during seeking.
+    /// The inputs are transformed by expressions stored with the format. These transformations
+    /// can (and usually do) involve `actual`, which should be the decoded address field actually found.
+    /// In particular, checksums are normally matched against the checksum of the actual bytes.
+    fn get_addr_for_seeking(&self,hood: &img::SectorHood,sec: &img::Sector,actual: &[u8]) -> Result<Vec<u8>,DYNERR> {
+        match sec {
+            img::Sector::Addr((_,addr)) => {
+                let mut ans = addr.clone();
+                match (addr.len(),self.addr_nibs) {
+                    (3,img::FieldCode::WOZ((4,4))) => ans.push(addr[0] ^ addr[1] ^ addr[2]),
+                    (4,img::FieldCode::WOZ((6,2))) => ans.push((addr[0] ^ addr[1] ^ addr[2] ^ addr[3]) & 63),
+                    _ => {}
+                }
+                Ok(ans)
+            },
+            img::Sector::Num(sec) => {
+                let mut ans = Vec::new();
+                let ctx = hood.get_seek_vars((*sec).try_into()?,actual)?;
+                for expr in &self.addr_seek_expr {
+                    ans.push(eval_u8(expr,&ctx)?);
+                }
+                Ok(ans)
+            }
+        }
+    }
+    /// Returns `(actual ^ pattern)` for each address byte.  If all bytes are 0 this is a match.
+    /// This will transform (but not encode) the arguments according the expressions stored with this format before comparing.
+    fn diff_addr(&self, hood: &img::SectorHood, sec: &img::Sector, actual: &[u8]) -> Result<Vec<u8>,DYNERR> {
         let mut ans = Vec::new();
-        let ctx = skey.get_fmt_vars(sec)?;
-        for expr in &self.addr_fmt_expr {
-            ans.push(eval_u8(expr,&ctx)?);
+        let pattern = self.get_addr_for_seeking(hood,sec,actual)?;
+        if pattern.len() != actual.len() {
+            log::error!("lengths did not match during address comparison");
+            return Err(Box::new(super::Error::SectorAccess));
+        }
+        for i in 0..pattern.len() {
+            ans.push(actual[i] ^ pattern[i]);
         }
         Ok(ans)
     }
     /// Return any information (not markers) that should precede the sector data (often none).
-    fn get_data_header(&self,skey: &SectorKey,sec: u8) -> Result<Vec<u8>,DYNERR> {
+    fn get_data_header(&self,hood: &img::SectorHood,sec: &img::Sector) -> Result<Vec<u8>,DYNERR> {
+        let idx = match sec {
+            img::Sector::Addr((n,_)) => *n,
+            img::Sector::Num(n) => *n
+        };
         let mut ans = Vec::new();
-        let ctx = skey.get_fmt_vars(sec)?;
+        let ctx = hood.get_fmt_vars((idx).try_into()?)?;
         // work out every byte until we encounter "dat"
         for expr in &self.data_expr {
             if expr == "dat" {
@@ -534,50 +591,7 @@ impl ZoneFormat {
         }
         Ok(ans)
     }
-    /// Return a version of the address that might be transformed for human interpretation
-    fn get_nice_addr(&self,addr: &Vec<u8>) -> Result<Vec<u8>,DYNERR> {
-        if self.addr_extract_expr.len() < 3 || self.addr_extract_expr.len() > 4 {
-            log::error!("addr_extract_expr in format should have 3 or 4 elements");
-            return Err(Box::new(crate::commands::CommandError::InvalidCommand));
-        }
-        let mut ctx = HashMap::new();
-        for i in 0..addr.len() {
-            ctx.insert(["a",&usize::to_string(&i)].concat(),u8::to_string(&addr[i]));
-        }
-        let mut ans = Vec::new();
-        for expr in &self.addr_extract_expr {
-            ans.push(eval_u8(expr,&ctx)?);
-        }
-        Ok(ans)
-    }
-    /// Get a sector address field to be matched against an actual address field during seeking.
-    /// The inputs are transformed by expressions stored with the format. These transformations
-    /// can (and usually do) involve `actual`, which should be the decoded address field actually found.
-    /// In particular, checksums are normally matched against the checksum of the actual bytes.
-    fn get_addr_for_seeking(&self,skey: &SectorKey,sec: u8,actual: &[u8]) -> Result<Vec<u8>,DYNERR> {
-        let mut ans = Vec::new();
-        let ctx = skey.get_seek_vars(sec,actual)?;
-        // work out every byte except "chk"; if we find "chk" save the index where it occurs.
-        for expr in &self.addr_seek_expr {
-            ans.push(eval_u8(expr,&ctx)?);
-        }
-        Ok(ans)
-    }
-    /// Returns `(actual ^ pattern)` for each address byte.  If all bytes are 0 this is a match.
-    /// This will transform (but not encode) the arguments according the expressions stored with this format before comparing.
-    fn diff_addr(&self, skey: &SectorKey, sec: u8, actual: &[u8]) -> Result<Vec<u8>,DYNERR> {
-        let mut ans = Vec::new();
-        let pattern = self.get_addr_for_seeking(skey,sec,actual)?;
-        if pattern.len() != actual.len() {
-            log::error!("lengths did not match during address comparison");
-            return Err(Box::new(super::Error::SectorAccess));
-        }
-        for i in 0..pattern.len() {
-            ans.push(actual[i] ^ pattern[i]);
-        }
-        Ok(ans)
-    }
-    fn addr_nibs(&self) -> img::FieldCode {
+    pub fn addr_nibs(&self) -> img::FieldCode {
         self.addr_nibs
     }
     fn data_nibs(&self) -> img::FieldCode {
@@ -586,13 +600,17 @@ impl ZoneFormat {
     /// `sec` is sector id before any format transformation happens, and is used as the index
     /// into the capacity vector.  Wrap around is used to always give an answer.  Will panic if
     /// the capacity vector is empty.
-    fn capacity(&self,sec: usize) -> usize {
-        self.capacity[sec % self.capacity.len()]
+    fn capacity(&self,sec: &img::Sector) -> usize {
+        let idx = match sec {
+            img::Sector::Addr((n,_)) => *n,
+            img::Sector::Num(n) => *n
+        };
+        self.capacity[idx % self.capacity.len()]
     }
     pub fn sector_count(&self) -> usize {
         self.capacity.len()
     }
-    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;4]>,size_map: Vec<usize>,addr_type: &str) -> img::TrackSolution {
+    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;5]>,size_map: Vec<usize>,addr_type: &str,addr_mask: [u8;5]) -> img::TrackSolution {
         img::TrackSolution {
             cylinder: motor/head_width,
             fraction: [motor%head_width,head_width],
@@ -602,6 +620,7 @@ impl ZoneFormat {
             addr_code: self.addr_nibs,
             data_code: self.data_nibs,
             addr_type: addr_type.to_string(),
+            addr_mask,
             addr_map,
             size_map
         }
@@ -643,7 +662,7 @@ impl ZoneFormat {
             img::FieldCode::WOZ((4,4)) => 2*self.addr_fmt_expr.len(),
             _ => self.addr_fmt_expr.len()
         };
-        let data_nib_count = match (self.capacity(0),self.data_nibs()) {
+        let data_nib_count = match (self.capacity(&img::Sector::Num(0)),self.data_nibs()) {
             (256,img::FieldCode::WOZ((4,4))) => 512,
             (256,img::FieldCode::WOZ((5,3))) => 411,
             (256,img::FieldCode::WOZ((6,2))) => 343,

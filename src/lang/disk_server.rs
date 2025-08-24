@@ -4,6 +4,7 @@
 
 use crate::commands::{ItemType,CommandError};
 use crate::fs::DiskFS;
+use crate::img::tracks::DiskFormat;
 use crate::{STDRESULT,DYNERR};
 
 pub struct DiskServer {
@@ -33,8 +34,8 @@ impl DiskServer {
     /// Buffer a file system object including its underlying storage.
     /// Any previously mounted disk image is dropped.
     /// The white list can be used to restrict the file systems that are accepted.
-    pub fn mount(&mut self,path_to_img: &str,maybe_white_list: &Option<Vec<String>>) -> STDRESULT {
-        match crate::create_fs_from_file(path_to_img) {
+    pub fn mount(&mut self,path_to_img: &str,maybe_white_list: &Option<Vec<String>>,maybe_fmt: Option<&DiskFormat>) -> STDRESULT {
+        match crate::create_fs_from_file(path_to_img,maybe_fmt) {
             Ok(mut disk) => {
                 let stat = disk.stat()?;
                 match maybe_white_list {

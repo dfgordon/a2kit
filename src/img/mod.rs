@@ -18,7 +18,7 @@
 //! The `DiskImage` trait object serves as the underlying storage for `fs` modules.
 //! The `fs` modules work by reading blocks from, or writing blocks to, the disk image.
 //! The task of mapping blocks to sectors happens in submodules of `img`, sometimes with
-//! the aid of `bios::blocks`, but never with any help from `fs`.
+//! the aid of `bios`, but never with any help from `fs`.
 //! The `fs` module will usually run heuristics on certain key blocks when a disk
 //! image is first connected.  If these fail the disk image is refused.
 //! 
@@ -31,23 +31,25 @@
 //! `DiskKind::D35(_)`.  The embedded structure can be used to limit the pattern to specific elements
 //! of a track layout.
 //! 
+//! ## Sector Addresses
+//! 
+//! Assuming soft-sectoring, once we have a track, the only way to locate a sector is by matching its
+//! address field.  The unique part of an address field is often a sector id that is just an unsigned
+//! 8-bit integer, with other bytes encoding cylinder numbers, volume numbers, etc..  The address that
+//! is finally used in a sector search is the product of multiple transformations.  If there is a block
+//! request, the standard file system transformation is applied first.  This may involve a skew
+//! transformation.  Then if there is a special format, a further transformation is applied.  Finally
+//! the actual pattern is matched against the track bits.  In the case of naive sector images,
+//! special format transformations can become ineffective.
+//! 
 //! ## Sector Skews
 //! 
-//! The actual skew tables are maintained separately in `bios::skew`.
-//! 
-//! Disk addresses are often transformed one or more times as they propagate from a file
-//! system request to a physical disk.  The file system may use an abstract unit, like a block,
-//! which is transformed into a "logical" sector number, which is further transformed into a
-//! "physical" address.  In a soft-sectoring scheme the physical address is encoded with
-//! the other sector data.  If the physical addresses are out of order with respect to the
-//! order in which they pass by the read/write head, we have a "physical" skew.
-//! 
-//! The way this is handled within `a2kit` is as follows.  The `fs` module provides
-//! an enumeration called `Block` which identifies a disk address in a given file system's
-//! own language.  Each disk image implementation has to provide `read_block` and `write_block`.
-//! These functions have to be able to take a `Block` and transform it into whatever disk
-//! addressing the image uses, or else refuse the block as out of scope.
-//! The tables in `bios::skew` are accessible to any image.
+//! There are two kinds of sector skews.  The first kind of skew is a physical skew,
+//! wherein geometric neighbors have disjoint addresses.  The second kind is a logical skew,
+//! wherein geometric neighbors have neighboring addresses, but neighboring blocks
+//! are mapped to disjoint sectors. Tables describing these orderings are in `bios::skew`.
+//! These tables are used by `img` in a variety of ways due to the variety of ways that
+//! disk images organize sectors.
 
 pub mod dsk_d13;
 pub mod dsk_do;
@@ -67,9 +69,9 @@ pub mod tracks;
 use std::str::FromStr;
 use std::fmt;
 use log::{info,error};
-use crate::fs;
+use crate::bios::Block;
 use crate::{STDRESULT,DYNERR};
-use tracks::{TrackKey,DiskFormat};
+use tracks::DiskFormat;
 
 use a2kit_macro::DiskStructError;
 
@@ -80,8 +82,10 @@ pub enum Error {
     UnknownDiskKind,
     #[error("unknown image type")]
     UnknownImageType,
-    #[error("track count did not match request")]
-    TrackCountMismatch,
+    #[error("unknown format")]
+    UnknownFormat,
+    #[error("invalid kind of disk")]
+    DiskKindMismatch,
     #[error("geometric coordinate out of range")]
     GeometryMismatch,
 	#[error("image size did not match the request")]
@@ -92,27 +96,58 @@ pub enum Error {
     InternalStructureAccess,
     #[error("unable to access sector")]
     SectorAccess,
+    #[error("sector not found")]
+    SectorNotFound,
     #[error("unable to access track")]
     TrackAccess,
+    #[error("track request out of range")]
+    TrackNotFound,
+    #[error("track is unformatted")]
+    BlankTrack,
     #[error("metadata mismatch")]
-    MetadataMismatch
-}
-
-/// Errors pertaining to nibble encoding
-#[derive(thiserror::Error,Debug)]
-pub enum NibbleError {
-    #[error("could not interpret track data")]
-    BadTrack,
+    MetadataMismatch,
+    #[error("wrong context for this request")]
+    BadContext,
     #[error("invalid byte while decoding")]
     InvalidByte,
     #[error("bad checksum found in a sector")]
     BadChecksum,
     #[error("could not find bit pattern")]
     BitPatternNotFound,
-    #[error("sector not found")]
-    SectorNotFound,
     #[error("nibble type appeared in wrong context")]
     NibbleType
+}
+
+/// Encapsulates 3 ways a track might be idenfified
+#[derive(Clone,Copy,PartialEq)]
+pub enum Track {
+    /// single index to a track, often `C * num_heads + H`
+    Num(usize),
+    /// cylinder and head
+    CH((usize, usize)),
+    /// stepper motor position and head, needed for, e.g., WOZ quarter tracks
+    Motor((usize, usize)),
+}
+
+/// Properties of a sector's neighborhood that may be used in forming its address.
+/// Format objects determine how these values map to a specific address.
+pub struct SectorHood {
+    vol: u8,
+    cyl: u8,
+    head: u8,
+    aux: u8
+}
+
+/// Wraps either a standard sector index or an explicit address.
+/// If the index is used, it will in general be combined with `ZoneFormat` and `SectorHood` to produce
+/// the actual sector address.  If the explicit address is used, there are no transformations.
+#[derive(Clone,PartialEq)]
+pub enum Sector {
+    /// standard index used by a file system, subject to various transformations
+    Num(usize),
+    /// (index,address), the address is the explicit sector address to seek without transformation,
+    /// the index may be used to determined other sector properties in the usual way 
+    Addr((usize,Vec<u8>))
 }
 
 /// Indicates the overall scheme of a track
@@ -152,10 +187,14 @@ pub struct TrackSolution {
     flux_code: FluxCode,
     addr_code: FieldCode,
     data_code: FieldCode,
-    addr_type: String,
     /// nominal rate of pulses during a run of high bits, n.b. this is not the same as the data rate, e.g. for FM clock pulses are counted
     speed_kbps: usize,
-    addr_map: Vec<[u8;4]>,
+    /// string describing address (like VTS or CHSF)
+    addr_type: String,
+    /// mask out bits we are ignorant of due to image limitations
+    addr_mask: [u8;5],
+    /// address of every sector
+    addr_map: Vec<[u8;5]>,
     size_map: Vec<usize>
 }
 
@@ -426,40 +465,53 @@ impl fmt::Display for DiskImageType {
 /// Reading can mutate the object because the image may be keeping
 /// track of the head position or other status indicators.
 pub trait DiskImage {
-    /// Get the count of formatted tracks.
-    /// For images that support blank tracks interpret with care.
-    fn track_count(&self) -> usize; // TODO: supply end_track and replace where appropriate
+    /// Get the count of formatted tracks, not necessarily the same as `end_track`
+    fn track_count(&self) -> usize;
+    /// Get the id of the end-track (last-track + 1)
+    fn end_track(&self) -> usize;
     fn num_heads(&self) -> usize;
     fn motor_steps_per_cyl(&self) ->usize {
         1
     }
-    /// Get the geometric [cyl,head].  This is *not* in general what
-    /// would appear in the track's address fields.  Avoid using
-    /// for images with fractional tracks.
-    fn get_rz(&self,tkey: TrackKey) -> Result<[usize;2],DYNERR> {
+    /// Get the geometric [cyl,head].  Default truncates fractional tracks in a reasonable
+    /// way if there are either 1 or 4 steps per track.
+    fn get_rz(&self,trk: Track) -> Result<[usize;2],DYNERR> {
         let msc = self.motor_steps_per_cyl();
-        let ans = match tkey {
-            TrackKey::Track(t) => [t/self.num_heads(),t%self.num_heads()],
-            TrackKey::CH((c,h)) => [c,h],
-            TrackKey::Motor((m,h)) => [(m+msc/4)/msc,h]
+        let ans = match trk {
+            Track::Num(t) => [t/self.num_heads(),t%self.num_heads()],
+            Track::CH((c,h)) => [c,h],
+            Track::Motor((m,h)) => [(m+msc/4)/msc,h]
         };
         Ok(ans)
     }
-    /// Get the geometric track.  This is *not* in general what
-    /// would appear in the track's address fields.  Avoid using
-    /// for images with fractional tracks.
-    fn get_track(&self,tkey: TrackKey) -> Result<usize,DYNERR> {
+    /// Get the geometric track.  Default truncates fractional tracks in a reasonable
+    /// way if there are either 1 or 4 steps per track.
+    fn get_track(&self,trk: Track) -> Result<usize,DYNERR> {
         let msc = self.motor_steps_per_cyl();
-        let ans = match tkey {
-            TrackKey::Track(t) => t,
-            TrackKey::CH((c,h)) => c*self.num_heads() + h,
-            TrackKey::Motor((m,h)) => ((m+msc/4)/msc)*self.num_heads() + h
+        let ans = match trk {
+            Track::Num(t) => t,
+            Track::CH((c,h)) => c*self.num_heads() + h,
+            Track::Motor((m,h)) => ((m+msc/4)/msc)*self.num_heads() + h
         };
         Ok(ans)
     }
-    /// Get the integrated storage capacity of the formatted tracks.
-    /// For images that support blank tracks interpret with care.
-    fn byte_capacity(&self) -> usize;
+    /// Get the geometric [cyl,head,sec].  Default truncates fractional tracks in a reasonable
+    /// way if there are either 1 or 4 steps per track.
+    /// Assumes addr[2] is the sector if an explicit address is given.
+    fn get_rzq(&self,trk: Track,sec: Sector) -> Result<[usize;3],DYNERR> {
+        let [c,h] = self.get_rz(trk)?;
+        let s = match sec {
+            Sector::Num(s) => s,
+            Sector::Addr((_,addr)) => addr[2] as usize
+        };
+        Ok([c,h,s])
+    }
+    /// Get the capacity in bytes supposing this disk were formatted in a standard way.
+    /// May return `None` if format hints are insufficient.
+    fn nominal_capacity(&self) -> Option<usize>;
+    /// Get the capacity in bytes given the way the disk is actually formatted.
+    /// The expense can be high, and may change the disk state.
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR>;
     fn what_am_i(&self) -> DiskImageType;
     fn file_extensions(&self) -> Vec<String>;
     fn kind(&self) -> DiskKind;
@@ -477,59 +529,23 @@ pub trait DiskImage {
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized;
     fn to_bytes(&mut self) -> Vec<u8>;
     /// Read a block from the image; can affect disk state
-    fn read_block(&mut self,addr: fs::Block) -> Result<Vec<u8>,DYNERR>;
+    fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR>;
     /// Write a block to the image
-    fn write_block(&mut self, addr: fs::Block, dat: &[u8]) -> STDRESULT;
+    fn write_block(&mut self, addr: Block, dat: &[u8]) -> STDRESULT;
     /// Read a physical sector from the image; can affect disk state.
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR>;
-    /// Read a proprietary sector, allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn read_pro_sector(&mut self,tkey: TrackKey,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        let [cyl,head] = self.get_rz(tkey)?;
-        self.read_sector(cyl,head,sec)
-    }
+    fn read_sector(&mut self,trk: Track,sec: Sector) -> Result<Vec<u8>,DYNERR>;
     /// Write a physical sector to the image
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT;
-    /// Write a proprietary sector, allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn write_pro_sector(&mut self,tkey: TrackKey,sec: usize, dat: &[u8]) -> STDRESULT {
-        let [cyl,head] = self.get_rz(tkey)?;
-        self.write_sector(cyl,head,sec,dat)
-    }
+    fn write_sector(&mut self,trk: Track,sec: Sector,dat: &[u8]) -> STDRESULT;
     /// Get the track buffer exactly in the form the image stores it
-    fn get_track_buf(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
-    /// Similar to `get_track_buf`, but allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn get_pro_track_buf(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
-        let [c,h] = self.get_rz(tkey)?;
-        self.get_track_buf(c, h)
-    }
+    fn get_track_buf(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR>;
     /// Set the track buffer using another track buffer, the sizes must match
-    fn set_track_buf(&mut self,cyl: usize,head: usize,dat: &[u8]) -> STDRESULT;
-    /// Similar to `set_track_buf`, but allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn set_pro_track_buf(&mut self,tkey: TrackKey,dat: &[u8]) -> STDRESULT {
-        let [c,h] = self.get_rz(tkey)?;
-        self.set_track_buf(c,h,dat)
-    }
-    /// Get physical CH, CHSS map, flux and nibble codes, and update internal formatting hints.
+    fn set_track_buf(&mut self,trk: Track,dat: &[u8]) -> STDRESULT;
+    /// Get physical CH, sector addresses, flux and nibble codes, and update internal formatting hints.
     /// Implement this at a low level, making as few assumptions as possible.
     /// The expense of this operation can vary widely depending on the image type.
-    /// No solution is not an error, i.e., we can return Ok(None).
-    fn get_track_solution(&mut self,track: usize) -> Result<Option<TrackSolution>,DYNERR>;
-    /// Similar to `get_track_solution`, but allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn get_pro_track_solution(&mut self,tkey: TrackKey) -> Result<Option<TrackSolution>,DYNERR> {
-        self.get_track_solution(self.get_track(tkey)?)
-    }
+    fn get_track_solution(&mut self,trk: Track) -> Result<TrackSolution,DYNERR>;
     /// Get the track bytes as aligned nibbles; for user inspection
-    fn get_track_nibbles(&mut self,cyl: usize,head: usize) -> Result<Vec<u8>,DYNERR>;
-    /// Similar to `get_track_nibbles`, but allowing for interstitial track data.
-    /// Default will jump to a nearby standard track.
-    fn get_pro_track_nibbles(&mut self,tkey: TrackKey) -> Result<Vec<u8>,DYNERR> {
-        let [c,h] = self.get_rz(tkey)?;
-        self.get_track_nibbles(c,h)
-    }
+    fn get_track_nibbles(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR>;
     /// Write the track to a string suitable for display, input should be pre-aligned nibbles, e.g. from `get_track_nibbles`.
     /// Any required details of the track format have to come from the internal state of the image.
     fn display_track(&self,bytes: &[u8]) -> String;
@@ -559,8 +575,9 @@ pub trait DiskImage {
     fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
         let pkg = package_string(&self.kind());
         let mut track_sols = Vec::new();
-        for trk in 0..self.track_count() {
-            if let Some(sol) = self.get_track_solution(trk)? {
+        for trk in 0..self.end_track() {
+            log::trace!("solve track {}",trk);
+            if let Ok(sol) = self.get_track_solution(Track::Num(trk)) {
                 track_sols.push(sol);
             }
         }
@@ -600,6 +617,10 @@ fn geometry_json(pkg: String,track_sols: Vec<TrackSolution>,indent: Option<u16>)
             trk_obj["size_map"].push(size)?;
         }
         trk_obj["addr_type"] = json::JsonValue::String(sol.addr_type);
+        trk_obj["addr_mask"] = json::JsonValue::new_array();
+        for by in sol.addr_mask {
+            trk_obj["addr_mask"].push(by)?;
+        }
         trk_ary.push(trk_obj)?;
     }
     if solved_track_count==0 {

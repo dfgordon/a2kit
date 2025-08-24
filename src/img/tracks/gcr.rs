@@ -8,8 +8,8 @@
 //! * Apple 5.25 inch - 125000 ps
 //! * Apple 3.5 inch - 62500 ps
 
-use crate::img::{NibbleError,FieldCode};
-use super::{SectorKey,ZoneFormat,Method,FluxCells};
+use crate::img::{Error,FieldCode,SectorHood,Sector};
+use super::{ZoneFormat,Method,FluxCells};
 use crate::bios::skew;
 use crate::{STDRESULT,DYNERR};
 
@@ -190,7 +190,7 @@ impl TrackEngine {
                     let nibs = g64_nibbles::encode_g64(*b);
                     self.write(cells,&nibs,10);
                 },
-                _ => return Err(Box::new(NibbleError::NibbleType))
+                _ => return Err(Box::new(Error::NibbleType))
             }
         }
         Ok(())
@@ -233,7 +233,7 @@ impl TrackEngine {
                 }
                 Ok(ans)
             }
-            _ => Err(Box::new(NibbleError::NibbleType)),
+            _ => Err(Box::new(Error::NibbleType)),
         }
     }
     fn find_apple_byte_pattern(&mut self,cells: &mut FluxCells,patt: &[u8],mask: &[u8],cap: Option<usize>) -> Option<SaveState> {
@@ -340,7 +340,7 @@ impl TrackEngine {
     /// Advance the bit pointer to the end of the address epilog, and return the decoded address, or an error.
     /// We do not go looking for the data prolog at this stage, because it may not exist.
     /// E.g., DOS 3.2 `INIT` will not write any data fields outside of the boot tracks.
-    fn find_sector(&mut self,cells: &mut FluxCells,skey: &SectorKey,sec: u8,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
+    fn find_sector(&mut self,cells: &mut FluxCells,hood: &SectorHood,sec: &Sector,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
         log::trace!("seeking sector {}",sec);
         // Copy search patterns
         let (adr_pro,adr_pro_mask) = fmt.get_marker(0);
@@ -349,16 +349,16 @@ impl TrackEngine {
         for _try in 0..32 {
             if let Some(_shift) = self.find_byte_pattern(cells,adr_pro,adr_pro_mask,None,&fmt.addr_nibs()) {
                 let actual = self.decode_addr(cells,fmt)?;
-                let diff = fmt.diff_addr(skey, sec, &actual)?;
+                let diff = fmt.diff_addr(hood, sec, &actual)?;
                 match diff.iter().max() {
                     Some(max) => if *max > 0 {
-                        let expected = fmt.get_addr_for_seeking(skey,sec,&actual)?;
+                        let expected = fmt.get_addr_for_seeking(hood, sec, &actual)?;
                         log::trace!("skip sector {} (expect {})",hex::encode(actual),hex::encode(expected));
                         continue;
                     },
                     None => {
                         log::error!("problem during address diff");
-                        return Err(Box::new(NibbleError::SectorNotFound));
+                        return Err(Box::new(Error::SectorNotFound));
                     }
                 };
                 if self.find_byte_pattern(cells,adr_epi,adr_epi_mask,Some(10),&fmt.addr_nibs()).is_none() {
@@ -369,12 +369,12 @@ impl TrackEngine {
                 return Ok(actual);
             } else {
                 log::debug!("no address prolog found on track");
-                return Err(Box::new(NibbleError::BadTrack));
+                return Err(Box::new(Error::SectorNotFound));
             }
         }
         // We tried as many times as there could be sectors, sector is missing
         log::debug!("the sector address was never matched");
-        return Err(Box::new(NibbleError::SectorNotFound));
+        return Err(Box::new(Error::SectorNotFound));
     }
     /// Assuming the bit pointer is at sector data, write a 4-4 encoded sector.
     fn encode_sector_44(&mut self,cells: &mut FluxCells,dat: &[u8]) {
@@ -442,7 +442,7 @@ impl TrackEngine {
                 }
                 Ok(())
             },
-            _ => Err(Box::new(NibbleError::NibbleType))
+            _ => Err(Box::new(Error::NibbleType))
         }
     }
     /// Assuming the bit pointer is at sector data, decode from 4-4 and return the sector.
@@ -473,7 +473,7 @@ impl TrackEngine {
     fn decode_sector_53(&mut self,cells: &mut FluxCells,chk_seed: u8,verify_chk: bool,capacity: usize,xfrm: &[[u8;2]]) -> Result<Vec<u8>,DYNERR> {
         let nib_count = match capacity {
             256 => 411,
-            _  => return Err(Box::new(crate::img::Error::SectorAccess))
+            _  => return Err(Box::new(crate::img::Error::GeometryMismatch))
         };
         let mut nibs = vec![0;nib_count];
         self.read_woz(cells,&mut nibs,nib_count);
@@ -485,7 +485,7 @@ impl TrackEngine {
         let nib_count = match capacity {
             256 => 343,
             524 => 703,
-            _ => return Err(Box::new(crate::img::Error::SectorAccess))
+            _ => return Err(Box::new(crate::img::Error::GeometryMismatch))
         };
         let mut nibs = vec![0;nib_count];
         self.read_woz(cells,&mut nibs,nib_count);
@@ -493,22 +493,22 @@ impl TrackEngine {
     }
     /// Decode the sector using the scheme for this track.
     /// Assumes bit pointer is at the end of the address epilog.
-    fn decode_sector(&mut self,cells: &mut FluxCells,skey: &SectorKey,sec: u8,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
+    fn decode_sector(&mut self,cells: &mut FluxCells,hood: &SectorHood,sec: &Sector,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
         log::trace!("decoding sector");
         // Find data prolog without looking ahead too far, for if it does not exist, we
         // are to interpret the sector as empty.
         let (prolog,pmask) = fmt.get_marker(2);
         let (epilog,emask) = fmt.get_marker(3);
         let maybe_shift = self.find_byte_pattern(cells, prolog, pmask, Some(40), &fmt.data_nibs);
-        let header = fmt.get_data_header(skey, sec)?;
+        let header = fmt.get_data_header(hood, sec)?;
         self.skip_nibbles(cells,header.len(),&fmt.data_nibs());
-        let capacity = fmt.capacity(sec as usize);
+        let capacity = fmt.capacity(&sec);
         let dat = match (maybe_shift,fmt.data_nibs()) {
             (Some(_),FieldCode::WOZ((4,4))) => self.decode_sector_44(cells,capacity)?,
             (Some(_),FieldCode::WOZ((5,3))) => self.decode_sector_53(cells,0,true,capacity,&fmt.swap_nibs)?,
             (Some(_),FieldCode::WOZ((6,2))) => self.decode_sector_62(cells,[0;3],true,capacity,&fmt.swap_nibs)?,
             (Some(_),FieldCode::G64((5,4))) => self.decode_sector_g64(cells,capacity)?,
-            (Some(_),_) => return Err(Box::new(NibbleError::NibbleType)),
+            (Some(_),_) => return Err(Box::new(Error::NibbleType)),
             (None,_) => vec![0;capacity]
         };
         if self.find_byte_pattern(cells, epilog, emask, Some(10), &fmt.data_nibs).is_none() {
@@ -535,7 +535,7 @@ impl TrackEngine {
                     log::trace!("pristine 5&3 sector (no data field)");
                     Ok(256)
                 },
-                _ => Err(Box::new(NibbleError::BitPatternNotFound))
+                _ => Err(Box::new(Error::BitPatternNotFound))
             };
         }
         // scanning 2048 nibbles allows for 1024 byte 4&4 sectors, somewhat more for others
@@ -550,26 +550,26 @@ impl TrackEngine {
                     (FieldCode::WOZ((6,2)),x) if x >= 343 && x < 347 => Ok(256),
                     (FieldCode::WOZ((6,2)),x) if x >= 703 && x < 707 => Ok(524),
                     (FieldCode::G64((5,4)),x) => Ok(x),
-                    _ => Err(Box::new(NibbleError::NibbleType))
+                    _ => Err(Box::new(Error::NibbleType))
                 }
             }
             cells.ptr = save_pos;
         }
-        Err(Box::new(NibbleError::BitPatternNotFound))
+        Err(Box::new(Error::BitPatternNotFound))
     }
     /// Write `which` sync gap (0,1,2) given the `fmt`.
     fn write_sync_gap(&mut self,cells: &mut FluxCells,which: usize,fmt: &ZoneFormat) {
         let gap_bits = fmt.get_gap_bits(which).to_bytes();
         self.write(cells,&gap_bits,fmt.get_gap_bits(which).len());
     }
-    pub fn read_sector(&mut self,cells: &mut FluxCells,skey: &SectorKey,sec: u8,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
-        self.find_sector(cells,skey,sec,fmt)?;
-        self.decode_sector(cells,skey,sec,fmt)
+    pub fn read_sector(&mut self,cells: &mut FluxCells,hood: &SectorHood,sec: &Sector,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
+        self.find_sector(cells,hood,sec,fmt)?;
+        self.decode_sector(cells,hood,sec,fmt)
     }
-    pub fn write_sector(&mut self,cells: &mut FluxCells,dat: &[u8],skey: &SectorKey,sec: u8,fmt: &ZoneFormat) -> Result<(),DYNERR> {
-        let header = fmt.get_data_header(skey, sec)?;
-        let quantum = fmt.capacity(sec as usize);
-        self.find_sector(cells,skey,sec,fmt)?;
+    pub fn write_sector(&mut self,cells: &mut FluxCells,dat: &[u8],hood: &SectorHood,sec: &Sector,fmt: &ZoneFormat) -> Result<(),DYNERR> {
+        let header = fmt.get_data_header(hood, sec)?;
+        let quantum = fmt.capacity(sec);
+        self.find_sector(cells,hood,sec,fmt)?;
         // match (fmt.data_nibs(),self.nib_filter) {
         //     (FieldCode::WOZ(_),false) => cells.rev(cells.bit_cell),
         //     _ => {}
@@ -596,42 +596,41 @@ impl TrackEngine {
         }
         return ans;
     }
-    /// return vectors of sector addresses and sizes in geometric order
-    pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;4]>,Vec<usize>),DYNERR> {
+    /// return vectors of sector addresses and sizes in geometric order for user consumption
+    pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;5]>,Vec<usize>),DYNERR> {
         let mut ptr_list: Vec<usize> = Vec::new();
         cells.ptr = 0;
-        let mut addr_map: Vec<[u8;4]> = Vec::new();
+        let mut addr_map: Vec<[u8;5]> = Vec::new();
         let mut size_map: Vec<usize> = Vec::new();
         let (patt,mask) = fmt.get_marker(0);
         for _try in 0..32 {
             if self.find_byte_pattern(cells,patt,mask,None,&fmt.addr_nibs()).is_some() {
-                let addr = self.decode_addr(cells,fmt)?;
+                let mut addr = self.decode_addr(cells,fmt)?;
                 if ptr_list.contains(&cells.ptr) {
                     // if we have seen this one before we are done
                     return Ok((addr_map,size_map))
                 }
                 ptr_list.push(cells.ptr);
-                let mut addr = fmt.get_nice_addr(&addr)?;
-                while addr.len() < 4 {
+                while addr.len() < 5 {
                     addr.push(0);
                 }
                 let capacity = self.get_sector_capacity(cells, fmt)?;
-                addr_map.push([addr[0],addr[1],addr[2],addr[3]]);
+                addr_map.push([addr[0],addr[1],addr[2],addr[3],addr[4]]);
                 size_map.push(capacity);
             } else {
-                return Err(Box::new(NibbleError::BitPatternNotFound));
+                return Err(Box::new(Error::BitPatternNotFound));
             }
         }
         return Ok((addr_map,size_map));
     }
     /// Create a GCR track based on the given ZoneFormat (currently Apple only).
-    /// * skey - standard address components, in general will be transformed by fmt
+    /// * hood - standard address components, in general will be transformed by fmt
     /// * buf_len - length of the buffer in which track bits will be loaded (usually padded, only used as a check)
     /// * fmt - defines the track format to be used
     /// * returns - FluxCells object.
     /// There is some special handling to emulate the way different versions of Apple DOS would format the track.
-    pub fn format_track(&mut self, skey: SectorKey, buf_len: usize, fmt: &ZoneFormat) -> Result<FluxCells,DYNERR> {
-        log::trace!("formatting track at {},{}",skey.cyl,skey.head);
+    pub fn format_track(&mut self, hood: SectorHood, buf_len: usize, fmt: &ZoneFormat) -> Result<FluxCells,DYNERR> {
+        log::trace!("formatting track at {},{}",hood.cyl,hood.head);
         for i in 0..3 {
             log::trace!("sync gap {} {}",i,hex::encode(fmt.gaps[i].to_bytes()));
         }
@@ -655,7 +654,7 @@ impl TrackEngine {
                 _ => u8::try_from(theta)?
             };
             log::trace!("formatting angle {} id {}",theta,sec);
-            let addr = fmt.get_addr_for_formatting(&skey,sec)?;
+            let addr = fmt.get_addr_for_formatting(&hood,&Sector::Num(sec as usize))?;
             log::trace!("address {}",hex::encode(&addr));
             let prolog = fmt.get_marker(0).0;
             let epilog = fmt.get_marker(1).0;
@@ -694,11 +693,11 @@ impl TrackEngine {
                     }
                 },
                 _ => {
-                    return Err(Box::new(NibbleError::NibbleType));
+                    return Err(Box::new(Error::NibbleType));
                 },
             }
             // data segment
-            match (fmt.data_nibs(),fmt.capacity(sec as usize)) {
+            match (fmt.data_nibs(),fmt.capacity(&Sector::Num(sec as usize))) {
 
                 (FieldCode::WOZ((5,3)),256) => {
                     // special handling for DOS 3.2, the data segment is *not* created, but instead
@@ -707,7 +706,7 @@ impl TrackEngine {
                     self.write(&mut cells,&[0xff;417],417*8);
                 },
                 (_,capacity) => {
-                    let header = fmt.get_data_header(&skey, sec)?;
+                    let header = fmt.get_data_header(&hood, &Sector::Num(sec as usize))?;
                     let dat = vec![0;capacity];
                     self.encode_sector(&mut cells,&header,&dat,fmt)?;
                 }
@@ -725,12 +724,12 @@ fn get_and_check_bit_count(buf_len: usize, fmt: &ZoneFormat) -> Result<usize,DYN
         FieldCode::WOZ((4,4)) => 2*fmt.addr_fmt_expr.len(),
         _ => fmt.addr_fmt_expr.len()
     };
-    let data_nibs = match (fmt.capacity(0),fmt.data_nibs()) {
+    let data_nibs = match (fmt.capacity(&Sector::Num(0)),fmt.data_nibs()) {
         (256,FieldCode::WOZ((4,4))) => 512,
         (256,FieldCode::WOZ((5,3))) => 411,
         (256,FieldCode::WOZ((6,2))) => 343,
         (524,FieldCode::WOZ((6,2))) => 703,
-        _ => return Err(Box::new(NibbleError::NibbleType))
+        _ => return Err(Box::new(Error::NibbleType))
     };
     let mut marker_nibs = 0;
     for i in 0..4 {
@@ -743,7 +742,7 @@ fn get_and_check_bit_count(buf_len: usize, fmt: &ZoneFormat) -> Result<usize,DYN
     let bit_count = gap_bits0 + sectors*(marker_nibs*8 + addr_nibs*8 + gap_bits1 + data_nibs*8 + gap_bits2);
     if bit_count > buf_len*8 {
         log::error!("track buffer could not accommodate the track");
-        return Err(Box::new(NibbleError::BadTrack));
+        return Err(Box::new(Error::InternalStructureAccess));
     }
     Ok(bit_count)
 }

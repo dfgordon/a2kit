@@ -5,7 +5,7 @@
 //! N.b. the ordering cannot be verified until we get up to the file system layer.
 
 use crate::img;
-use crate::fs::Block;
+use crate::bios::Block;
 
 use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
@@ -52,11 +52,17 @@ impl img::DiskImage for PO {
     fn track_count(&self) -> usize {
         return self.blocks as usize/8;
     }
+    fn end_track(&self) -> usize {
+        return self.blocks as usize/8;
+    }
     fn num_heads(&self) -> usize {
         1
     }
-    fn byte_capacity(&self) -> usize {
-        return self.data.len();
+    fn nominal_capacity(&self) -> Option<usize> {
+        Some(self.data.len())
+    }
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
+        Ok(self.data.len())
     }
     fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
         trace!("read {}",addr);
@@ -76,11 +82,11 @@ impl img::DiskImage for PO {
             _ => Err(Box::new(img::Error::ImageTypeMismatch)),
         }
     }
-    fn read_sector(&mut self,_cyl: usize,_head: usize,_sec: usize) -> Result<Vec<u8>,DYNERR> {
+    fn read_sector(&mut self,_trk: super::Track,_sec: super::Sector) -> Result<Vec<u8>,DYNERR> {
         debug!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
-    fn write_sector(&mut self,_cyl: usize,_head: usize,_sec: usize,_dat: &[u8]) -> STDRESULT {
+    fn write_sector(&mut self,_trk: super::Track,_sec: super::Sector,_dat: &[u8]) -> STDRESULT {
         debug!("logical disk cannot access sectors");
         Err(Box::new(img::Error::ImageTypeMismatch))
     }
@@ -111,18 +117,18 @@ impl img::DiskImage for PO {
     fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_buf(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+    fn set_track_buf(&mut self,_trk: super::Track,_dat: &[u8]) -> STDRESULT {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_solution(&mut self,_trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        return Ok(None);
+    fn get_track_solution(&mut self,_trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
+        return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("PO images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }

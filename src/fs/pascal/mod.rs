@@ -268,7 +268,10 @@ impl Disk
             log::error!("invalid pascal volume name");
             return Err(Box::new(Error::BadTitle));
         }
-        let num_blocks = self.img.byte_capacity()/512;
+        if self.img.nominal_capacity().is_none() {
+            return Err(Box::new(Error::BadFormat));
+        }
+        let num_blocks = self.img.nominal_capacity().unwrap()/512;
         // Zero boot and directory blocks
         for iblock in 0..6 {
             self.write_block(&[0;BLOCK_SIZE],iblock,0)?;
@@ -693,7 +696,7 @@ impl super::DiskFS for Disk {
         return ans;
     }
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
-        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap(),None).expect("read error");
         let dir = self.get_directory().expect("could not get directory");
         for block in 0..dir.total_blocks() {
             let addr = Block::PO(block);

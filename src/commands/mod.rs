@@ -15,7 +15,8 @@ pub mod completions;
 use std::str::FromStr;
 use std::io::Read;
 
-use crate::img::tracks::{TrackKey,DiskFormat};
+use crate::img::tracks::DiskFormat;
+use crate::img::{Track,Sector};
 use crate::DYNERR;
 
 /// process the `pro` argument, if it is a path retrieve the format from the file,
@@ -125,7 +126,7 @@ const TRK_MESS: &str =
 /// parse an ordinary integer or a decimal that ends with
 /// anything in the set ["0","00","25","5","50","75"], an error
 /// is returned if the fraction is not compatible with `steps_per_cyl`.
-fn parse_quarter_decimal(qdec: &str,head: usize,steps_per_cyl: usize) -> Result<TrackKey,DYNERR> {
+fn parse_quarter_decimal(qdec: &str,head: usize,steps_per_cyl: usize) -> Result<Track,DYNERR> {
     let cf: Vec<&str> = qdec.split('.').collect();
     if cf.len() < 1 || cf.len() > 2 {
         log::error!("{}",CYL_MESS);
@@ -146,9 +147,9 @@ fn parse_quarter_decimal(qdec: &str,head: usize,steps_per_cyl: usize) -> Result<
         };
     }
     match (steps_per_cyl,fine) {
-        (1,0) => Ok(TrackKey::CH((coarse,head))),
-        (2,f) if f==0 || f==2 =>  Ok(TrackKey::Motor((coarse*2 + f/2,head))),
-        (4,f) => Ok(TrackKey::Motor((coarse*4+f,head))),
+        (1,0) => Ok(Track::CH((coarse,head))),
+        (2,f) if f==0 || f==2 =>  Ok(Track::Motor((coarse*2 + f/2,head))),
+        (4,f) => Ok(Track::Motor((coarse*4+f,head))),
         _ => {
             log::error!("fractional track is incompatible with this image");
             Err(Box::new(CommandError::InvalidCommand))
@@ -188,8 +189,8 @@ fn parse_range(range: &str) -> Result<[usize;2],DYNERR> {
 
 /// parse something in the form n..m, where n and m are integers or quarter decimals.
 /// The resulting TrackKey structs will both have head = 0.
-fn parse_track_range(range: &str,steps_per_cyl: usize) -> Result<[TrackKey;2],DYNERR> {
-    let mut ans = [TrackKey::Track(0),TrackKey::Track(0)];
+fn parse_track_range(range: &str,steps_per_cyl: usize) -> Result<[Track;2],DYNERR> {
+    let mut ans = [Track::Num(0),Track::Num(0)];
     let mut lims = range.split("..");
     for j in 0..2 {
         match (j,lims.next()) {
@@ -212,8 +213,8 @@ fn parse_track_range(range: &str,steps_per_cyl: usize) -> Result<[TrackKey;2],DY
             },
             (1,None) => {
                 ans[1] = match ans[0] {
-                    TrackKey::Motor((m,h)) => TrackKey::Motor((m+1,h)),
-                    TrackKey::CH((c,h)) => TrackKey::CH((c+1,h)),
+                    Track::Motor((m,h)) => Track::Motor((m+1,h)),
+                    Track::CH((c,h)) => Track::CH((c+1,h)),
                     _ => return Err(Box::new(CommandError::InvalidCommand))
                 };
             },
@@ -230,8 +231,8 @@ fn parse_track_range(range: &str,steps_per_cyl: usize) -> Result<[TrackKey;2],DY
 /// Parse a sector request in the form `c1[..c2],h1[..h2],s1[..s2][,,next_range]`.
 /// The cylinder bounds can be quarter tracks, in which case the cylinder range
 /// will be stepping by 4.
-fn parse_sector_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<(TrackKey,usize)>,DYNERR> {
-    let mut ans: Vec<(TrackKey,usize)> = Vec::new();
+fn parse_sector_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<(Track,Sector)>,DYNERR> {
+    let mut ans: Vec<(Track,Sector)> = Vec::new();
     let mut contiguous_areas = farg.split(",,");
     while let Some(contig) = contiguous_areas.next() {
         let mut ranges = contig.split(',');
@@ -269,8 +270,8 @@ fn parse_sector_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<(TrackKey
             for head in head_rng[0]..head_rng[1] {
                 for sec in sec_rng[0]..sec_rng[1] {
                     match cyl {
-                        TrackKey::CH((c,_)) => ans.push((TrackKey::CH((c,head)),sec)),
-                        TrackKey::Motor((m,_)) => ans.push((TrackKey::Motor((m,head)),sec)),
+                        Track::CH((c,_)) => ans.push((Track::CH((c,head)),Sector::Num(sec))),
+                        Track::Motor((m,_)) => ans.push((Track::Motor((m,head)),Sector::Num(sec))),
                         _ => panic!("unexpected track spec")
                     };
                     if ans.len()>4*(u16::MAX as usize) {
@@ -285,11 +286,24 @@ fn parse_sector_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<(TrackKey
     Ok(ans)
 }
 
+/// Parse a list of explicit sector addresses and transform the given track-sector list
+fn to_explicit(explicit_arg: &str,ts_list: &mut Vec<(Track,Sector)>) -> crate::STDRESULT {
+    let xaddr = explicit_arg.split(",").collect::<Vec<&str>>();
+    if xaddr.len() != ts_list.len() {
+        log::error!("there were {} sector addresses and {} sectors",xaddr.len(),ts_list.len());
+        return Err(Box::new(CommandError::InvalidCommand));
+    }
+    for i in 0..xaddr.len() {
+        ts_list[i].1.to_explicit(xaddr[i])?;
+    }
+    Ok(())
+}
+
 /// Parse a track request in the form `c1[..c2],h1[..h2][,,next_range]`.
 /// The cylinder bounds can be quarter tracks, in which case the cylinder range
 /// will be stepping by 4.
-fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<TrackKey>,DYNERR> {
-    let mut ans: Vec<TrackKey> = Vec::new();
+fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<Track>,DYNERR> {
+    let mut ans: Vec<Track> = Vec::new();
     let mut contiguous_areas = farg.split(",,");
     while let Some(contig) = contiguous_areas.next() {
         let mut ranges = contig.split(',');
@@ -318,8 +332,8 @@ fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<TrackKey>,
         while cyl < trk_rng[1] {
             for head in head_rng[0]..head_rng[1] {
                 match cyl {
-                    TrackKey::CH((c,_)) => ans.push(TrackKey::CH((c,head))),
-                    TrackKey::Motor((m,_)) => ans.push(TrackKey::Motor((m,head))),
+                    Track::CH((c,_)) => ans.push(Track::CH((c,head))),
+                    Track::Motor((m,_)) => ans.push(Track::Motor((m,head))),
                     _ => panic!("unexpected track spec")
                 };
                 if ans.len()>4*(u16::MAX as usize) {
@@ -334,7 +348,7 @@ fn parse_track_request(farg: &str,steps_per_cyl: usize) -> Result<Vec<TrackKey>,
 }
 
 /// Calls parse_track_request while rejecting ranges, i.e., accept only one track
-fn request_one_track(farg: &str,steps_per_cyl: usize) -> Result<TrackKey,DYNERR> {
+fn request_one_track(farg: &str,steps_per_cyl: usize) -> Result<Track,DYNERR> {
     let v = parse_track_request(farg,steps_per_cyl)?;
     if v.len() != 1 {
         log::error!("expected exactly one track but got {}",v.len());
@@ -385,11 +399,11 @@ fn get_json_list_from_stdin() -> Result<json::JsonValue,DYNERR> {
 
 #[test]
 fn test_parse_sec_req() {
-    let unwrap_ts_keys = |keys: Vec<(TrackKey,usize)>| -> Vec<[usize;3]> {
+    let unwrap_ts_keys = |keys: Vec<(Track,Sector)>| -> Vec<[usize;3]> {
         let mut ans = Vec::new();
         for k in keys {
             match k {
-                (TrackKey::CH((c,h)),s) => ans.push([c,h,s]),
+                (Track::CH((c,h)),Sector::Num(s)) => ans.push([c,h,s]),
                 _ => panic!("unhandled test scenario")
             }
         }
@@ -408,11 +422,11 @@ fn test_parse_sec_req() {
 
 #[test]
 fn test_parse_flux_req() {
-    let unwrap_keys = |keys: Vec<TrackKey>| -> Vec<[usize;2]> {
+    let unwrap_keys = |keys: Vec<Track>| -> Vec<[usize;2]> {
         let mut ans = Vec::new();
         for k in keys {
             match k {
-                TrackKey::CH((c,h)) => ans.push([c,h]),
+                Track::CH((c,h)) => ans.push([c,h]),
                 _ => panic!("unhandled test scenario")
             }
         }

@@ -3,7 +3,7 @@
 //! address field contains ["marker","chksum","sector","track","format1","format2","marker","marker"] all encoded
 //! standard decoded address is [0x08,chk,sec,trk,0x2e,0x20,0x0f,0x0f]
 
-use crate::img::NibbleError;
+use crate::img::Error;
 use crate::DYNERR;
 
 const INVALID_NIB_BYTE: u8 = 0xff;
@@ -36,7 +36,7 @@ pub fn encode_g64(val: u8) -> [u8;2] {
 pub fn decode_g64(nib: u8) -> Result<u8,DYNERR> {
     let ans = REV_G64[(nib >> 3) as usize];
     if ans == INVALID_NIB_BYTE {
-        Err(Box::new(NibbleError::InvalidByte))
+        Err(Box::new(Error::InvalidByte))
     } else {
         Ok(ans)
     }

@@ -1,8 +1,9 @@
 // test of DOS 3.2 support, which resides in the dos3x disk image module
 use std::path::Path;
 use std::collections::HashMap;
-use a2kit::fs::{Block,dos3x,DiskFS};
-use a2kit::img::{dsk_d13,woz1,woz2,names,tracks};
+use a2kit::fs::{dos3x,DiskFS};
+use a2kit::bios::Block;
+use a2kit::img::{dsk_d13,woz1,woz2,names,Track};
 use a2kit::commands::ItemType;
 use a2kit::lang::integer;
 
@@ -63,7 +64,7 @@ fn read_small() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text files
     let img = std::fs::read(&Path::new("tests").join("dos32-smallfiles.woz")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("fs not found");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("fs not found");
 
     // check the BASIC program
     let lib_tokens = get_tokens("disk_builder.ibas");
@@ -86,7 +87,7 @@ fn write_small_flux() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, binary, and text file, with the additional wrinkle of a flux track.
     // The flux track does not exist on the reference disk, which is fine since we only compare decoded sectors.
-    let img = woz2::Woz2::create(35, names::A2_DOS32_KIND,None,vec![tracks::TrackKey::Track(17)]).expect("could not create");
+    let img = woz2::Woz2::create(35, names::A2_DOS32_KIND,None,vec![Track::Num(17)]).expect("could not create");
     let mut disk = dos3x::Disk::from_img(Box::new(img)).expect("bad setup");
     disk.init32(254,true).expect("failed to INIT");
 
@@ -142,7 +143,7 @@ fn read_big() {
     // Formatting: DOS, Writing: Virtual II
     // This tests a small BASIC program, large binary, and two sparse text files
     let img = std::fs::read(&Path::new("tests").join("dos32-bigfiles.woz")).expect("failed to read test image file");
-    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None).expect("could not interpret image");
+    let mut emulator_disk = a2kit::create_fs_from_bytestream(&img,None,None).expect("could not interpret image");
     let mut buf: Vec<u8>;
 
     // check the BASIC program

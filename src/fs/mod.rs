@@ -4,20 +4,15 @@
 //! each supported file system.  File systems are represented by the `DiskFS` trait.  The trait object takes ownership of
 //! some disk image, which it uses as storage.
 //! 
+//! This module knows nothing about track layouts, it only makes block requests.  Translation from blocks
+//! to tracks and sectors happens in `img`, possibly with help from `bios`.  Ideally, `bios` is the entity
+//! that knows about both track layouts and file system blocks, and therefore can make the translation.
+//!
 //! Files are represented by a `FileImage`
 //! object.  This is a low level representation of the file that works for any of the supported
 //! file systems.  File image data is processed through the `Packing` trait.  There are
 //! convenience functions in `DiskFS` such as `read_text`, which gets a file image and unpacks it
-//! as text, or `write_text`, which packs text into a file image and puts it.
-//! 
-//! This module also contains the `Block` enumeration, which specifies and locates allocation units.
-//! The enumeration names the file system's allocation system, and its value is a specific block.
-//! The value can take any form, e.g., DOS blocks are 2-element lists with [track,sector], whereas
-//! CPM blocks are 3-tuples with (block,BSH,OFF).
-//! 
-//! Sector skews are not handled here.  Transformation of a `Block` to a physical disk address is
-//! handled within the `img` module.  Transformations that go between a file system and a disk,
-//! such as sector skews, are kept in the `bios` module.
+//! as text, or `write_text`, which packs text into a file image and puts it. 
 
 pub mod dos3x;
 pub mod prodos;
@@ -27,9 +22,9 @@ pub mod fat;
 mod fimg;
 mod recs;
 
-use std::fmt;
 use std::collections::HashMap;
 use crate::img;
+use crate::bios::Block;
 use crate::commands::ItemType;
 use crate::{STDRESULT,DYNERR};
 
@@ -50,64 +45,6 @@ pub enum UnpackedData {
     Binary(Vec<u8>),
     Records(Records),
     Text(String)
-}
-
-/// Encapsulates the disk address and addressing mode used by a file system.
-/// Disk addresses generally involve some transformation between logical (file system) and physical (disk fields) addresses.
-/// Disk images are responsible for serving blocks in response to a file system request, see the 'img' docstring for more.
-/// The `Block` implementation includes a simple mapping from blocks to sectors; disk images can use this or not as appropriate.
-#[derive(PartialEq,Eq,Clone,Copy,Hash)]
-pub enum Block {
-    /// value is [track,sector]
-    D13([usize;2]),
-    /// value is [track,sector]
-    DO([usize;2]),
-    /// value is block number
-    PO(usize),
-    /// value is (absolute block number, BSH, OFF); see cpm::types
-    CPM((usize,u8,u16)),
-    /// value is (first logical sector,num sectors)
-    FAT((u64,u8))
-}
-
-impl Block {
-    /// Get a track-sector list for this block.
-    /// At this level we can only assume a simple monotonically increasing relationship between blocks and sectors.
-    /// Any further skewing must be handled by the caller.  CP/M and FAT offsets are accounted for.
-    /// For CP/M be sure to use 128 byte logical sectors when computing `secs_per_track`.
-    pub fn get_lsecs(&self,secs_per_track: usize) -> Vec<[usize;2]> {
-        match self {
-            Self::D13([t,s]) => vec![[*t,*s]],
-            Self::DO([t,s]) => vec![[*t,*s]],
-            Self::PO(_) => panic!("function `get_lsecs` not appropriate for ProDOS"),
-            Self::CPM((block,bsh,off)) => {
-                let mut ans: Vec<[usize;2]> = Vec::new();
-                let lsecs_per_block = 1 << bsh;
-                for sec_count in block*lsecs_per_block..(block+1)*lsecs_per_block {
-                    ans.push([*off as usize + sec_count/secs_per_track , 1 + sec_count%secs_per_track]);
-                }
-                ans
-            },
-            Self::FAT((sec1,secs)) => {
-                let mut ans: Vec<[usize;2]> = Vec::new();
-                for sec in (*sec1 as usize)..(*sec1 as usize)+(*secs as usize) {
-                    ans.push([sec/secs_per_track , sec%secs_per_track]);
-                }
-                ans
-            }
-        }
-    }
-}
-impl fmt::Display for Block {
-    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::D13([t,s]) => write!(f,"D13 track {} sector {}",t,s),
-            Self::DO([t,s]) => write!(f,"DOS track {} sector {}",t,s),
-            Self::PO(b) => write!(f,"ProDOS block {}",b),
-            Self::CPM((b,s,o)) => write!(f,"CPM block {} shift {} offset {}",b,s,o),
-            Self::FAT((s1,secs)) => write!(f,"FAT cluster sec1 {} secs {}",s1,secs)
-        }
-    }
 }
 
 /// Testing aid, adds offsets to the existing key, or create a new key if needed

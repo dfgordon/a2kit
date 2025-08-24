@@ -81,8 +81,12 @@ fn std_access_and_typ(xname: &str) -> Result<(Vec<u8>,Vec<u8>),DYNERR> {
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
 fn get_directory(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock) -> Option<Directory> {
-    if dpb.disk_capacity() != img.byte_capacity() {
-        log::debug!("size mismatch: DPB has {}, img has {}",dpb.disk_capacity(),img.byte_capacity());
+    if img.nominal_capacity().is_none() {
+        log::debug!("disk image did not support nominal capacity check");
+        return None;
+    }
+    if dpb.disk_capacity() != img.nominal_capacity().unwrap() {
+        log::debug!("size mismatch: DPB has {}, img has {}",dpb.disk_capacity(),img.nominal_capacity().unwrap());
         return None;
     } else {
         log::debug!("size matched: DPB and img both have {}",dpb.disk_capacity());
@@ -844,7 +848,7 @@ impl super::DiskFS for Disk {
         return ans;
     }
     fn compare(&mut self,path: &std::path::Path,ignore: &HashMap<Block,Vec<usize>>) {
-        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap()).expect("read error");
+        let mut emulator_disk = crate::create_fs_from_file(&path.to_str().unwrap(),None).expect("read error");
         for block in 0..self.dpb.user_blocks() {
             let addr = Block::CPM((block,self.dpb.bsh,self.dpb.off));
             let mut actual = self.img.read_block(addr).expect("bad sector access");

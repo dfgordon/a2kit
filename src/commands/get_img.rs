@@ -31,6 +31,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     let maybe_img_path = cmd.get_one::<String>("dimg");
     let fmt = super::get_fmt(cmd)?;
     let method = crate::img::tracks::Method::from_str(cmd.get_one::<String>("method").unwrap())?;
+    let maybe_explicit_list = cmd.get_one::<String>("explicit");
 
     match crate::create_img_from_file_or_stdin(maybe_img_path) {
         Ok(mut img) => {
@@ -41,17 +42,20 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
             let bytes = match typ {
                 ItemType::Sector => {
                     let mut cum: Vec<u8> = Vec::new();
-                    let sector_list = super::parse_sector_request(&src_path,img.motor_steps_per_cyl())?;
-                    for (tkey,skey) in sector_list {
-                        cum.append(&mut img.read_pro_sector(tkey,skey)?);
+                    let mut sector_list = super::parse_sector_request(&src_path,img.motor_steps_per_cyl())?;
+                    if let Some(explicit_list) = maybe_explicit_list {
+                        super::to_explicit(&explicit_list,&mut sector_list)?;
+                    }
+                    for (trk,sec) in sector_list {
+                        cum.append(&mut img.read_sector(trk,sec)?);
                     }
                     cum
                 },
                 ItemType::Track => {
-                    img.get_pro_track_nibbles(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
+                    img.get_track_nibbles(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 ItemType::RawTrack => {
-                    img.get_pro_track_buf(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
+                    img.get_track_buf(super::request_one_track(&src_path,img.motor_steps_per_cyl())?)?
                 },
                 _ => panic!("{}",RCH)
             };

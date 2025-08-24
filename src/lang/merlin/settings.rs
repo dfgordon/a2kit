@@ -12,9 +12,11 @@ use lsp_types::DiagnosticSeverity;
 pub struct Flag {
     pub case_sensitive: Option<DiagnosticSeverity>,
     pub unclosed_folds: Option<DiagnosticSeverity>,
-    pub unused_macros: Option<DiagnosticSeverity>,
     pub dup_mac_locs: Option<DiagnosticSeverity>,
+    pub unused_macros: Option<DiagnosticSeverity>,
+    pub unused_macros_in_context: Option<DiagnosticSeverity>,
     pub unused_labels: Option<DiagnosticSeverity>,
+    pub unused_labels_in_context: Option<DiagnosticSeverity>,
     pub missing_entries: Option<DiagnosticSeverity>,
 }
 #[derive(Clone)]
@@ -66,9 +68,11 @@ impl Settings {
             flag : Flag {
                 case_sensitive: None,
                 unclosed_folds: Some(DiagnosticSeverity::ERROR),
-                unused_macros: Some(DiagnosticSeverity::HINT),
                 dup_mac_locs: Some(DiagnosticSeverity::WARNING),
+                unused_macros: Some(DiagnosticSeverity::WARNING),
+                unused_macros_in_context: Some(DiagnosticSeverity::HINT),
                 unused_labels: Some(DiagnosticSeverity::WARNING),
+                unused_labels_in_context: Some(DiagnosticSeverity::HINT),
                 missing_entries: Some(DiagnosticSeverity::ERROR),
             },
             columns : Columns {
@@ -117,9 +121,11 @@ pub fn parse(json: &str) -> Result<Settings,DYNERR> {
                     "flag" => {
                         update_json_severity(val,"caseSensitive",&mut ans.flag.case_sensitive);
                         update_json_severity(val,"unclosedFolds",&mut ans.flag.unclosed_folds);
-                        update_json_severity(val,"unusedMacros",&mut ans.flag.unused_macros);
                         update_json_severity(val,"duplicateMacroLocals",&mut ans.flag.dup_mac_locs);
+                        update_json_severity(val,"unusedMacros",&mut ans.flag.unused_macros);
+                        update_json_severity(val,"unusedMacrosInContext", &mut ans.flag.unused_macros_in_context);
                         update_json_severity(val,"unusedLabels",&mut ans.flag.unused_labels);
+                        update_json_severity(val,"unusedLabelsInContext",&mut ans.flag.unused_labels_in_context);
                         update_json_severity(val,"missingEntries",&mut ans.flag.missing_entries);
                     },
                     "columns" => {

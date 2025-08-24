@@ -289,7 +289,7 @@ pub fn handle_request(
                             let maybe_img_path = serde_json::from_value::<String>(params.arguments[0].clone());
                             let white_list = vec!["a2 dos".to_string(),"prodos".to_string()];
                             if let Ok(img_path) = maybe_img_path {
-                                resp = match tools.disk.mount(&img_path,&Some(white_list)) {
+                                resp = match tools.disk.mount(&img_path,&Some(white_list),None) {
                                     Ok(()) => Response::new_ok(req.id,serde_json::Value::Null),
                                     Err(_) => Response::new_err(req.id,PARSE_ERROR,"unexpected format or file system".to_string())
                                 };

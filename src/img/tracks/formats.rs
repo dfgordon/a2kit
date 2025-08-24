@@ -43,7 +43,6 @@ impl ZoneFormat {
                 BitVec::from_fn(10*sync_bits, |i| { i%sync_bits < 8 }),
                 BitVec::from_fn(20*sync_bits, |i| { i%sync_bits < 8 }),
             ],
-            addr_extract_expr: expr_vec(&["a0","a1","a2"]),
             capacity: vec![256;13],
             swap_nibs: vec![]
         }
@@ -75,7 +74,6 @@ impl ZoneFormat {
                 BitVec::from_fn(10*sync_bits, |i| { i%sync_bits < 8 }),
                 BitVec::from_fn(20*sync_bits, |i| { i%sync_bits < 8 }),
             ],
-            addr_extract_expr: expr_vec(&["a0","a1","a2"]),
             capacity: vec![256;16],
             swap_nibs: vec![]
         }
@@ -111,7 +109,6 @@ impl ZoneFormat {
                 BitVec::from_fn(6*10, |i| { i%10 < 8 }),
                 BitVec::from_fn(36*10, |i| { i%10 < 8 }),
             ],
-            addr_extract_expr: expr_vec(&["a0%64 + (a2 & 1)*64","(a2 & 32) >> 5","a1",&interleave.to_string()]),
             capacity: vec![524;12-zone],
             swap_nibs: vec![]
         }

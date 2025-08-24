@@ -7,8 +7,8 @@
 use a2kit_macro::DiskStructError;
 use log::{trace,debug,error};
 use crate::img;
-use crate::fs::Block;
-use crate::bios::skew;
+use crate::bios::Block;
+use crate::bios::blocks;
 use crate::{STDRESULT,DYNERR};
 use super::names::*;
 
@@ -56,11 +56,17 @@ impl img::DiskImage for Img {
     fn track_count(&self) -> usize {
         return self.cylinders * self.heads;
     }
+    fn end_track(&self) -> usize {
+        return self.cylinders * self.heads;
+    }
     fn num_heads(&self) -> usize {
         return self.heads;
     }
-    fn byte_capacity(&self) -> usize {
-        return self.data.len();
+    fn nominal_capacity(&self) -> Option<usize> {
+        Some(self.data.len())
+    }
+    fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
+        Ok(self.data.len())
     }
     fn read_block(&mut self,addr: Block) -> Result<Vec<u8>,DYNERR> {
         trace!("read {}",addr);
@@ -69,9 +75,9 @@ impl img::DiskImage for Img {
                 let secs_per_track = self.sectors;
                 let mut ans: Vec<u8> = Vec::new();
                 let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
-                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
-                for [cyl,head,lsec] in chs_list {
-                    match self.read_sector(cyl,head,lsec) {
+                let chs_list = blocks::fat::std_blocking(deblocked_ts_list,self.heads)?;
+                for (trk,lsec) in chs_list {
+                    match self.read_sector(trk,lsec) {
                         Ok(mut slice) => {
                             ans.append(&mut slice);
                         },
@@ -90,11 +96,11 @@ impl img::DiskImage for Img {
                 let secs_per_track = self.sectors;
                 let sec_size = self.sec_size;
                 let deblocked_ts_list = addr.get_lsecs(secs_per_track as usize);
-                let chs_list = skew::fat_blocking(deblocked_ts_list,self.heads)?;
+                let chs_list = blocks::fat::std_blocking(deblocked_ts_list,self.heads)?;
                 let mut src_offset = 0;
                 let padded = super::quantize_block(dat, chs_list.len()*sec_size);
-                for [cyl,head,lsec] in chs_list {
-                    match self.write_sector(cyl,head,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
+                for (trk,lsec) in chs_list {
+                    match self.write_sector(trk,lsec,&padded[src_offset..src_offset+sec_size].to_vec()) {
                         Ok(_) => src_offset += sec_size,
                         Err(e) => return Err(e)
                     }
@@ -104,21 +110,23 @@ impl img::DiskImage for Img {
             _ => Err(Box::new(img::Error::ImageTypeMismatch))
         }
     }
-    fn read_sector(&mut self,cyl: usize,head: usize,sec: usize) -> Result<Vec<u8>,DYNERR> {
-        let track = self.get_track(super::TrackKey::CH((cyl, head)))?;
+    fn read_sector(&mut self,trk: super::Track,sec: super::Sector) -> Result<Vec<u8>,DYNERR> {
+        let track = self.get_track(trk.clone())?;
+        let [cyl,head,sec] = self.get_rzq(trk,sec)?;
         trace!("reading {}/{}/{}",cyl,head,sec);
-        if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
-            error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
+        if track>=self.end_track() || sec<1 || sec>self.sectors as usize {
+            error!("track/sector range should be 0-{}/1-{}",self.end_track()-1,self.sectors);
             return Err(Box::new(img::Error::SectorAccess));
         }
         let offset = (track*self.sectors as usize + sec - 1)*self.sec_size;
         Ok(self.data[offset..offset+self.sec_size].to_vec())
     }
-    fn write_sector(&mut self,cyl: usize,head: usize,sec: usize,dat: &[u8]) -> STDRESULT {
-        let track = self.get_track(super::TrackKey::CH((cyl, head)))?;
+    fn write_sector(&mut self,trk: super::Track,sec: super::Sector,dat: &[u8]) -> STDRESULT {
+        let track = self.get_track(trk.clone())?;
+        let [cyl,head,sec] = self.get_rzq(trk,sec)?;
         trace!("writing {}/{}/{}",cyl,head,sec);
-        if track>=self.track_count() || sec<1 || sec>self.sectors as usize {
-            error!("track/sector range should be 0-{}/1-{}",self.track_count()-1,self.sectors);
+        if track>=self.end_track() || sec<1 || sec>self.sectors as usize {
+            error!("track/sector range should be 0-{}/1-{}",self.end_track()-1,self.sectors);
             return Err(Box::new(img::Error::SectorAccess));
         }
         let offset = (track*self.sectors as usize + sec - 1)*self.sec_size;
@@ -180,19 +188,19 @@ impl img::DiskImage for Img {
     fn to_bytes(&mut self) -> Vec<u8> {
         return self.data.clone();
     }
-    fn get_track_buf(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_buf(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn set_track_buf(&mut self,_cyl: usize,_head: usize,_dat: &[u8]) -> STDRESULT {
+    fn set_track_buf(&mut self,_trk: super::Track,_dat: &[u8]) -> STDRESULT {
         error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
-    fn get_track_solution(&mut self,trk: usize) -> Result<Option<img::TrackSolution>,DYNERR> {        
-        let [cylinder,head] = self.get_rz(super::TrackKey::Track(trk))?;
-        let mut addr_map: Vec<[u8;4]> = Vec::new();
+    fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
+        let [cylinder,head] = self.get_rz(trk)?;
+        let mut addr_map: Vec<[u8;5]> = Vec::new();
         for i in 0..self.sectors {
-            addr_map.push([cylinder.try_into()?,head.try_into()?,i.try_into()?,super::highest_bit(self.sec_size >> 8)]);
+            addr_map.push([cylinder.try_into()?,head.try_into()?,i.try_into()?,super::highest_bit(self.sec_size >> 8),0]);
         }
         let (flux_code,speed_kbps) = match self.kind {
             img::DiskKind::D35(l) => (l.flux_code[0],l.speed_kbps[0]),
@@ -200,7 +208,7 @@ impl img::DiskImage for Img {
             img::DiskKind::D8(l) => (l.flux_code[0],l.speed_kbps[0]),
             _ => (img::FluxCode::None,0)
         };
-        return Ok(Some(img::TrackSolution {
+        return Ok(img::TrackSolution {
             cylinder,
             fraction: [0,1],
             head,
@@ -208,12 +216,13 @@ impl img::DiskImage for Img {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            addr_type: "CHS*".to_string(),
+            addr_type: "CHSFK".to_string(),
+            addr_mask: [0,0,255,0,0],
             addr_map,
             size_map: vec![self.sec_size;self.sectors]
-        }));
+        });
     }
-    fn get_track_nibbles(&mut self,_cyl: usize,_head: usize) -> Result<Vec<u8>,DYNERR> {
+    fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("IMG images have no track bits");
         return Err(Box::new(img::Error::ImageTypeMismatch));        
     }

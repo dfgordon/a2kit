@@ -97,7 +97,7 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
             }
-            let mut disk = crate::create_fs_from_file_or_stdin_pro(maybe_img,fmt.as_ref())?;
+            let mut disk = crate::create_fs_from_file_or_stdin(maybe_img,fmt.as_ref())?;
             disk.get_img().change_method(method);
             if typ == ItemType::Block {
                 let mut cum: Vec<u8> = Vec::new();
@@ -156,7 +156,7 @@ pub fn mget(cmd: &clap::ArgMatches) -> STDRESULT {
     let path_to_img = cmd.get_one::<String>("dimg").unwrap();
     let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
-    let mut disk = crate::create_fs_from_file_pro(&path_to_img,fmt.as_ref())?;
+    let mut disk = crate::create_fs_from_file(&path_to_img,fmt.as_ref())?;
 
     let mut ans = json::array![];
     for path in json_list.members() {

@@ -11,7 +11,7 @@
 //! Much of the code herein is a rust port of C++ code that appears in CiderPress 1.
 
 use crate::DYNERR;
-use crate::img::NibbleError;
+use crate::img::Error;
 
 const INVALID_NIB_BYTE: u8 = 0xff;
 const CHUNK53: usize = 0x33;
@@ -99,7 +99,7 @@ pub fn encode_44(val: u8) -> [u8;2] {
 /// decode two 4&4 nibbles as a normal byte, invalid nibble will yield error
 pub fn decode_44(nibs: [u8;2]) -> Result<u8,DYNERR> {
     if nibs[0] & 0xaa != 0xaa || nibs[1] & 0xaa != 0xaa {
-        Err(Box::new(NibbleError::InvalidByte))
+        Err(Box::new(Error::InvalidByte))
     } else {
         Ok(((nibs[0] << 1) | 0x01) & nibs[1])
     }
@@ -114,7 +114,7 @@ pub fn encode_53(val: u8) -> u8 {
 pub fn decode_53(nib: u8) -> Result<u8,DYNERR> {
     let ans = REV_53[nib as usize];
     if ans == INVALID_NIB_BYTE {
-        Err(Box::new(NibbleError::InvalidByte))
+        Err(Box::new(Error::InvalidByte))
     } else {
         Ok(ans)
     }
@@ -129,7 +129,7 @@ pub fn encode_62(val: u8) -> u8 {
 pub fn decode_62(nib: u8) -> Result<u8,DYNERR> {
     let ans = REV_62[nib as usize];
     if ans == INVALID_NIB_BYTE {
-        Err(Box::new(NibbleError::InvalidByte))
+        Err(Box::new(Error::InvalidByte))
     } else {
         Ok(ans)
     }
@@ -139,7 +139,7 @@ pub fn encode_sector_53(dat: &[u8], chk_seed: u8, xfrm: &[[u8;2]]) -> Result<Vec
     if dat.len() == 256 {
         Ok(encode_sector_53_256(dat, chk_seed, xfrm))
     } else {
-        Err(Box::new(NibbleError::NibbleType))
+        Err(Box::new(Error::NibbleType))
     }
 }
 
@@ -147,7 +147,7 @@ pub fn decode_sector_53(nibs: &[u8], chk_seed: u8, verify_chk: bool, xfrm: &[[u8
     if nibs.len() == 411 {
         decode_sector_53_256(nibs, chk_seed, verify_chk, xfrm)
     } else {
-        Err(Box::new(NibbleError::NibbleType))
+        Err(Box::new(Error::NibbleType))
     }
 }
 
@@ -155,7 +155,7 @@ pub fn encode_sector_62(dat: &[u8], chk_seed: [u8;3], xfrm: &[[u8;2]]) -> Result
     match dat.len() {
         256 => Ok(encode_sector_62_256(dat, chk_seed[0], xfrm)),
         524 => Ok(encode_sector_62_524(dat, chk_seed, xfrm)),
-        _ => Err(Box::new(NibbleError::NibbleType))
+        _ => Err(Box::new(Error::NibbleType))
     }
 }
 
@@ -163,7 +163,7 @@ pub fn decode_sector_62(nibs: &[u8],chk_seed: [u8;3],verify_chk: bool,xfrm: &[[u
     match nibs.len() {
         343 => decode_sector_62_256(nibs, chk_seed[0], verify_chk, xfrm),
         703 => decode_sector_62_524(nibs, chk_seed, verify_chk, xfrm),
-        _ => Err(Box::new(NibbleError::NibbleType))
+        _ => Err(Box::new(Error::NibbleType))
     }
 }
 
@@ -265,7 +265,7 @@ fn decode_sector_53_256(bak_buf: &[u8], chk_seed: u8, verify_chk: bool, xfrm: &[
     let val = decode_53(xfrm_read(bak_buf[idx],xfrm))?;
     chksum ^= val;
     if verify_chk && chksum!=0 {
-        return Err(Box::new(NibbleError::BadChecksum));
+        return Err(Box::new(Error::BadChecksum));
     }
     // assemble the decoded data
     for i in (0..CHUNK53).rev() {
@@ -310,7 +310,7 @@ fn decode_sector_62_256(bak_buf: &[u8], chk_seed: u8, verify_chk: bool, xfrm: &[
     let val = decode_62(xfrm_read(bak_buf[idx],xfrm))?;
     chksum ^= val;
     if verify_chk && chksum!=0 {
-        return Err(Box::new(NibbleError::BadChecksum));
+        return Err(Box::new(Error::BadChecksum));
     }
     return Ok(ans);
 }
@@ -481,7 +481,7 @@ fn decode_sector_62_524(bak_buf: &[u8], chk_seed: [u8;3], verify_chk: bool, xfrm
     if chk0 != rdchk0 || chk1 != rdchk1 || chk2 != rdchk2 {
         log::debug!("expect checksum {},{},{} got {},{},{}",chk0,chk1,chk2,rdchk0,rdchk1,rdchk2);
         if verify_chk {
-            return Err(Box::new(NibbleError::BadChecksum));
+            return Err(Box::new(Error::BadChecksum));
         }
     }
     return Ok(ans);
