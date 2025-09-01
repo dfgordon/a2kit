@@ -100,17 +100,17 @@ impl AppleSingleFile {
             _ => "UNTITLED".to_string()
         }
     }
-    /// add the entry for the file's dates and times, None means use current time
+    /// add the entry for the file's dates and times, None means use the unknown time marker, which is the earliest representable time
     pub fn add_dates(&mut self, create: Option<DateTime<chrono::Utc>>, modify: Option<DateTime<chrono::Utc>>, backup: Option<DateTime<chrono::Utc>>, access: Option<DateTime<chrono::Utc>>) {
-        let now = DateTime::<chrono::Utc>::from_timestamp(chrono::Local::now().timestamp(),0).unwrap();
+        let unknown = unknown_time();
         self.entries.push(Entry {
             r#type: EntryType::FileDatesInfo,
             offset: 0,
             data: EntryData::FileDatesInfo(FileDatesInfo {
-                create_time: create.unwrap_or(now),
-                modification_time: modify.unwrap_or(now),
-                backup_time: backup.unwrap_or(now),
-                access_time: access.unwrap_or(now),
+                create_time: create.unwrap_or(unknown),
+                modification_time: modify.unwrap_or(unknown),
+                backup_time: backup.unwrap_or(unknown),
+                access_time: access.unwrap_or(unknown),
             }),
             length: 16
         });
@@ -337,6 +337,10 @@ pub enum EntryData {
 // Epoch is set at 2000-01-01T00:00:00Z
 const EPOCH: i64 = 946684800;
 
+fn unknown_time() -> DateTime<chrono::Utc> {
+    parse_time(i32::MIN)
+}
+
 fn parse_time(time: i32) -> DateTime<chrono::Utc> {
     DateTime::<chrono::Utc>
         ::from_timestamp(EPOCH + i64::from(time), 0)
@@ -387,7 +391,8 @@ pub struct FileDatesInfo {
 fn test_apple_single_parsing() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("test.as");
+        .join("fimg")
+        .join("test-as-parse.as");
     let mut file = std::fs::File::open(path).expect("Can't open file");
 
     let data = AppleSingleFile::read(&mut file).expect("Can't read file");

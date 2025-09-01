@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.0.0] - 2025-09-01
 
 ### Fixes
 
@@ -31,9 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - will return fractional cylinder numbers if necessary
     - distinguishes nibble codes used in address vs. data fields
     - returns better sector addresses and description thereof
+    - optionally return abstract format information
 * CLI `get` can be coerced into formatting output for the console
-* macro expansions handle `]0` (Merlin 16 or higher)
-* additional diagnostics and settings for Merlin server
+* Merlin improvements
+    - macro expansions handle `]0` (Merlin 16 or higher)
+    - additional diagnostics and settings
 * more fine grained control of permissions
 * sector search by explicit address
 
@@ -43,31 +45,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - ambiguous kinds such as `5.25in` are no longer allowed
     - every floppy kind is in the form of a triple `<PKG-VEND-FMT>`
 * Subcommands `lock`, `unlock`, `protect`, and `unprotect` are replaced by `access`
-* Scripts that depend on `geometry` output will need to be reviewed
+* Scripts that depend on `geometry` output will need to be rewritten
+* If there are tag bytes they are included in sector data (but not in blocks)
 * Error return types have changed in some cases
 
 ### Breaking Changes (Crate)
 
-* modules `disk35` and `disk525` are eliminated
-* `TrackBits` trait is eliminated
-* `parse_escaped_ascii` is eliminated, `escaped_ascii_to_bytes` args changed
-* various public entities are eliminated from `img::woz`
-* `Block` enumeration moved to `bios` module, things moved around within `bios`
+* eliminate modules `disk35`, `disk525`
+* eliminate trait `TrackBits`
+* eliminate various public entities from `img::woz`
+* eliminate enumerations `img::NibbleCode`, `img::DataRate` 
+* eliminate functions `parse_escaped_ascii`, `lang::merlin::eval_if`, `img::imd::cpm_blocking`
+* moved `Block` enumeration to `bios` module, things moved around within `bios`
+* renamed: `cpm::types::ExtentType` to `cpm::types::EntryType`
 * changes to `DiskImage` trait
     - arguments to many functions use abstract `Track` and `Sector` in place of CHS indices
 * changes to `DiskFS` trait
     - permissions are controlled by `set_attrib`, while `lock`, `unlock`, `protect`, and `unprotect` are eliminated
-* enumerations `img::NibbleCode` and `img::DataRate` are eliminated 
-* removed functions `lang::merlin::eval_if`, `img::imd::cpm_blocking`
-* trait function args or return values changed: `Renumber::build_edits`, `Packing::get_load_address`
-* language parsers use tree-sitter 0.25
-* code that depends on specific error return types might break
-* CP/M `ExtentType` is replaced by `EntryType`
-* new public structure members
-    - in `merlin::settings`
-* changes to public interfaces
-    - create functions for woz images
-* module `lang::linenum` is private
+* changes to public interfaces: `escaped_ascii_to_bytes`, `Packing::get_load_address`, `Woz1::create`, `Woz2::create`, `merlin::settings`
+* changes to enumerations: various error enumerations
+* public became private: `lang::linenum`
+* dependencies: language parsers use tree-sitter 0.25, lsp-types 0.97 URI type is different
 
 ## [3.7.0] - 2025-03-22
 

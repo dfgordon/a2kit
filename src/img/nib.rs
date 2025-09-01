@@ -4,6 +4,8 @@
 //! We handle these tracks using the same track engine that handles WOZ tracks.  The trick is to
 //! set the sync-byte length to 8 bits.  This works so long as the NIB track has been properly aligned,
 //! and we are careful to start the bit pointer on a multiple of 8.
+//! 
+//! Nowadays use of NIB is discouraged because of its incomplete representation of the bit stream.
 
 use a2kit_macro::DiskStructError;
 use crate::img;
@@ -47,7 +49,7 @@ impl Nib {
         };
         let mut data: Vec<u8> = Vec::new();
         let mut init_cells = None;
-        let mut engine = TrackEngine::create(Method::Edit,true);
+        let mut engine = TrackEngine::create(Method::Fast,true);
         for track in 0..35 {
             let hood = SectorHood::a2_525(vol, track);
             let zfmt = fmt.get_zone_fmt(0, 0)?;
@@ -185,7 +187,7 @@ impl img::DiskImage for Nib {
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NIB,
                     data,
-                    engine: TrackEngine::create(Method::Edit, true),
+                    engine: TrackEngine::create(Method::Fast, true),
                     cells,
                     track_pos: 0,
                 };
@@ -206,7 +208,7 @@ impl img::DiskImage for Nib {
                     tracks: 35,
                     trk_cap: TRACK_BYTE_CAPACITY_NB2,
                     data,
-                    engine: TrackEngine::create(Method::Edit, true),
+                    engine: TrackEngine::create(Method::Fast, true),
                     cells,
                     track_pos: usize::MAX
                 };
@@ -247,7 +249,7 @@ impl img::DiskImage for Nib {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS",[255;5]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         // If the given format fails try some standard ones
@@ -257,7 +259,7 @@ impl img::DiskImage for Nib {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
             if addr_map.len()==13 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS",[255;5]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         log::trace!("try DOS 3.3 format");
@@ -266,7 +268,7 @@ impl img::DiskImage for Nib {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
             if addr_map.len()==16 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTS",[255;5]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         return Err(Box::new(img::Error::UnknownFormat));
@@ -281,6 +283,12 @@ impl img::DiskImage for Nib {
             };
         }
         img::geometry_json(pkg,track_sols,indent)
+    }
+    fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
+        match &self.fmt {
+            Some(f) => f.to_json(indent),
+            None => Err(Box::new(super::Error::UnknownFormat))
+        }
     }
     fn get_track_nibbles(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR> {
         let [motor,head,_] = self.goto_track(trk)?;

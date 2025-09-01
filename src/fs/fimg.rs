@@ -5,6 +5,7 @@
 //! multiple file systems.  We refer to this concept as a "file image."
 //! 
 //! The native file image used by `a2kit` is the `FileImage` trait object.
+//! It handles sparse and sequential files on an equal footing.
 //! All data must be packed as a `FileImage` before being written to a disk image.
 //! All data read from a disk image will be initially in the form of a `FileImage`.
 //! `FileImage` data can be unpacked into a form suitable for ordinary consumers.
@@ -78,7 +79,7 @@ impl FileImage {
         }
         false
     }
-    /// pack the data sequentially, all structure is lost
+    /// pack the data sequentially, the result is an unstructured buffer
     pub fn sequence(&self) -> Vec<u8> {
         let mut ans: Vec<u8> = Vec::new();
         for chunk in self.ordered_indices() {
@@ -89,7 +90,7 @@ impl FileImage {
         }
         return ans;
     }
-    /// pack the data sequentially, all structure is lost
+    /// pack the data sequentially, up to a maximum length, the result is an unstructured buffer
     pub fn sequence_limited(&self,max_len: usize) -> Vec<u8> {
         let mut ans = self.sequence();
         if max_len < ans.len() {
@@ -98,8 +99,8 @@ impl FileImage {
         return ans;
     }
     /// Use any byte stream as the file image data.  The eof is set to the length of the data.
-    /// The last chunk is not padded.  The existing chunks, if any, are thrown away.
-    pub fn desequence(&mut self, dat: &[u8]) {
+    /// The last chunk is padded with pad.unwrap() if pad.is_some().  The existing chunks, if any, are thrown away.
+    pub fn desequence(&mut self, dat: &[u8], pad: Option<u8>) {
         self.chunks = HashMap::new();
         let mut mark = 0;
         let mut idx = 0;
@@ -112,7 +113,11 @@ impl FileImage {
             if end > dat.len() {
                 end = dat.len();
             }
-            self.chunks.insert(idx,dat[mark..end].to_vec());
+            let chunk_dat = match (pad,end<mark+self.chunk_len) {
+                (Some(padding),true) => [dat[mark..end].to_vec(),vec![padding;self.chunk_len+mark-end]].concat(),
+                _ => dat[mark..end].to_vec()
+            };
+            self.chunks.insert(idx,chunk_dat);
             mark = end;
             if mark == dat.len() {
                 self.eof = Self::fix_le_vec(dat.len(),self.eof.len());

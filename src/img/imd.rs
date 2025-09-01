@@ -5,6 +5,8 @@
 //! for very early disks, the BPB is always discoverable in the boot sector.
 //! For CP/M, only specific vendors are supported, due to the fact that the DPB
 //! usually has to be supplied for each individual case.
+//! 
+//! This format originated with Dave Dunfield's ImageDisk package.
 
 use chrono;
 use num_traits::FromPrimitive;
@@ -728,11 +730,11 @@ impl img::DiskImage for Imd {
             None => (img::FluxCode::None,0)
         };
         let phys_head = (trk_obj.head_flags & HEAD_MASK) as usize;
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         for i in 0..trk_obj.sectors as usize {
             let c = match trk_obj.cylinder_map.len()>i { true=>trk_obj.cylinder_map[i] as usize, false=>trk_obj.cylinder as usize };
             let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>phys_head };
-            addr_map.push([c.try_into()?,h.try_into()?,trk_obj.sector_map[i],trk_obj.sector_shift,0]);
+            addr_map.push(super::append_ibm_crc([c.try_into()?,h.try_into()?,trk_obj.sector_map[i],trk_obj.sector_shift],None));
         }
         Ok(img::TrackSolution {
             cylinder: trk_obj.cylinder as usize,
@@ -742,8 +744,8 @@ impl img::DiskImage for Imd {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            addr_type: "CHSFK".to_string(),
-            addr_mask: [255,255,255,0,0],
+            addr_type: "CHSFKK".to_string(),
+            addr_mask: [255,255,255,0,0,0],
             addr_map,
             size_map: vec![SECTOR_SIZE_BASE << trk_obj.sector_shift;trk_obj.sectors as usize]
         })

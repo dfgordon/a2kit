@@ -253,7 +253,7 @@ impl Packing for Packer {
 
     fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
         Self::verify(fimg)?;
-        fimg.desequence(&dat);
+        fimg.desequence(&dat,None);
         Ok(())
     }
 
@@ -276,7 +276,7 @@ impl Packing for Packer {
             Some(v) => [dat,v].concat(),
             None => dat.to_vec()
         };
-        fimg.desequence(&padded);
+        fimg.desequence(&padded,None);
         Ok(())
     }
 
@@ -287,7 +287,7 @@ impl Packing for Packer {
     fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
         Self::verify(fimg)?;
         let file = types::SequentialText::from_str(&txt)?;
-        fimg.desequence(&file.to_bytes());
+        fimg.desequence(&file.to_bytes(),None);
         Ok(())
     }
 

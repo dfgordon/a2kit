@@ -1,4 +1,4 @@
-//! ## Support for DOS ordered disk images (DO,DSK)
+//! ## Support for Apple DOS ordered disk images (DO,DSK)
 //! 
 //! DSK images are a simple sequential dump of the already-decoded sector data.
 //! If the sector sequence is ordered as in DOS 3.3, we have a DO variant.
@@ -203,9 +203,11 @@ impl img::DiskImage for DO {
     }
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
         let [c,h] = self.get_rz(trk)?;
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         for i in 0..16 {
-            addr_map.push([254,c.try_into()?,i,0,0]);
+            let mut addr = [254,c.try_into()?,i,0,0,0];
+            addr[3] = addr[0] ^ addr[1] ^ addr[2];
+            addr_map.push(addr);
         }
         return Ok(img::TrackSolution {
             cylinder: c,
@@ -215,8 +217,8 @@ impl img::DiskImage for DO {
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((6,2)),
-            addr_type: "VTS".to_string(),
-            addr_mask: [0,0,255,0,0],
+            addr_type: "VTSK".to_string(),
+            addr_mask: [0,0,255,0,0,0],
             addr_map,
             size_map: vec![256;16]
         });

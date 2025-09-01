@@ -1,6 +1,6 @@
 //! # Track Engines and Formats
 //!
-//! This module provides tools for working with tracks at the bitstream level.
+//! This module provides tools for working with tracks at the bitstream or flux-stream level.
 //! The `DiskFormat` struct provides everything needed to create, read, and write disk tracks.
 //! It breaks up into `ZoneFormat` structs that are often passed into track handling functions.
 //! Functions are provided to create standard formats.
@@ -59,8 +59,8 @@ pub enum Method {
     /// select based on track
     Auto,
     /// direct manipulation, good for textbook data streams
-    Edit,
-    /// emulate, but use hints the real system might not have
+    Fast,
+    /// emulate, but suppress effects that might confuse analysis
     Analyze,
     /// emulate the real system as near as possible
     Emulate,
@@ -72,7 +72,7 @@ impl FromStr for Method {
         match s {
             "auto" => Ok(Method::Auto),
             "analyze" => Ok(Method::Analyze),
-            "edit" => Ok(Method::Edit),
+            "fast" => Ok(Method::Fast),
             "emulate" => Ok(Method::Emulate),
             _ => Err(super::Error::MetadataMismatch)
         }
@@ -146,17 +146,20 @@ impl FluxCells {
         Self::new_woz_bits(0,stream,time,double_speed)
     }
     /// Create cells from a WOZ flux track buffer, the flux cells will
-    /// be set to 500 ns.  Any padding in `buf` is ignored.
+    /// be set to 500/250 ns.  Any padding in `buf` is ignored.
     pub fn from_woz_flux(byte_count: usize,buf: &[u8],time: u64,double_speed: bool) -> Self {
+        // The flux cell is chosen to align to the state machine cycle, 500/250 ns for 5.25/3.5 inch disks.
+        // The WOZ ticks we are reading are always 125 ns regardless of disk kind.
+        let ticks_per_cell = 4 >> double_speed as usize;
         let mut stream = BitVec::new();
         let mut write = |carryover0: &mut usize, carryover1: &mut usize| {
             let ticks = *carryover0 + *carryover1;
-            let cells = ticks / 4; // 500 ns cell
+            let cells = ticks / ticks_per_cell;
             for j in 0..cells {
                 stream.push(j==0 && *carryover1 > 0 || j==cells-1);
             }
-            *carryover0 = (cells>0) as usize * (ticks % 4);
-            *carryover1 = (cells==0) as usize * (ticks % 4);
+            *carryover0 = (cells>0) as usize * (ticks % ticks_per_cell);
+            *carryover1 = (cells==0) as usize * (ticks % ticks_per_cell);
         };
         let mut carryover0 = 0;
         let mut carryover1 = 0;
@@ -213,6 +216,7 @@ impl FluxCells {
             (self.stream.to_bytes(),self.stream.len())
         } else {
             let mut zeroes = 0;
+            let ticks_per_cell = ((1 << self.fshift) * self.tick_ps / 125000) as u8;
             let mut end = usize::MAX;
             let mut buf = Vec::new();
             // figure out where the last transition is and make that the end,
@@ -231,10 +235,10 @@ impl FluxCells {
                 if cell {
                     // The following line presumes the tick count is inclusive of whatever time
                     // the transition takes, or else the transition is infinitessimal in duration. 
-                    buf.push(zeroes + (1 << self.fshift));
+                    buf.push(zeroes + ticks_per_cell);
                     zeroes = 0;
                 } else {
-                    zeroes += 1 << self.fshift;
+                    zeroes += ticks_per_cell;
                 }
                 if zeroes >= 0xff {
                     buf.push(0xff);
@@ -610,7 +614,7 @@ impl ZoneFormat {
     pub fn sector_count(&self) -> usize {
         self.capacity.len()
     }
-    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;5]>,size_map: Vec<usize>,addr_type: &str,addr_mask: [u8;5]) -> img::TrackSolution {
+    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;6]>,size_map: Vec<usize>,addr_type: &str,addr_mask: [u8;6]) -> img::TrackSolution {
         img::TrackSolution {
             cylinder: motor/head_width,
             fraction: [motor%head_width,head_width],
@@ -728,11 +732,11 @@ impl ZoneFormat {
     }
 }
 
-/// short cut to get a ZoneFormat from a maybe DiskFormat 
+/// short cut to get a ZoneFormat from a maybe DiskFormat
 pub fn get_zone_fmt<'a>(motor: usize,head: usize,fmt: &'a Option<DiskFormat>) -> Result<&'a ZoneFormat,DYNERR> {
 	match fmt {
 		Some(f) => Ok(f.get_zone_fmt(motor,head)?),
-		None => Err(Box::new(img::Error::SectorAccess))
+		None => Err(Box::new(img::Error::UnknownFormat))
 	}
 }
 
@@ -743,8 +747,8 @@ impl<'a> DiskFormat {
                 return Ok(zone)
             }
         }
-        log::error!("zone at motor pos {} not found",motor);
-        return Err(Box::new(super::Error::SectorAccess))
+        log::info!("zone at motor pos {} not found",motor);
+        return Err(Box::new(super::Error::UnexpectedZone))
     }
     /// concatenate all the (motor,head) tuples for all the zones
     pub fn get_motor_and_head(&self) -> Vec<(usize,usize)> {

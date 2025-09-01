@@ -6,6 +6,7 @@
 use clap;
 use std::str::FromStr;
 use log::{info,error};
+use crate::img::tracks::Method;
 use super::{ItemType,CommandError};
 use crate::STDRESULT;
 
@@ -23,6 +24,7 @@ pub fn put(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {
+            img.change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
             match typ {
                 ItemType::Sector => {
                     if let Some(fmt) = fmt {
@@ -77,6 +79,7 @@ pub fn put_meta(cmd: &clap::ArgMatches,dat: &[u8]) -> STDRESULT {
 
     match crate::create_img_from_file(&img_path) {
         Ok(mut img) => {
+            img.change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
             let json_string = String::from_utf8(dat.to_vec())?;
             let parsed = json::parse(&json_string)?;
             let mut curs = crate::JsonCursor::new();

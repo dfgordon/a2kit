@@ -5,6 +5,7 @@ use std::str::FromStr;
 
 use super::{ItemType,CommandError};
 use crate::fs::{FileImage,UnpackedData};
+use crate::img::tracks::Method;
 use crate::{DYNERR,STDRESULT};
 
 fn output_get(result: UnpackedData, load_addr: usize, console_fmt: bool) -> STDRESULT {
@@ -14,7 +15,7 @@ fn output_get(result: UnpackedData, load_addr: usize, console_fmt: bool) -> STDR
             std::io::stdout().flush()?;
             if !txt.ends_with("\n") {
                 eprintln!();
-                log::warn!("string ended without a newline");
+                log::debug!("string ended without a newline");
             }
         },
         (UnpackedData::Binary(dat),true) => crate::display_block(load_addr,&dat),
@@ -76,7 +77,6 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
         None => None
     };
     let fmt = super::get_fmt(cmd)?;
-    let method = crate::img::tracks::Method::from_str(cmd.get_one::<String>("method").unwrap())?;
 
     match (maybe_typ, pipe_or_img, maybe_src_path) {
 
@@ -93,12 +93,12 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
                 (ItemType::Raw,_) => {},
                 (_,false) => {},
                 (_,true) => {
-                    eprintln!("`trunc` flag only used with raw type");
+                    log::error!("`trunc` flag only used with raw type");
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
             }
             let mut disk = crate::create_fs_from_file_or_stdin(maybe_img,fmt.as_ref())?;
-            disk.get_img().change_method(method);
+            disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
             if typ == ItemType::Block {
                 let mut cum: Vec<u8> = Vec::new();
                 let blocks = super::parse_block_request(&src_path)?;
@@ -157,6 +157,7 @@ pub fn mget(cmd: &clap::ArgMatches) -> STDRESULT {
     let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
     let mut disk = crate::create_fs_from_file(&path_to_img,fmt.as_ref())?;
+    disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
 
     let mut ans = json::array![];
     for path in json_list.members() {

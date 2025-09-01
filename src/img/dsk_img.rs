@@ -198,9 +198,10 @@ impl img::DiskImage for Img {
     }
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
         let [cylinder,head] = self.get_rz(trk)?;
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         for i in 0..self.sectors {
-            addr_map.push([cylinder.try_into()?,head.try_into()?,i.try_into()?,super::highest_bit(self.sec_size >> 8),0]);
+            let addr = [cylinder.try_into()?,head.try_into()?,(i+1).try_into()?,super::highest_bit(self.sec_size >> 8)];
+            addr_map.push(super::append_ibm_crc(addr, None));
         }
         let (flux_code,speed_kbps) = match self.kind {
             img::DiskKind::D35(l) => (l.flux_code[0],l.speed_kbps[0]),
@@ -216,8 +217,8 @@ impl img::DiskImage for Img {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            addr_type: "CHSFK".to_string(),
-            addr_mask: [0,0,255,0,0],
+            addr_type: "CHSFKK".to_string(),
+            addr_mask: [0,0,255,0,0,0],
             addr_map,
             size_map: vec![self.sec_size;self.sectors]
         });

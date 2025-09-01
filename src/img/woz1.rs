@@ -171,7 +171,7 @@ impl Trk {
     /// `vol` and `track` are only used for the address field
     fn create(hood: SectorHood,fmt: &img::tracks::ZoneFormat) -> Result<Self,DYNERR> {
         fmt.check_flux_code(img::FluxCode::GCR)?;
-        let mut engine = TrackEngine::create(Method::Edit,false);
+        let mut engine = TrackEngine::create(Method::Fast,false);
         let cells = engine.format_track(hood, TRACK_BYTE_CAPACITY, fmt)?;
         let (bits,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY),0);
         let bytes_used = u16::to_le_bytes(bits.len() as u16);
@@ -269,7 +269,7 @@ impl Woz1 {
             tmap: TMap::new(),
             trks: Trks::new(),
             meta: None,
-            engine: TrackEngine::create(Method::Edit,false),
+            engine: TrackEngine::create(Method::Fast,false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -287,7 +287,7 @@ impl Woz1 {
             tmap: TMap::blank(),
             trks: Trks::blank(),
             meta: None,
-            engine: TrackEngine::create(Method::Edit,false),
+            engine: TrackEngine::create(Method::Fast,false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -310,7 +310,7 @@ impl Woz1 {
             tmap,
             trks,
             meta: None,
-            engine: TrackEngine::create(Method::Edit,false),
+            engine: TrackEngine::create(Method::Fast,false),
             cells: None,
             tmap_pos: usize::MAX,
         })
@@ -348,27 +348,36 @@ impl Woz1 {
         return Ok(&mut self.trks.tracks[idx].bits);
     }
     /// Save changes to the current track buffer if they exist
-    fn write_back_track(&mut self) {
+    fn write_back_track(&mut self) -> STDRESULT {
         if let Some(cells) = &self.cells {
-            let idx = self.try_motor(self.tmap_pos).expect("out of sequence access");
+            let idx = self.try_motor(self.tmap_pos)?;
             let (buf,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY),0);
             self.trks.tracks[idx].bits = buf.try_into().expect("track buffer mismatch");
         }
+        Ok(())
     }
-    /// Goto track and extract FluxCells if necessary, returns [motor,head,width]
+    /// Goto track and extract FluxCells if necessary, returns [motor,head,width].
+    /// Blank track will return Ok, but will set cells to None.
     fn goto_track(&mut self,trk: Track) -> Result<[usize;3],DYNERR> {
         let tmap_idx = img::woz::get_tmap_index(trk,&self.kind)?;
         if self.tmap_pos != tmap_idx {
             log::debug!("goto {} of {}",trk,self.kind);
-            self.write_back_track();
+            self.write_back_track()?;
             self.tmap_pos = tmap_idx;
-            let idx = self.try_motor(tmap_idx)?;
-            let bit_count = u16::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-            let mut new_cells = FluxCells::from_woz_bits(bit_count, &self.trks.tracks[idx].bits,0,false);
-            if let Some(cells) = &self.cells {
-                new_cells.sync_to_other_track(cells);
+            match self.try_motor(tmap_idx) {
+                Ok(idx) => {
+                    let bit_count = u16::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
+                    let mut new_cells = FluxCells::from_woz_bits(bit_count, &self.trks.tracks[idx].bits,0,false);
+                    if let Some(cells) = &self.cells {
+                        new_cells.sync_to_other_track(cells);
+                    }
+                    self.cells = Some(new_cells);
+                },
+                Err(e) => match e.downcast_ref::<img::Error>() {
+                    Some(img::Error::BlankTrack) => self.cells = None,
+                    _ => return Err(e)
+                }
             }
-            self.cells = Some(new_cells);
         }
         img::woz::get_motor_pos(trk, &self.kind)
     }
@@ -413,7 +422,8 @@ impl img::DiskImage for Woz1 {
                 },
                 Err(e) => match e.downcast_ref::<img::Error>() {
                     Some(img::Error::BlankTrack) => motor += 2,
-                    _ => return Err(Box::new(img::Error::TrackAccess))
+                    Some(img::Error::UnexpectedZone) => motor += 2,
+                    _ => return Err(e)
                 }
             }
         }
@@ -445,10 +455,13 @@ impl img::DiskImage for Woz1 {
         apple::write_block(self, addr, dat)
     }
     fn read_sector(&mut self,trk: Track,sec: Sector) -> Result<Vec<u8>,DYNERR> {
+        let [motor,head,_] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let [motor,head,_] = self.goto_track(trk)?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?;
         let hood = SectorHood::a2_525(254, u8::try_from((motor+1)/4)?);
@@ -456,10 +469,13 @@ impl img::DiskImage for Woz1 {
         Ok(ans)
     }
     fn write_sector(&mut self,trk: Track,sec: Sector,dat: &[u8]) -> Result<(),DYNERR> {
+        let [motor,head,_] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let [motor,head,_] = self.goto_track(trk)?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?.clone();
         let hood = SectorHood::a2_525(254, u8::try_from((motor+1)/4)?);
@@ -504,7 +520,7 @@ impl img::DiskImage for Woz1 {
         return Ok(ans);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
-        self.write_back_track();
+        self.write_back_track().expect("could not restore track");
         let mut ans: Vec<u8> = Vec::new();
         ans.append(&mut self.header.to_bytes());
         ans.append(&mut self.info.to_bytes());
@@ -534,12 +550,15 @@ impl img::DiskImage for Woz1 {
     }
     fn get_track_solution(&mut self,trk: Track) -> Result<img::TrackSolution,DYNERR> {
         let [motor,head,width] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         // If the given format fails try some standard ones
@@ -549,7 +568,7 @@ impl img::DiskImage for Woz1 {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
             if addr_map.len()==13 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         log::trace!("try DOS 3.3 format");
@@ -558,7 +577,7 @@ impl img::DiskImage for Woz1 {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
             if addr_map.len()==16 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
             }
         }
         return Err(Box::new(img::Error::UnknownFormat));
@@ -582,8 +601,17 @@ impl img::DiskImage for Woz1 {
         }
         img::geometry_json(pkg,track_sols,indent)
     }
+    fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
+        match &self.fmt {
+            Some(f) => f.to_json(indent),
+            None => Err(Box::new(super::Error::UnknownFormat))
+        }
+    }
     fn get_track_nibbles(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR> {
         let [motor,head,_] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         let zfmt = img::tracks::get_zone_fmt(motor, head, &self.fmt)?;
         Ok(self.engine.to_nibbles(self.cells.as_mut().unwrap(), zfmt))
     }

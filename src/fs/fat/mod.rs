@@ -771,7 +771,7 @@ impl Disk {
         let dir = self.get_directory(&parent.cluster1)?;
         let entry = dir.get_entry(&Ptr::Entry(finfo.idx));
         let all_data = self.get_cluster_chain_data(&finfo.cluster1.unwrap())?;
-        fimg.desequence(&all_data);
+        fimg.desequence(&all_data,None);
         entry.metadata_to_fimg(&mut fimg); // must come after desequence or eof is spoiled
         Ok(fimg)
     }

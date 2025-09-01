@@ -243,6 +243,80 @@ impl ZoneFormat {
             swap_nibs
         });
     }
+    fn sync_gap_obj(gap: &BitVec) -> Result<json::JsonValue,DYNERR> {
+        let mut ans = json::JsonValue::new_array();
+        if gap.len() < 10 {
+            ans.push(gap.to_string())?;
+        } else {
+            let bylen = match (gap[8],gap[9]) {
+                (false,false) => 10,
+                (false,true) => 9,
+                _ => 8
+            };
+            let bytes = gap.len() / bylen;
+            for i in 0..bytes {
+                let mut bitstr = String::new();
+                for j in i*bylen..(i+1)*bylen {
+                    bitstr.push(match gap[j] { true => '1', false => '0' });
+                }
+                ans.push(json::JsonValue::String(bitstr))?;
+            }
+            if gap.len()%bylen > 0 {
+                let mut bitstr = String::new();
+                for j in bytes*bylen..gap.len() {
+                    bitstr.push(match gap[j] { true => '1', false => '0' });
+                }
+                ans.push(json::JsonValue::String(bitstr))?;
+            }
+        }
+        Ok(ans)
+    }
+    fn marker_objs(&self) -> Result<(json::JsonValue,json::JsonValue),DYNERR> {
+        let mut keys = json::JsonValue::new_array();
+        let mut masks = json::JsonValue::new_array();
+        for m in &self.markers {
+            keys.push(json::JsonValue::String(hex::encode(&m.key)))?;
+            masks.push(json::JsonValue::String(hex::encode(&m.mask)))?;
+        }
+        Ok((keys,masks))
+    }
+    fn swap_nibs(&self) -> Result<json::JsonValue,DYNERR> {
+        let mut ans = json::JsonValue::new_array();
+        for swap in &self.swap_nibs {
+            ans.push(json::JsonValue::Array(vec![
+                json::JsonValue::String(hex::encode(vec![swap[0]])),
+                json::JsonValue::String(hex::encode(vec![swap[1]]))
+            ]))?;
+        }
+        Ok(ans)
+    }
+    pub fn to_json_obj(&self) -> Result<json::JsonValue,DYNERR> {
+        let mut ans = json::JsonValue::new_object();
+        let num_ary = |arg: &Vec<usize>| {
+            json::JsonValue::Array(arg.iter().map(|x| json::JsonValue::Number((*x).into())).collect())
+        };
+        let str_ary = |arg: &Vec<String>| {
+            json::JsonValue::Array(arg.iter().map(|x| json::JsonValue::String(x.to_owned())).collect())
+        };
+        let (keys,masks) = self.marker_objs()?;
+        ans["flux_code"] = json::JsonValue::String(self.flux_code.to_string());
+        ans["addr_nibs"] = json::JsonValue::String(self.addr_nibs.to_string());
+        ans["data_nibs"] = json::JsonValue::String(self.data_nibs.to_string());
+        ans["speed_kbps"] = json::JsonValue::Number(self.speed_kbps.into());
+        ans["motor_range"] = json::JsonValue::Array(vec![self.motor_start.into(),self.motor_end.into(),self.motor_step.into()]);
+        ans["heads"] = num_ary(&self.heads);
+        ans["addr_fmt_expr"] = str_ary(&self.addr_fmt_expr);
+        ans["addr_seek_expr"] = str_ary(&self.addr_seek_expr);
+        ans["data_expr"] = str_ary(&self.data_expr);
+        ans["markers"] = keys;
+        ans["marker_masks"] = masks;
+        ans["sync_trk_beg"] = Self::sync_gap_obj(&self.gaps[0])?;
+        ans["sync_sec_end"] = Self::sync_gap_obj(&self.gaps[1])?;
+        ans["sync_dat_end"] = Self::sync_gap_obj(&self.gaps[2])?;
+        ans["capacity"] = num_ary(&self.capacity);
+        ans["swap_nibs"] = self.swap_nibs()?;
+        Ok(ans)
+    }
 }
 
 impl<'a> DiskFormat {
@@ -271,5 +345,19 @@ impl<'a> DiskFormat {
             zones.push(zone);
         }
         Ok(DiskFormat { zones })
+    }
+    pub fn to_json(&self,indent: Option<u16>) -> Result<String,DYNERR> {
+        let mut ans = json::JsonValue::new_object();
+        ans["a2kit_type"] = json::JsonValue::String("format".to_string());
+        ans["version"] = json::JsonValue::String("1.0.0".to_string());
+        ans["zones"] = json::JsonValue::new_array();
+        for zone in &self.zones {
+            ans["zones"].push(zone.to_json_obj()?)?;
+        }
+        if let Some(spaces) = indent {
+            Ok(json::stringify_pretty(ans,spaces))
+        } else {
+            Ok(json::stringify(ans))
+        }
     }
 }

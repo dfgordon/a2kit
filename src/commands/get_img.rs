@@ -9,6 +9,7 @@ use std::str::FromStr;
 use log::error;
 use super::{ItemType,CommandError};
 use crate::img::DiskImage;
+use crate::img::tracks::Method;
 use crate::STDRESULT;
 
 const RCH: &str = "unreachable was reached";
@@ -30,15 +31,14 @@ pub fn get(cmd: &clap::ArgMatches) -> STDRESULT {
     let typ = ItemType::from_str(&cmd.get_one::<String>("type").expect(RCH)).expect(RCH);
     let maybe_img_path = cmd.get_one::<String>("dimg");
     let fmt = super::get_fmt(cmd)?;
-    let method = crate::img::tracks::Method::from_str(cmd.get_one::<String>("method").unwrap())?;
     let maybe_explicit_list = cmd.get_one::<String>("explicit");
 
     match crate::create_img_from_file_or_stdin(maybe_img_path) {
         Ok(mut img) => {
+            img.change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
             if let Some(fmt) = fmt {
                 img.change_format(fmt)?;
             }
-            img.change_method(method);
             let bytes = match typ {
                 ItemType::Sector => {
                     let mut cum: Vec<u8> = Vec::new();

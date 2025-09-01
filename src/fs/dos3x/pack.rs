@@ -118,7 +118,7 @@ impl Packing for Packer {
     }
     fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
         Self::verify(fimg)?;
-        fimg.desequence(dat);
+        fimg.desequence(dat,None);
         fimg.fs_type = vec![FileType::Text as u8];
         Ok(())
     }
@@ -135,7 +135,7 @@ impl Packing for Packer {
                 Some(v) => [file.to_bytes(),v.to_vec()].concat(),
                 None => file.to_bytes()
             };
-            fimg.desequence(&padded);
+            fimg.desequence(&padded,None);
             fimg.fs_type = vec![FileType::Binary as u8];
             return Ok(());
         }
@@ -150,7 +150,7 @@ impl Packing for Packer {
     fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
         Self::verify(fimg)?;
         let file = SequentialText::from_str(&txt)?;
-        fimg.desequence(&file.to_bytes());
+        fimg.desequence(&file.to_bytes(),None);
         fimg.fs_type = vec![FileType::Text as u8];
         Ok(())
     }
@@ -167,7 +167,7 @@ impl Packing for Packer {
             ItemType::IntegerTokens => FileType::Integer,
             _ => return Err(Box::new(Error::FileTypeMismatch))
         };
-        fimg.desequence(&padded);
+        fimg.desequence(&padded,None);
         fimg.fs_type = vec![fs_type as u8];
         Ok(())
     }
@@ -253,7 +253,7 @@ impl Packing for Packer {
         };
 
         let mut apple_single = AppleSingleFile::new();
-        apple_single.add_real_name(&fimg.full_path);
+        apple_single.add_real_name(&fimg.full_path.to_uppercase());
         apple_single.add_dos3x_info(fimg.get_ftype() as u8,fimg.get_aux() as u16);
         apple_single.add_data_fork(&dat);
         let mut ans = std::io::Cursor::new(Vec::new());

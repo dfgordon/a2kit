@@ -974,9 +974,9 @@ impl img::DiskImage for Td0 {
             true => img::FluxCode::FM,
             false => img::FluxCode::MFM
         };
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         for sec in &trk_obj.sectors {
-            addr_map.push([sec.header.cylinder,sec.header.head,sec.header.id,sec.header.sector_shift,sec.header.crc]);
+            addr_map.push(super::append_ibm_crc([sec.header.cylinder,sec.header.head,sec.header.id,sec.header.sector_shift],None));
         }
         let mut size_map: Vec<usize> = Vec::new();
         for sec in &trk_obj.sectors {
@@ -995,8 +995,8 @@ impl img::DiskImage for Td0 {
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
-            addr_type: "CHSFK".to_string(),
-            addr_mask: [255,255,255,255,255],
+            addr_type: "CHSFKK".to_string(),
+            addr_mask: [255,255,255,255,0,0],
             addr_map,
             size_map
         })

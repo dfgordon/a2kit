@@ -18,7 +18,6 @@
 			"sync_sec_end": [["1111111100",10]],
 			"sync_dat_end": [["1111111100",20]],
 			"capacity": [[256,16]],
-			"addr_extract_expr": ["a0","a1","a2"],
 			"swap_nibs": [["d5","9b"]]
 		},
 		{
@@ -37,7 +36,6 @@
 			"sync_sec_end": [["1111111100",10]],
 			"sync_dat_end": [["1111111100",20]],
 			"capacity": [[256,16]],
-			"addr_extract_expr": ["a0","a1","a2"],
 			"swap_nibs": [["d5","9b"]]
 		}
 	]

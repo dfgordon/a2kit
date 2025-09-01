@@ -382,7 +382,7 @@ impl Trks {
     }
     fn create_segment_and_trk(hood: SectorHood,fmt: &img::tracks::ZoneFormat,block_offset: usize,is_flux: bool) -> Result<(Vec<u8>,Trk),DYNERR> {
         fmt.check_flux_code(img::FluxCode::GCR)?;
-        let mut engine = TrackEngine::create(Method::Edit, false);
+        let mut engine = TrackEngine::create(Method::Fast, false);
         let mut cells = engine.format_track(hood, 0xffffff, fmt)?;
         if is_flux {
             cells.change_resolution(2);
@@ -659,7 +659,7 @@ impl Woz2 {
             trks: Trks::new(),
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Edit, false),
+            engine: TrackEngine::create(Method::Fast, false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -679,7 +679,7 @@ impl Woz2 {
             trks: Trks::blank(),
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Edit, false),
+            engine: TrackEngine::create(Method::Fast, false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -705,7 +705,7 @@ impl Woz2 {
             trks,
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Edit, false),
+            engine: TrackEngine::create(Method::Fast, false),
             cells: None,
             tmap_pos: usize::MAX,
         })
@@ -768,6 +768,7 @@ impl Woz2 {
         Ok(())
     }
     /// Goto track and extract FluxCells if necessary, returns [motor,head,width]
+    /// Blank track will return Ok, but will set cells to None.
     fn goto_track(&mut self,trk: Track) -> Result<[usize;3],DYNERR> {
         let tmap_idx = img::woz::get_tmap_index(trk,&self.kind)?;
         if self.tmap_pos != tmap_idx {
@@ -778,20 +779,27 @@ impl Woz2 {
             };
             self.write_back_track()?;
             self.tmap_pos = tmap_idx;
-            let (idx,is_flux) = self.try_motor(tmap_idx)?;
-            let [beg,end] = self.trks.rng(idx,self.track_bits_offset);
-            let bits_or_bytes = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
-            let mut new_cells = match is_flux {
-                true => {
-                    log::debug!("this is a flux track");
-                    FluxCells::from_woz_flux(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
+            match self.try_motor(tmap_idx) {
+                Ok((idx,is_flux)) => {
+                    let [beg,end] = self.trks.rng(idx,self.track_bits_offset);
+                    let bits_or_bytes = u32::from_le_bytes(self.trks.tracks[idx].bit_count) as usize;
+                    let mut new_cells = match is_flux {
+                        true => {
+                            log::debug!("this is a flux track");
+                            FluxCells::from_woz_flux(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
+                        },
+                        false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
+                    };
+                    if let Some(cells) = &self.cells {
+                        new_cells.sync_to_other_track(cells);
+                    }
+                    self.cells = Some(new_cells);
                 },
-                false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
-            };
-            if let Some(cells) = &self.cells {
-                new_cells.sync_to_other_track(cells);
+                Err(e) => match e.downcast_ref::<img::Error>() {
+                    Some(img::Error::BlankTrack) => self.cells = None,
+                    _ => return Err(e)
+                }
             }
-            self.cells = Some(new_cells);
         }
         img::woz::get_motor_pos(trk, &self.kind)
     }
@@ -854,7 +862,8 @@ impl img::DiskImage for Woz2 {
                     },
                     Err(e) => match e.downcast_ref::<img::Error>() {
                         Some(img::Error::BlankTrack) => motor += 2,
-                        _ => return Err(Box::new(img::Error::TrackAccess))
+                        Some(img::Error::UnexpectedZone) => motor += 2,
+                        _ => return Err(e)
                     }
                 }
             }
@@ -898,10 +907,13 @@ impl img::DiskImage for Woz2 {
         apple::write_block(self, addr, dat)
     }
     fn read_sector(&mut self,trk: Track,sec: Sector) -> Result<Vec<u8>,DYNERR> {
+        let [motor,head,width] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let [motor,head,width] = self.goto_track(trk)?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?;
         let (cyl,head) = (u8::try_from((motor+width/4)/width)?,u8::try_from(head)?);
@@ -913,10 +925,13 @@ impl img::DiskImage for Woz2 {
         Ok(ans)
     }
     fn write_sector(&mut self,trk: Track,sec: Sector,dat: &[u8]) -> Result<(),DYNERR> {
+        let [motor,head,width] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         if self.fmt.is_none() {
             return Err(Box::new(img::Error::UnknownDiskKind));
         }
-        let [motor,head,width] = self.goto_track(trk)?;
         let fmt = self.fmt.as_ref().unwrap(); // guarded above 
         let zfmt = fmt.get_zone_fmt(motor,head)?.clone();
         let (cyl,head) = (u8::try_from((motor+width/4)/width)?,u8::try_from(head)?);
@@ -1027,15 +1042,18 @@ impl img::DiskImage for Woz2 {
     }
     fn get_track_solution(&mut self,trk: Track) -> Result<img::TrackSolution,DYNERR> {
         let [motor,head,width] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::debug!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
                 let (addr_type,addr_mask) = match zfmt.addr_nibs() {
-                    img::FieldCode::WOZ((4,4)) => ("VTSK",[255,255,255,255,0]),
-                    img::FieldCode::WOZ((6,2)) => ("CSHFK",[255;5]),
-                    _ => ("???",[0;5])
+                    img::FieldCode::WOZ((4,4)) => ("VTSK",[255,255,255,255,0,0]),
+                    img::FieldCode::WOZ((6,2)) => ("CSHFK",[255,255,255,255,255,0]),
+                    _ => ("???",[0;6])
                 };
                 return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,addr_type,addr_mask));
             }
@@ -1048,7 +1066,7 @@ impl img::DiskImage for Woz2 {
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
                 if addr_map.len()==13 {
-                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0]));
+                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
                 }
             }
             log::debug!("try DOS 3.3 format");
@@ -1057,7 +1075,7 @@ impl img::DiskImage for Woz2 {
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
                 if addr_map.len()==16 {
-                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0]));
+                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
                 }
             }
             return Err(Box::new(img::Error::UnknownFormat));
@@ -1070,7 +1088,7 @@ impl img::DiskImage for Woz2 {
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"CSHFK",[255;5]));
+                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"CSHFK",[255,255,255,255,255,0]));
             }
             return Err(Box::new(img::Error::UnknownFormat));
         }
@@ -1108,8 +1126,17 @@ impl img::DiskImage for Woz2 {
         }
         img::geometry_json(pkg,track_sols,indent)
     }
+    fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
+        match &self.fmt {
+            Some(f) => f.to_json(indent),
+            None => Err(Box::new(super::Error::UnknownFormat))
+        }
+    }
     fn get_track_nibbles(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR> {
         let [motor,head,_] = self.goto_track(trk)?;
+        if self.cells.is_none() {
+            return Err(Box::new(img::Error::BlankTrack));
+        }
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         Ok(self.engine.to_nibbles(self.cells.as_mut().unwrap(), zfmt))
     }

@@ -22,18 +22,17 @@
 //! 
 //! ### Quarter Tracks
 //! 
-//! The `pro` (proprietary) variations on various `DiskImage` trait
-//! functions allow the caller to request operations on quarter tracks.
-//! Some also require that the `img::SectorKey` structure be
-//! passed in to account for proprietary soft-sectoring schemes.
+//! In terms of the CLI, the user can request quarter tracks using quarter-decimals.
+//! The `DiskImage` trait uses instead the `img::Track` abstraction, which allows
+//! the stepper-motor position to be explicitly specified.
 //! 
 //! In this situation the addressing of a track can be confusing.
-//! There is an enumeration `img::TrackKey` that is used to transform
-//! between the various schemes, which are given as follows:
+//! The various schemes are given as follows:
 //! 
 //! disk | track | cyl,head | motor,head | TMAP index
 //! -----|-------|----|------|---------|-----------
-//! 5.25 | 0..35 | (0..35, 0..1) | (0..160, 0..1) | 0..160
+//! 5.25 | 0..35 | (0..35, 0..1) | (0..140, 0..1) | 0..140
+//! 5.25 | 0..40 | (0..40, 0..1) | (0..160, 0..1) | 0..160
 //! 3.5-400K | 0..80 | (0..80, 0..1) | (0..80, 0..1) | 0..80
 //! 3.5-800K | 0..160 | (0..80, 0..2) | (0..80, 0..2) | 0..160
 //! 
@@ -46,7 +45,6 @@
 //! ### Fake Bits
 //! 
 //! Fake bits will be generated if the `TrackEngine` method is set to emulate.
-//! The WOZ 2.1 protocol is respected.
 //! 
 //! ### Drive Motor and Soft Switches
 //! 
@@ -59,7 +57,7 @@
 //! 
 //! For writing, the LSS is never used, bits and flux transitions are positioned "by hand."
 //! For reading, the LSS is emulated down to the cycle level if `Method==Emulate`.
-//! If `Method==Edit`, reading is carried out using a simplified model.
+//! If `Method==Fast`, reading is carried out using a simplified model.
 //! 
 //! ### Flux tracks
 //! 
@@ -161,7 +159,7 @@ pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
 		next = 0;
 	}
 	if id==0 && size==0 {
-		log::debug!("expected chunk, got nulls");
+		log::trace!("encountered nulls trailing previous chunk");
 	} else {
 		log::debug!("found chunk id {:08X}/{}, at offset {}, next offset {}",id,String::from_utf8_lossy(&u32::to_le_bytes(id)),ptr,next);
 	}
@@ -177,7 +175,7 @@ pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
 	}
 }
 
-/// Check that `trk` is valid for the given `kind`
+/// Check that `trk` is valid for the given `kind`, does not examine the medium.
 fn verify_track_key(trk: Track,kind: &DiskKind) -> STDRESULT {
 	let trouble = match *kind {
 		DiskKind::D525(_) => {

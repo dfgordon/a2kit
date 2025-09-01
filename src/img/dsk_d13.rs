@@ -1,4 +1,4 @@
-//! ## Support for 13 sector disk images (D13,DSK)
+//! ## Support for Apple 13 sector disk images (D13,DSK)
 //! 
 //! DSK images are a simple sequential dump of the already-decoded sector data.
 //! If there are 13 sectors in physical order, we have a D13 variant.
@@ -130,9 +130,11 @@ impl img::DiskImage for D13 {
     }
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
         let [c,h] = self.get_rz(trk)?;
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         for i in 0..13 {
-            addr_map.push([254,c.try_into()?,crate::bios::skew::DOS32_PHYSICAL[i].try_into()?,0,0]);
+            let mut addr = [254,c.try_into()?,crate::bios::skew::DOS32_PHYSICAL[i].try_into()?,0,0,0];
+            addr[3] = addr[0] ^ addr[1] ^ addr[2];
+            addr_map.push(addr);
         }
         return Ok(img::TrackSolution {
             cylinder: c,
@@ -142,8 +144,8 @@ impl img::DiskImage for D13 {
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((5,3)),
-            addr_type: "VTS".to_string(),
-            addr_mask: [0,0,255,0,0],
+            addr_type: "VTSK".to_string(),
+            addr_mask: [0,0,255,0,0,0],
             addr_map,
             size_map: vec![256;13]
         });

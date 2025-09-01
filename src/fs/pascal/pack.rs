@@ -136,7 +136,7 @@ impl Packing for Packer {
     }
     fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
         Self::verify(fimg)?;
-        fimg.desequence(dat);
+        fimg.desequence(dat,None);
         fimg.fs_type = vec![FileType::Text as u8,0];
         fimg.eof = u32::to_le_bytes(dat.len() as u32).to_vec();
         Ok(())
@@ -159,7 +159,7 @@ impl Packing for Packer {
             Some(v) => [bin,v].concat(),
             None => bin.to_vec()
         };
-        fimg.desequence(&padded);
+        fimg.desequence(&padded,None);
         fimg.fs_type = vec![FileType::Data as u8,0];
         Ok(())
     }
@@ -179,7 +179,7 @@ impl Packing for Packer {
     fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
         Self::verify(fimg)?;
         let dat = SequentialText::from_str(txt)?.to_bytes();
-        fimg.desequence(&dat);
+        fimg.desequence(&dat,None);
         fimg.fs_type = vec![FileType::Text as u8,0];
         // The encoder is keeping the trailing zeros to end of page
         let mut bytes_remaining: u32 = 0;

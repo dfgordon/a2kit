@@ -181,7 +181,7 @@ impl Packing for Packer {
     
     fn pack_raw(&self,fimg: &mut FileImage,dat: &[u8]) -> STDRESULT {
         Self::verify(fimg)?;
-        fimg.desequence(dat);
+        fimg.desequence(dat,None);
         fimg.fs_type = vec![FileType::Text as u8];
         fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         Ok(())
@@ -204,7 +204,7 @@ impl Packing for Packer {
             None => dat.to_vec()
         };
         if let Some(addr) = load_addr {
-            fimg.desequence(&padded);
+            fimg.desequence(&padded,None);
             fimg.fs_type = vec![FileType::Binary as u8];
             fimg.access = vec![STD_ACCESS | Access::Backup as u8];
             fimg.aux = u16::to_le_bytes(u16::try_from(addr)?).to_vec();
@@ -221,7 +221,7 @@ impl Packing for Packer {
     fn pack_txt(&self,fimg: &mut FileImage,txt: &str) -> STDRESULT {
         Self::verify(fimg)?;
         let file = SequentialText::from_str(txt)?;
-        fimg.desequence(&file.to_bytes());
+        fimg.desequence(&file.to_bytes(),None);
         fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         fimg.fs_type = vec![FileType::Text as u8];
         Ok(())
@@ -240,7 +240,7 @@ impl Packing for Packer {
             Some(v) => [tok,v].concat(),
             None => tok.to_vec()
         };
-        fimg.desequence(&padded);
+        fimg.desequence(&padded,None);
         fimg.access = vec![STD_ACCESS | Access::Backup as u8];
         match lang {
             ItemType::ApplesoftTokens => {
@@ -359,7 +359,11 @@ impl Packing for Packer {
         };
 
         let mut apple_single = AppleSingleFile::new();
-        apple_single.add_real_name(&fimg.full_path);
+        if !is_path_valid(&fimg.full_path) {
+            log::error!("attempt to load invalid ProDOS path into AppleSingle");
+            return Err(Box::new(Error::Syntax));
+        }
+        apple_single.add_real_name(&fimg.full_path.to_uppercase());
         apple_single.add_dates(created,modified,None,None);
         apple_single.add_prodos_info(fimg.get_ftype() as u16,fimg.get_aux() as u32, access );
         apple_single.add_data_fork(&dat);

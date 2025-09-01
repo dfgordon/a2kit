@@ -138,6 +138,12 @@ impl State {
             fake_bit_pool: bit_vec::BitVec::from_bytes(&FAKE_BITS)
         }
     }
+    pub fn disable_fake_bits(&mut self) {
+        self.fake_bit_pool = bit_vec::BitVec::from_bytes(&vec![0;32]);
+    }
+    pub fn enable_fake_bits(&mut self) {
+        self.fake_bit_pool = bit_vec::BitVec::from_bytes(&FAKE_BITS);
+    }
     /// Check for a pulse while advancing through one LSS cycle.
     fn mc3470_pulse(&mut self,cells: &mut FluxCells) -> u8 {
         let mut pulse = false;        

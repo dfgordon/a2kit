@@ -3,6 +3,7 @@ use std::io::Read;
 use std::str::FromStr;
 use super::{ItemType, CommandError};
 use crate::fs::FileImage;
+use crate::img::tracks::Method;
 use crate::STDRESULT;
 
 const RANGED_ACCESS: &str =
@@ -67,7 +68,8 @@ pub fn pack(cmd: &clap::ArgMatches) -> STDRESULT {
         _ => return Err(Box::new(CommandError::UnknownItemType))
     };
     pack_primitive(&mut fimg, &dat, load_addr, typ)?;
-    println!("{}",fimg.to_json(cmd.get_one::<u16>("indent").copied()));
+    print!("{}",fimg.to_json(cmd.get_one::<u16>("indent").copied()));
+    eprintln!();
     Ok(())
 }
 
@@ -107,6 +109,7 @@ pub fn put(cmd: &clap::ArgMatches) -> STDRESULT {
                 _ => None
             };
             let mut disk = crate::create_fs_from_file(img_path,fmt.as_ref())?;
+            disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
 
             // Handle block ranges
             if typ == ItemType::Block {
@@ -187,6 +190,7 @@ pub fn mput(cmd: &clap::ArgMatches) -> STDRESULT {
     let fmt = super::get_fmt(cmd)?;
     let json_list = super::get_json_list_from_stdin()?;
     let mut disk = crate::create_fs_from_file(&path_to_img,fmt.as_ref())?;
+    disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
 
     for fimg_value in json_list.members() {
         let mut fimg = FileImage::from_json(&fimg_value.to_string())?;

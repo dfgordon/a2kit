@@ -2,7 +2,8 @@
 //! 
 //! Disk images are represented by objects implementing the `DiskImage` trait.
 //! The object type is usually named for the disk image type that it handles, e.g., `Woz2`.
-//! This object is perhaps best thought of as a disk plus all the hardware that runs it.
+//! This object is perhaps best thought of as a disk plus all the hardware and some of the
+//! low level software that runs it.
 //! 
 //! ## Basic Functions
 //! 
@@ -11,7 +12,8 @@
 //! Creating and formatting disks is left to specific implementations.
 //! An important design element is that a disk image can refuse a request as out of scope.
 //! As an example, PO images will only handle ProDOS blocks, since the original disk
-//! geometry cannot be known (and may not even exist).
+//! geometry cannot be known (and may not even exist, although in other environments
+//! it is appropriate to guess one).
 //! 
 //! ## Relation to File Systems
 //! 
@@ -115,7 +117,9 @@ pub enum Error {
     #[error("could not find bit pattern")]
     BitPatternNotFound,
     #[error("nibble type appeared in wrong context")]
-    NibbleType
+    NibbleType,
+    #[error("track lies outside expected zones")]
+    UnexpectedZone
 }
 
 /// Encapsulates 3 ways a track might be idenfified
@@ -192,9 +196,9 @@ pub struct TrackSolution {
     /// string describing address (like VTS or CHSF)
     addr_type: String,
     /// mask out bits we are ignorant of due to image limitations
-    addr_mask: [u8;5],
+    addr_mask: [u8;6],
     /// address of every sector
-    addr_map: Vec<[u8;5]>,
+    addr_map: Vec<[u8;6]>,
     size_map: Vec<usize>
 }
 
@@ -495,14 +499,19 @@ pub trait DiskImage {
         };
         Ok(ans)
     }
-    /// Get the geometric [cyl,head,sec].  Default truncates fractional tracks in a reasonable
-    /// way if there are either 1 or 4 steps per track.
-    /// Assumes addr[2] is the sector if an explicit address is given.
+    /// Get the geometric [cyl,head,sec].
+    /// Default truncates fractional tracks in a reasonable way if there are either 1 or 4 steps per track.
+    /// If an explicit address is given, the sector will be taken from the most likely address byte.
     fn get_rzq(&self,trk: Track,sec: Sector) -> Result<[usize;3],DYNERR> {
         let [c,h] = self.get_rz(trk)?;
         let s = match sec {
             Sector::Num(s) => s,
-            Sector::Addr((_,addr)) => addr[2] as usize
+            Sector::Addr((_,addr)) => {
+                match self.kind() {
+                    names::A2_400_KIND | names::A2_800_KIND => addr[1] as usize,
+                    _ => addr[2] as usize
+                }
+            }
         };
         Ok([c,h,s])
     }
@@ -582,6 +591,10 @@ pub trait DiskImage {
             }
         }
         geometry_json(pkg,track_sols,indent)
+    }
+    /// Write the abstract disk format into a JSON string
+    fn export_format(&self,_indent: Option<u16>) -> Result<String,DYNERR> {
+        Err(Box::new(Error::UnknownFormat))
     }
 }
 
@@ -681,4 +694,26 @@ fn highest_bit(mut val: usize) -> u8 {
         val = val >> 1;
     }
     ans
+}
+
+/// Calculate the IBM CRC bytes given the sector address and optionally custom sync bytes and IDAM.
+/// The full address including CRC is returned.
+pub fn append_ibm_crc(addr: [u8;4],maybe_sync: Option<[u8;4]>) -> [u8;6]
+{
+    let mut buf = vec![];
+    match maybe_sync {
+        Some(sync) => buf.append(&mut sync.to_vec()),
+        None => buf.append(&mut vec![0xa1,0xa1,0xa1,0xfe])
+    };
+    buf.append(&mut addr.to_vec());
+    let buf = [[0xa1,0xa1,0xa1,0xfe],[addr[0],addr[1],addr[2],addr[3]]].concat();
+    let mut crc: u16 = 0xffff;
+    for i in 0..buf.len() {
+        crc ^= (buf[i] as u16) << 8;
+        for _bit in 0..8 {
+            crc = (crc << 1) ^ match crc & 0x8000 { 0 => 0, _ => 0x1021 };
+        }
+    }
+    let be = u16::to_be_bytes(crc);
+    [addr[0],addr[1],addr[2],addr[3],be[0],be[1]]
 }

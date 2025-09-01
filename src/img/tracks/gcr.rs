@@ -35,14 +35,23 @@ pub struct TrackEngine {
 impl TrackEngine {
     /// create a new track engine, any machine state is lost
     pub fn create(method: Method,nib_filter: bool) -> Self {
+        let mut woz_state = woz_state_machine::State::new();
+        match method {
+            Method::Emulate => woz_state.enable_fake_bits(),
+            _ => woz_state.disable_fake_bits()
+        }
         Self {
             nib_filter,
             method,
-            woz_state: woz_state_machine::State::new(),
+            woz_state
         }
     }
     /// change the method used process the data stream
     pub fn change_method(&mut self,method: Method) {
+        match method {
+            Method::Emulate => self.woz_state.enable_fake_bits(),
+            _ => self.woz_state.disable_fake_bits()
+        }
         self.method = method;
     }
     fn save_state(&self, cells: &FluxCells) -> SaveState {
@@ -86,7 +95,7 @@ impl TrackEngine {
         let buf_time = 19*8; // time spent buffering and re-entering `wait` loop
         let flux = cells.bshift > cells.fshift;
         match (flux,&self.method) {
-            (_,Method::Edit) | (false,Method::Auto) => {
+            (_,Method::Fast) | (false,Method::Auto) => {
                 let mut code_count = 0;
                 let mut tick_count = 0;
                 let mut reps = 0;
@@ -597,10 +606,10 @@ impl TrackEngine {
         return ans;
     }
     /// return vectors of sector addresses and sizes in geometric order for user consumption
-    pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;5]>,Vec<usize>),DYNERR> {
+    pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;6]>,Vec<usize>),DYNERR> {
         let mut ptr_list: Vec<usize> = Vec::new();
         cells.ptr = 0;
-        let mut addr_map: Vec<[u8;5]> = Vec::new();
+        let mut addr_map: Vec<[u8;6]> = Vec::new();
         let mut size_map: Vec<usize> = Vec::new();
         let (patt,mask) = fmt.get_marker(0);
         for _try in 0..32 {
@@ -611,11 +620,11 @@ impl TrackEngine {
                     return Ok((addr_map,size_map))
                 }
                 ptr_list.push(cells.ptr);
-                while addr.len() < 5 {
+                while addr.len() < 6 {
                     addr.push(0);
                 }
                 let capacity = self.get_sector_capacity(cells, fmt)?;
-                addr_map.push([addr[0],addr[1],addr[2],addr[3],addr[4]]);
+                addr_map.push([addr[0],addr[1],addr[2],addr[3],addr[4],addr[5]]);
                 size_map.push(capacity);
             } else {
                 return Err(Box::new(Error::BitPatternNotFound));

@@ -545,6 +545,9 @@ impl Disk {
         self.read_block(buf,index_ptr as usize,0)?;
         let index_block = buf.to_vec();
         for idx in 0..256 {
+            if *eof >= entry.eof() {
+                break;
+            }
             let ptr = u16::from_le_bytes([index_block[idx],index_block[idx+256]]);
             let mut bytes = 512;
             if *eof + bytes > entry.eof() {

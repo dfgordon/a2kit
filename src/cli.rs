@@ -5,13 +5,14 @@ e.g., `1..4,,7..10` would mean 1,2,3,7,8,9";
 const IN_HELP: &str = "if disk image is piped, omit `--dimg` option";
 const WOZ_HELP: &str = "for WOZ you can use quarter-decimals for cylinder numbers";
 const F_LONG_HELP: &str = "interpretation depends on type, for files this is
-the usual notion of a path, for disk regions it is a numerical address,
-for metadata it is a key path";
+the usual notion of a path, for disk regions it is a numerical address (e.g. <cyl>,<head>,<sec>),
+for metadata it is a key path (e.g. /woz2/info)";
 const T_LONG_HELP: &str = "Types are broadly separated into file, disk region, and metadata categories.
 The `any` type is a generalized representation of a file that works with all supported file systems.
 The `auto` type will try to heuristically select a type using file system hints and content.";
 const PRO_LONG_HELP: &str = "Use the proprietary track format that is described in the file at PATH.
-The file should contain a JSON string describing a GCR, FM, or MFM soft sectoring scheme.";
+The file should contain a JSON string describing a GCR soft sectoring scheme.
+To get an example of this file use `a2kit geometry --abstract ...` on a standard WOZ";
 
 fn file_arg(help: &'static str, req: bool, shell_hint: bool) -> Arg {
     let ans = Arg::new("file").short('f').long("file").value_name("PATH").required(req).help(help);
@@ -61,7 +62,7 @@ fn dimg_arg(req: bool) -> Arg {
 fn method_arg() -> Arg {
     Arg::new("method").long("method").help("select decoding methodology")
         .value_name("METHOD")
-        .value_parser(["auto","edit","analyze","emulate"])
+        .value_parser(["auto","fast","analyze","emulate"])
         .required(false)
         .default_value("auto")
 }
@@ -176,6 +177,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(false))
             .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
             .arg(pro_arg())
+            .arg(method_arg())
             .arg(Arg::new("explicit").long("explicit").help("supply an explicit hex address").value_name("HEX").required(false))
             .about("read from stdin, write to local or disk image")
             .after_help([RNG_HELP,"\n\n",WOZ_HELP].concat())
@@ -185,6 +187,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(true))
             .arg(indent_arg())
             .arg(pro_arg())
+            .arg(method_arg())
             .about("read list of paths from stdin, get files from disk image, write file images to stdout")
             .after_help("this can take `a2kit glob` as a piped input")
     );
@@ -193,6 +196,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(true))
             .arg(file_arg("override target paths",false,false))
             .arg(pro_arg())
+            .arg(method_arg())
             .about("read list of file images from stdin, restore files to a disk image")
             .after_help("for CP/M the user number can be overridden using `-f <num>:`")
     );
@@ -225,6 +229,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
                 .value_name("LENGTH").required(false)
             )
             .arg(console_arg())
+            .arg(indent_arg())
             .about("unpack data from a file image")
     );
     main_cmd = main_cmd.subcommand(
@@ -273,6 +278,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(file_arg("path inside disk image of new directory",true,false))
             .arg(dimg_arg(true))
             .arg(pro_arg())
+            .arg(method_arg())
             .about("create a new directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
@@ -280,6 +286,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(file_arg("path inside disk image to delete",true,false))
             .arg(dimg_arg(true))
             .arg(pro_arg())
+            .arg(method_arg())
             .visible_alias("del")
             .visible_alias("era")
             .about("delete a file or directory inside a disk image"),
@@ -302,6 +309,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .group(ArgGroup::new("deleting").args(["delete","no-delete"]).required(false))
             .group(ArgGroup::new("renaming").args(["rename","no-rename"]).required(false))
             .arg(pro_arg())
+            .arg(method_arg())
             .about("change file system permissions"),
     );
     main_cmd = main_cmd.subcommand(
@@ -310,6 +318,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("name").long("name").short('n').value_name("NAME").help("new name").required(true))
             .arg(dimg_arg(true))
             .arg(pro_arg())
+            .arg(method_arg())
             .about("rename a file or directory inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
@@ -319,6 +328,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("aux").long("aux").short('a').value_name("AUX").help("file system auxiliary metadata").required(true))
             .arg(dimg_arg(true))
             .arg(pro_arg())
+            .arg(method_arg())
             .about("change file type inside a disk image"),
     );
     main_cmd = main_cmd.subcommand(
@@ -379,6 +389,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("generic").long("generic").help("use generic output format").action(ArgAction::SetTrue))
             .arg(dimg_arg(false))
             .arg(pro_arg())
+            .arg(method_arg())
             .visible_alias("cat")
             .visible_alias("dir")
             .visible_alias("ls")
@@ -391,6 +402,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(Arg::new("meta").long("meta").help("include metadata").action(ArgAction::SetTrue))
             .arg(indent_arg())
             .arg(pro_arg())
+            .arg(method_arg())
             .about("write directory tree as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -399,6 +411,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(false))
             .arg(indent_arg())
             .arg(pro_arg())
+            .arg(method_arg())
             .about("write FS statistics as a JSON string to stdout")
             .after_help(IN_HELP),
     );
@@ -407,7 +420,9 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             .arg(dimg_arg(false))
             .arg(indent_arg())
             .arg(pro_arg())
-            .about("write disk geometry as a JSON string to stdout")
+            .arg(method_arg())
+            .arg(Arg::new("abstract").long("abstract").help("use abstract representation if available").action(ArgAction::SetTrue))
+            .about("write disk format information as a JSON string to stdout")
             .after_help(IN_HELP),
     );
     main_cmd = main_cmd.subcommand(
@@ -482,6 +497,7 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
             )
             .arg(indent_arg())
             .arg(pro_arg())
+            .arg(method_arg())
             .about("write JSON list of matching paths to stdout")
             .after_help("the pattern may need to be quoted depending on shell\n\n".to_string() + IN_HELP)
     );
