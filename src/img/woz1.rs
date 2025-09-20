@@ -171,7 +171,7 @@ impl Trk {
     /// `vol` and `track` are only used for the address field
     fn create(hood: SectorHood,fmt: &img::tracks::ZoneFormat) -> Result<Self,DYNERR> {
         fmt.check_flux_code(img::FluxCode::GCR)?;
-        let mut engine = TrackEngine::create(Method::Fast,false);
+        let mut engine = TrackEngine::create(Method::Auto,false);
         let cells = engine.format_track(hood, TRACK_BYTE_CAPACITY, fmt)?;
         let (bits,_) = cells.to_woz_buf(Some(TRACK_BYTE_CAPACITY),0);
         let bytes_used = u16::to_le_bytes(bits.len() as u16);
@@ -269,7 +269,7 @@ impl Woz1 {
             tmap: TMap::new(),
             trks: Trks::new(),
             meta: None,
-            engine: TrackEngine::create(Method::Fast,false),
+            engine: TrackEngine::create(Method::Auto,false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -287,7 +287,7 @@ impl Woz1 {
             tmap: TMap::blank(),
             trks: Trks::blank(),
             meta: None,
-            engine: TrackEngine::create(Method::Fast,false),
+            engine: TrackEngine::create(Method::Auto,false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -310,7 +310,7 @@ impl Woz1 {
             tmap,
             trks,
             meta: None,
-            engine: TrackEngine::create(Method::Fast,false),
+            engine: TrackEngine::create(Method::Auto,false),
             cells: None,
             tmap_pos: usize::MAX,
         })
@@ -413,18 +413,13 @@ impl img::DiskImage for Woz1 {
     }
     fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
         let mut ans = 0;
-        let mut motor = 0;
-        while motor < 160 {
+        let motor_stops = img::woz::find_motor_stops(&self.tmap.map, None);
+        for motor in motor_stops {
             match self.get_track_solution(Track::Motor((motor,0))) {
-                Ok(sol) => {
-                    ans += sol.size_map.iter().sum::<usize>();
-                    motor += 4;
-                },
-                Err(e) => match e.downcast_ref::<img::Error>() {
-                    Some(img::Error::BlankTrack) => motor += 2,
-                    Some(img::Error::UnexpectedZone) => motor += 2,
-                    _ => return Err(e)
-                }
+                Ok(img::TrackSolution::Solved(sol)) => ans += sol.size_map.iter().sum::<usize>(),
+                Ok(img::TrackSolution::Blank) => {},
+                Ok(img::TrackSolution::Unsolved) => return Err(Box::new(img::Error::UnknownFormat)),
+                Err(e) => return Err(e)
             }
         }
         Ok(ans)
@@ -510,10 +505,18 @@ impl img::DiskImage for Woz1 {
         ans.kind = img::names::A2_DOS33_KIND;
         ans.sanity_check()?;
         for baseline_track in [0,3] {
-            log::info!("baseline scan of track {}",baseline_track);
-            if let Ok(_) = ans.get_track_solution(Track::Num(baseline_track)) {
-                log::info!("setting disk kind to {}",ans.kind);
-                return Ok(ans);
+            for baseline_method in [Method::Fast,Method::Emulate] {
+                log::info!("baseline scan of track {}, method {}",baseline_track,baseline_method);
+                ans.change_method(baseline_method);
+                match ans.get_track_solution(Track::Num(baseline_track)) {
+                    Ok(img::TrackSolution::Solved(_)) => {
+                        log::info!("baseline solution is {}",ans.kind);
+                        return Ok(ans);
+                    },
+                    Ok(img::TrackSolution::Unsolved) => log::debug!("could not solve"),
+                    Ok(img::TrackSolution::Blank) => log::debug!("blank track"),
+                    Err(e) => log::warn!("{}",e)
+                }
             }
         }
         log::warn!("no baseline, continuing with {}",ans.kind);
@@ -549,57 +552,50 @@ impl img::DiskImage for Woz1 {
         Ok(())
     }
     fn get_track_solution(&mut self,trk: Track) -> Result<img::TrackSolution,DYNERR> {
-        let [motor,head,width] = self.goto_track(trk)?;
+        let [motor,head,_] = self.goto_track(trk)?;
         if self.cells.is_none() {
-            return Err(Box::new(img::Error::BlankTrack));
+            return Ok(img::TrackSolution::Blank);
         }
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
         // If the given format fails try some standard ones
-        log::trace!("try DOS 3.2 format");
+        log::trace!("try standard DOS 13-sector");
         self.kind = img::names::A2_DOS32_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
             if addr_map.len()==13 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
-        log::trace!("try DOS 3.3 format");
+        log::trace!("try standard DOS 16-sector");
         self.kind = img::names::A2_DOS33_KIND;
         self.fmt = img::woz::kind_to_format(&self.kind);
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
             if addr_map.len()==16 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
-        return Err(Box::new(img::Error::UnknownFormat));
+        return Ok(img::TrackSolution::Unsolved);
     }
     fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
         let pkg = img::package_string(&self.kind());
         let mut track_sols = Vec::new();
-        // simple strategy, advance by full tracks if we find something,
-        // advance by half tracks if not.
-        let mut motor = 0;
-        while motor < 160 {
+        let motor_stops = img::woz::find_motor_stops(&self.tmap.map, None);
+        for motor in motor_stops {
             match self.get_track_solution(Track::Motor((motor,0))) {
-                Ok(sol) => {
-                    track_sols.push(sol);
-                    motor += 4;
-                },
-                _ => {
-                    motor += 2;
-                }
+                Ok(sol) => track_sols.push((motor as f64 / 4.0, 0 as usize, sol)),
+                Err(e) => log::warn!("{}",e)
             }
         }
-        img::geometry_json(pkg,track_sols,indent)
+        img::geometry_json(pkg,track_sols,35,1,4,indent)
     }
     fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
         match &self.fmt {

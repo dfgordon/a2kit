@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.0] - 2025-09-01
+## [4.0.0] - 2025-09-20
 
 ### Fixes
 
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - will return fractional cylinder numbers if necessary
     - distinguishes nibble codes used in address vs. data fields
     - returns better sector addresses and description thereof
+    - includes a summary object
     - optionally return abstract format information
 * CLI `get` can be coerced into formatting output for the console
 * Merlin improvements
@@ -62,8 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - arguments to many functions use abstract `Track` and `Sector` in place of CHS indices
 * changes to `DiskFS` trait
     - permissions are controlled by `set_attrib`, while `lock`, `unlock`, `protect`, and `unprotect` are eliminated
-* changes to public interfaces: `escaped_ascii_to_bytes`, `Packing::get_load_address`, `Woz1::create`, `Woz2::create`, `merlin::settings`
-* changes to enumerations: various error enumerations
+* changed interfaces: `escaped_ascii_to_bytes`, `Packing::get_load_address`, `Woz1::create`, `Woz2::create`
+* changed structures: `merlin::settings::Flag`, `img::TrackSolution`
+* changed enumerations: various error enumerations
 * public became private: `lang::linenum`
 * dependencies: language parsers use tree-sitter 0.25, lsp-types 0.97 URI type is different
 

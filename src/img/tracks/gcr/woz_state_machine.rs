@@ -162,15 +162,19 @@ impl State {
         cells.fwd(4);
         pulse as u8
     }
-    pub fn get_seq(&self) -> usize {
-        self.seq
-    }
+    // pub fn get_seq(&self) -> usize {
+    //     self.seq
+    // }
     pub fn get_latch(&self) -> u8 {
         self.latch
     }
-    pub fn restore(&mut self,seq: usize,latch: u8) {
-        self.seq = seq;
-        self.latch = latch;
+    pub fn get_critical_state(&self) -> (usize,u64,u8) {
+        (self.seq,self.last_pulse,self.latch)
+    }
+    pub fn restore_critical_state(&mut self,crit: (usize,u64,u8)) {
+        self.seq = crit.0;
+        self.last_pulse = crit.1;
+        self.latch = crit.2;
     }
     pub fn start_read(&mut self) {
         self.q6 = false;

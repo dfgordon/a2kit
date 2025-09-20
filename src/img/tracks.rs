@@ -54,6 +54,34 @@ fn eval_u8(expr: &str,ctx: &std::collections::HashMap<String,String>) -> Result<
     }
 }
 
+/// For flux tracks we want to estimate the typical bit-cell duration so we can
+/// calibrate the disk speed if necessary.  This assumes the answer is < 64 ticks.
+/// The input buffer is a flux buffer in WOZ-2 format.
+/// Might return None if the track is something pathological.
+fn estimate_bit_cell_duration(flux_timings: &[u8]) -> Option<usize> {
+    // This is the fraction of nearest-neighbor pulses that are separated by a bit cell.
+    // The algorithm is robust against an understimate, but not against an overestimate.
+    let min_frac = [1,5];
+    let mut histogram: Vec<usize> = vec![0;64];
+    let mut last = 0;
+    let mut total_counts = 0;
+    for dt in flux_timings {
+        if *dt < 64 && last != 255 {
+            histogram[*dt as usize] += 1;
+            total_counts += 1;
+        }
+        last = *dt;
+    }
+    let mut running_counts = 0;
+    for i in 0..64 {
+        running_counts += histogram[i];
+        if running_counts*min_frac[1] > total_counts*min_frac[0] {
+            return Some(i);
+        }
+    }
+    return None;
+}
+
 #[derive(Clone,PartialEq)]
 pub enum Method {
     /// select based on track
@@ -75,6 +103,17 @@ impl FromStr for Method {
             "fast" => Ok(Method::Fast),
             "emulate" => Ok(Method::Emulate),
             _ => Err(super::Error::MetadataMismatch)
+        }
+    }
+}
+
+impl fmt::Display for Method {
+    fn fmt(&self,f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Auto => write!(f,"auto"),
+            Self::Analyze => write!(f,"analyze"),
+            Self::Emulate => write!(f,"emulate"),
+            Self::Fast => write!(f,"fast"),
         }
     }
 }
@@ -104,6 +143,8 @@ pub struct FluxCells {
     bshift: usize,
     /// `ptr & bmask == 0` indicates start of bit cell
     bmask: usize,
+    /// ratio that was used to recalibrate timing
+    recal: [usize;2]
 }
 
 impl FluxCells {
@@ -121,10 +162,11 @@ impl FluxCells {
             fmask: (1 << 5) - 1,
             bshift: 5,
             bmask: (1 << 5) - 1,
+            recal: [1,1]
         }
     }
     /// Create a WOZ fluxstream with 500 or 250 nanosecond flux cells
-    fn new_woz_flux(ptr: usize,stream: BitVec,time: u64,double_speed: bool) -> Self {
+    fn new_woz_flux(ptr: usize,stream: BitVec,time: u64,double_speed: bool,recal: [usize;2]) -> Self {
         let shft = double_speed as usize;
         let revolution = stream.len() << 2;
         Self {
@@ -137,6 +179,7 @@ impl FluxCells {
             fmask: (1 << 2) - 1,
             bshift: 5,
             bmask: (1 << 5) - 1,
+            recal
         }
     }
     /// Create cells from a track buffer in the form of a nibble stream or bit stream, assuming 4 microsecond bit cells
@@ -148,6 +191,12 @@ impl FluxCells {
     /// Create cells from a WOZ flux track buffer, the flux cells will
     /// be set to 500/250 ns.  Any padding in `buf` is ignored.
     pub fn from_woz_flux(byte_count: usize,buf: &[u8],time: u64,double_speed: bool) -> Self {
+        let mut recal = [1,1];
+        if let Some(median) = estimate_bit_cell_duration(&buf[0..byte_count]) {
+            log::trace!("bit cell is {}",median);
+            recal[0] = match double_speed { true => 0x10, false => 0x20};
+            recal[1] = median;
+        }
         // The flux cell is chosen to align to the state machine cycle, 500/250 ns for 5.25/3.5 inch disks.
         // The WOZ ticks we are reading are always 125 ns regardless of disk kind.
         let ticks_per_cell = 4 >> double_speed as usize;
@@ -164,13 +213,13 @@ impl FluxCells {
         let mut carryover0 = 0;
         let mut carryover1 = 0;
         for segment in &buf[0..byte_count] {
-            carryover0 += *segment as usize;
+            carryover0 += *segment as usize * recal[0] / recal[1];
             if *segment!=255 {
                 write(&mut carryover0,&mut carryover1);
             }
         }
         write(&mut carryover0,&mut carryover1);
-        Self::new_woz_flux(0,stream,time,double_speed )
+        Self::new_woz_flux(0,stream,time,double_speed,recal)
     }
     /// Change the resolution of the cells. Mainly useful for converting between bitstream tracks and flux tracks.
     /// N.b. if resolution is being reduced information will be lost, in general.
@@ -280,18 +329,38 @@ impl FluxCells {
         self.ptr = (self.ptr + ticks) % self.revolution;
         self.time += ticks as u64;
     }
-    /// go back on the track by `ticks`, this will also reverse the elapsed time
+    /// Go back on the track by `ticks`, this will also reverse the elapsed time (pegs to 0).
+    /// Avoid using, saving and restoring state is usually preferable.
     pub fn rev(&mut self,ticks: usize) {
         self.ptr = (self.ptr + self.revolution - ticks) % self.revolution;
-        self.time -= ticks as u64;
+        self.time -= match ticks as u64 > self.time {
+            true => self.time,
+            false => ticks as u64
+        };
     }
-    /// ticks since the reference tick
+    /// ticks since the reference tick, if ref_tick is in the future return 0
     pub fn ticks_since(&self,ref_tick: u64) -> u64 {
-        self.time - ref_tick
+        match ref_tick > self.time {
+            true => 0,
+            false => self.time - ref_tick
+        }
     }
-    /// picoseconds since the reference tick
+    /// picoseconds since the reference tick, if ref_tick is in the future return 0
     pub fn ps_since(&self,ref_tick: u64) -> u64 {
-        self.tick_ps as u64 * (self.time - ref_tick)
+        match ref_tick > self.time {
+            true => 0,
+            false => self.tick_ps as u64 * (self.time - ref_tick)
+        }
+        
+    }
+    /// If there is timing information, return the density of the original data relative
+    /// to the expected density, otherwise return None.
+    pub fn density(&self) -> Option<f64> {
+        if self.recal[1] > 0 && self.bshift != self.fshift {
+            Some(self.recal[0] as f64 / self.recal[1] as f64)
+        } else {
+            None
+        }
     }
     /// emit a pulse from the current bit cell and advance
     pub fn read_bit(&mut self) -> bool {
@@ -333,7 +402,7 @@ pub struct ZoneFormat {
     motor_step: usize,
     heads: Vec<usize>,
     /// Ordered expressions used to calculate sector address bytes for use during formatting, including checksum.
-    /// The expression give the decoded bytes, in order, in terms standard variables (vol,cyl,head,sec,aux).
+    /// The expressions give the decoded bytes, in order, in terms standard variables (vol,cyl,head,sec,aux).
     /// For complex CRC bytes, some identifier will have to be used in place of an expression.
     addr_fmt_expr: Vec<String>,
     /// Ordered expressions used to calculate sector address bytes for use during seeking, including checksum.
@@ -614,12 +683,10 @@ impl ZoneFormat {
     pub fn sector_count(&self) -> usize {
         self.capacity.len()
     }
-    pub fn track_solution(&self,motor: usize,head: usize,head_width: usize,addr_map: Vec<[u8;6]>,size_map: Vec<usize>,addr_type: &str,addr_mask: [u8;6]) -> img::TrackSolution {
-        img::TrackSolution {
-            cylinder: motor/head_width,
-            fraction: [motor%head_width,head_width],
-            head,
+    pub fn track_solution(&self,addr_map: Vec<[u8;6]>,size_map: Vec<usize>,addr_type: &str,addr_mask: [u8;6],density: Option<f64>) -> img::TrackSolution {
+        img::TrackSolution::Solved(img::SolvedTrack {
             speed_kbps: self.speed_kbps,
+            density,
             flux_code: self.flux_code,
             addr_code: self.addr_nibs,
             data_code: self.data_nibs,
@@ -627,7 +694,7 @@ impl ZoneFormat {
             addr_mask,
             addr_map,
             size_map
-        }
+        })
     }
     /// see if `win` matches marker `which` at any stage and return the mnemonic.
     /// update the marker information if matching the final byte.

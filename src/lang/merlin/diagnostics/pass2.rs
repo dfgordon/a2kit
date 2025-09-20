@@ -85,25 +85,6 @@ fn visit_verify_macro_def(node: &Node, loc: lsp::Location, ctx: &mut Context, sy
             if is_glob && is_mac_loc {
                 push(rng,"macro local shadows global",lsp::DiagnosticSeverity::WARNING);
             }
-            // This fixes a wrongly identified macro local originating in the first pass.
-            // We have to catch the first one and switch all occurrences right then.
-            if is_glob && !is_mac_loc {
-                let scope = ctx.curr_scope_mut().unwrap();
-                if let Some(child) = scope.children.get(&txt) {
-                    if let Some(glob) = symbols.globals.get_mut(&txt) {
-                        for (l,v) in &child.fwd_refs {
-                            glob.fwd_refs.insert(l.clone(),v.clone());
-                        }
-                        for l in &child.refs {
-                            glob.refs.push(l.clone());
-                        }
-                    }
-                    if let Some(main) = symbols.macros.get_mut(&scope.name) {
-                        main.children.remove(&txt); // clean the main store
-                    }
-                    scope.children.remove(&txt); // clean the scope stack
-                }
-            }
             if is_mac_loc && symbols.child_forward(&txt,ctx.curr_scope().as_ref().unwrap(),&loc) {
                 push(rng,"illegal forward reference",lsp::DiagnosticSeverity::ERROR);
             } else if is_glob && symbols.global_forward(&txt,&loc) {

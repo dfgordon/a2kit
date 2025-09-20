@@ -720,6 +720,9 @@ impl img::DiskImage for Imd {
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {
         let trk = self.get_track(trk)?;
         let trk_obj = &self.tracks[trk];
+        if trk_obj.sectors == 0 {
+            return Ok(img::TrackSolution::Unsolved);
+        }
         let (flux_code,speed_kbps) = match Mode::from_u8(trk_obj.mode) {
             Some(Mode::Fm250Kbps) => (img::FluxCode::FM,250),
             Some(Mode::Fm300Kbps) => (img::FluxCode::FM,300),
@@ -736,11 +739,9 @@ impl img::DiskImage for Imd {
             let h = match trk_obj.head_map.len()>i { true=>trk_obj.head_map[i] as usize, false=>phys_head };
             addr_map.push(super::append_ibm_crc([c.try_into()?,h.try_into()?,trk_obj.sector_map[i],trk_obj.sector_shift],None));
         }
-        Ok(img::TrackSolution {
-            cylinder: trk_obj.cylinder as usize,
-            fraction: [0,1],
-            head: phys_head,
+        Ok(img::TrackSolution::Solved(img::SolvedTrack {
             speed_kbps,
+            density: None,
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
@@ -748,7 +749,7 @@ impl img::DiskImage for Imd {
             addr_mask: [255,255,255,0,0,0],
             addr_map,
             size_map: vec![SECTOR_SIZE_BASE << trk_obj.sector_shift;trk_obj.sectors as usize]
-        })
+        }))
     }
     fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         log::error!("IMD images have no track bits");

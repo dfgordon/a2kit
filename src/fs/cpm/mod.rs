@@ -158,9 +158,11 @@ impl Disk
             img
         })
     }
-    /// Test an image for the CP/M file system.
+    /// Test an image for the CP/M file system, changes method to Auto.
+    /// Usually called before user parameters are applied.
     /// Will not accept images with directory structures corresponding to CP/M versions higher than `cpm_vers`.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> bool {
+        img.change_method(img::tracks::Method::Auto);
         // test the volume directory header
         if let Some(directory) = get_directory(img,dpb) {
             if let Err(_e) = directory.build_files(dpb,cpm_vers) {

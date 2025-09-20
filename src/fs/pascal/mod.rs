@@ -96,8 +96,10 @@ impl Disk
             img
         })
     }
-    /// Test an image for the Pascal file system.
+    /// Test an image for the Pascal file system.  Changes method to Auto.
+    /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+        img.change_method(img::tracks::Method::Auto);
         // test the volume directory header
          match get_directory(img) {
             Ok(directory) => {
@@ -154,8 +156,7 @@ impl Disk
                 return true;
             },
             Err(e) => {
-                log::debug!("{}",e);
-                log::debug!("pascal directory was not readable");
+                log::debug!("pascal directory was not readable: {}",e);
                 return false;
             }
         }

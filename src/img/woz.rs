@@ -19,6 +19,8 @@
 //! The position of the head over the disk is maintained internally
 //! for the lifetime of the `DiskImage` trait object.  Emulated time
 //! affects the state of the `TrackEngine` and `FluxCells` objects.
+//! It is possible for cross-track synchronization to be spoiled by certain
+//! pathological write operations.
 //! 
 //! ### Quarter Tracks
 //! 
@@ -40,7 +42,7 @@
 //! 
 //! An emulator is supposed to serve up fake bits if the head is on a blank
 //! track, and continue to maintain the head state.
-//! As an editor, a2kit will return `BadTrack` instead.
+//! As an editor, a2kit will return `BlankTrack` instead.
 //! 
 //! ### Fake Bits
 //! 
@@ -280,9 +282,9 @@ pub fn trk_from_tmap_idx(tmap_idx: usize,kind: &DiskKind) -> Track {
 	}
 }
 
-/// Get the sector key for this TMAP index.
+/// Get the sector neighborhood for this TMAP index.
 /// Can panic if arguments are invalid.
-pub fn get_sector_key(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> SectorHood {
+pub fn get_sector_hood(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> SectorHood {
 	match *kind {
 		DiskKind::D525(_) => SectorHood::a2_525(vol,(tmap_idx as u8+1)/4),
 		DiskKind::D35(layout) => SectorHood::a2_35(
@@ -291,6 +293,48 @@ pub fn get_sector_key(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> Se
 		),
 		_ => panic!("unsupported disk kind")
 	}
+}
+
+/// This will employ certain rules in an attempt to produce "nice" motor stops
+/// for use in generating a track array for user consumption, or for estimating
+/// the actual capacity of the disk as formatted.
+/// There is an assumption that the set of important tracks are mostly whole tracks apart.
+/// This should only be used for 5.25 inch disks.
+pub fn find_motor_stops(tmap: &[u8],maybe_fmap: Option<&[u8]>) -> Vec<usize> {
+	let mut ans = Vec::new();
+	let mut set = [0xff,0xff,0xff,0xff];
+	for motor in 0..160 {
+		set.rotate_left(1);
+		set[3] = match maybe_fmap {
+			Some(fmap) if fmap[motor] !=0xff => fmap[motor],
+			_ => tmap[motor]
+		};
+		if motor%4 == 2 {
+			match set {
+				[_,w,_,h] if w!=0xff && h!=0xff => {
+					if w == h {
+						ans.push(motor-2);
+					} else {
+						ans.push(motor-2);
+						ans.push(motor);
+					}
+				},
+				[qm,0xff,qp,h] => {
+					if h != 0xff {
+						ans.push(motor);
+					} else if qp != 0xff {
+						ans.push(motor-1);
+					} else if qm != 0xff {
+						ans.push(motor-3);
+					} else {
+						ans.push(motor-2);
+					}
+				},
+				_ => ans.push(motor-2)
+			}
+		}
+	}
+	ans
 }
 
 /// For use in building TRKS chunks, allowing us to get a sector key for
@@ -326,7 +370,7 @@ pub fn get_trks_slot_id(vol: u8,slot: usize,tmap: &[u8],maybe_fmap: Option<&[u8]
 		super::DiskKind::D35(layout) => candidates[which]/layout.sides[0] as u8,
 		_ => candidates[which]
 	};
-	Some((motor,get_sector_key(vol,candidates[which] as usize,kind,0),is_flux[which]))
+	Some((motor,get_sector_hood(vol,candidates[which] as usize,kind,0),is_flux[which]))
 }
 
 /// Guess a standard format based on the disk kind

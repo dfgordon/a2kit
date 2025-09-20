@@ -378,6 +378,7 @@ impl Analysis for Analyzer {
             self.analyze_recursively(super::SourceType::Master,Arc::clone(&master))?;
             if pass==1 {
                 self.ctx.close_all_folds(Arc::clone(&master), &mut self.diagnostic_set, &mut self.folding_set);
+                pass1::update_macro_refs(&mut self.symbols);
             }
             // clean up any residual scope (this is a must for global scopes)
             self.ctx.exit_scope(&mut self.symbols);

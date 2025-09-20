@@ -180,19 +180,17 @@ pub struct BlockLayout {
     block_count: usize
 }
 
-/// Detailed layout of a single track, allows for
-/// heterogeneous sector layouts. This is intended as an
-/// output rather than a control knob.  See also
-/// `tracks::DiskFormat` and `tracks::ZoneFormat`.
-pub struct TrackSolution {
-    cylinder: usize,
-    fraction: [usize;2],
-    head: usize,
+/// Detailed layout of a single track, this will normally be deduced from actual track data
+/// in response to a caller's request for a track solution.
+pub struct SolvedTrack {
     flux_code: FluxCode,
     addr_code: FieldCode,
     data_code: FieldCode,
     /// nominal rate of pulses during a run of high bits, n.b. this is not the same as the data rate, e.g. for FM clock pulses are counted
     speed_kbps: usize,
+    /// Measures the relative angular density of data, e.g., for a disk spinning at the nominal rate the maximum pulse rate
+    /// is `speed_kbps * density`.  Should only be Some if the track supplies timing information.
+    density: Option<f64>,
     /// string describing address (like VTS or CHSF)
     addr_type: String,
     /// mask out bits we are ignorant of due to image limitations
@@ -200,6 +198,15 @@ pub struct TrackSolution {
     /// address of every sector
     addr_map: Vec<[u8;6]>,
     size_map: Vec<usize>
+}
+
+/// We can have a track known to be blank, a track that seems to have data but
+/// could not be solved, or a full track solution.  If there is a solution
+/// the discriminant wraps a `SolvedTrack`.
+pub enum TrackSolution {
+    Blank,
+    Unsolved,
+    Solved(SolvedTrack)
 }
 
 /// Fixed size representation of how all the tracks on a disk are layed out,
@@ -532,7 +539,7 @@ pub trait DiskImage {
     }
     /// Change the broad method by which nibbles are extracted from a track.
     /// `Emulate` will try to produce nibbles just as the hardware would.
-    /// `Edit` and `Analyze` will show something more idealized.
+    /// `Fast` and `Analyze` will show something more idealized.
     fn change_method(&mut self,_method: tracks::Method) {
     }
     fn from_bytes(buf: &[u8]) -> Result<Self,DiskStructError> where Self: Sized;
@@ -549,7 +556,7 @@ pub trait DiskImage {
     fn get_track_buf(&mut self,trk: Track) -> Result<Vec<u8>,DYNERR>;
     /// Set the track buffer using another track buffer, the sizes must match
     fn set_track_buf(&mut self,trk: Track,dat: &[u8]) -> STDRESULT;
-    /// Get physical CH, sector addresses, flux and nibble codes, and update internal formatting hints.
+    /// Determined sector layout and update internal formatting hints.
     /// Implement this at a low level, making as few assumptions as possible.
     /// The expense of this operation can vary widely depending on the image type.
     fn get_track_solution(&mut self,trk: Track) -> Result<TrackSolution,DYNERR>;
@@ -586,11 +593,11 @@ pub trait DiskImage {
         let mut track_sols = Vec::new();
         for trk in 0..self.end_track() {
             log::trace!("solve track {}",trk);
-            if let Ok(sol) = self.get_track_solution(Track::Num(trk)) {
-                track_sols.push(sol);
-            }
+            let sol = self.get_track_solution(Track::Num(trk))?;
+            let [c,h] = self.get_rz(Track::Num(trk))?;
+            track_sols.push((c as f64,h,sol));
         }
-        geometry_json(pkg,track_sols,indent)
+        geometry_json(pkg,track_sols,self.end_track(),self.num_heads(),self.motor_steps_per_cyl(),indent)
     }
     /// Write the abstract disk format into a JSON string
     fn export_format(&self,_indent: Option<u16>) -> Result<String,DYNERR> {
@@ -598,45 +605,109 @@ pub trait DiskImage {
     }
 }
 
-fn geometry_json(pkg: String,track_sols: Vec<TrackSolution>,indent: Option<u16>) -> Result<String,DYNERR> {
+fn solved_track_json(sol: SolvedTrack) -> Result<json::JsonValue,DYNERR> {
+    let mut ans = json::JsonValue::new_object();
+    ans["flux_code"] = match sol.flux_code {
+        FluxCode::None => json::JsonValue::Null,
+        f => json::JsonValue::String(f.to_string())
+    };
+    ans["addr_code"] = match sol.addr_code {
+        FieldCode::None => json::JsonValue::Null,
+        n => json::JsonValue::String(n.to_string())
+    };
+    ans["nibble_code"] = match sol.data_code {
+        FieldCode::None => json::JsonValue::Null,
+        n => json::JsonValue::String(n.to_string())
+    };
+    ans["speed_kbps"] = json::JsonValue::Number(sol.speed_kbps.into());
+    ans["density"] = match sol.density {
+        Some(val) => json::JsonValue::Number(val.into()),
+        None => json::JsonValue::Null
+    };
+    ans["addr_map"] = json::JsonValue::new_array();
+    for addr in sol.addr_map {
+        ans["addr_map"].push(json::JsonValue::String(hex::encode_upper(&addr[0..sol.addr_type.len()])))?;
+    }
+    ans["size_map"] = json::JsonValue::new_array();
+    for size in sol.size_map {
+        ans["size_map"].push(size)?;
+    }
+    ans["addr_type"] = json::JsonValue::String(sol.addr_type);
+    ans["addr_mask"] = json::JsonValue::new_array();
+    for by in sol.addr_mask {
+        ans["addr_mask"].push(by)?;
+    }
+    Ok(ans)
+}
+
+/// Create geometry string for external consumption, `cylinders` should be the nominal cylinder count for this
+/// kind of disk, the actuals will be computed and provided automatically.
+fn geometry_json(pkg: String,desc: Vec<(f64,usize,TrackSolution)>,cylinders: usize,heads: usize,width: usize,indent: Option<u16>) -> Result<String,DYNERR> {
     let mut root = json::JsonValue::new_object();
     root["package"] = json::JsonValue::String(pkg);
     let mut trk_ary = json::JsonValue::new_array();
+    let mut blank_track_count = 0;
     let mut solved_track_count = 0;
-    for sol in track_sols {
-        solved_track_count += 1;
+    let mut unsolved_track_count = 0;
+    let mut last_blank_track: Option<usize> = None;
+    let mut last_solved_track: Option<usize> = None;
+    let mut last_unsolved_track: Option<usize> = None;
+    let mut idx = 0;
+    for (fcyl,head,sol) in desc {
         let mut trk_obj = json::JsonValue::new_object();
-        trk_obj["cylinder"] = json::JsonValue::Number((sol.cylinder as f64 + sol.fraction[0] as f64 / sol.fraction[1] as f64).into());
-        trk_obj["head"] = json::JsonValue::Number(sol.head.into());
-        trk_obj["flux_code"] = match sol.flux_code {
-            FluxCode::None => json::JsonValue::Null,
-            f => json::JsonValue::String(f.to_string())
+        trk_obj["cylinder"] = json::JsonValue::Number(fcyl.into());
+        trk_obj["head"] = json::JsonValue::Number(head.into());
+        let ignore = match sol {
+            TrackSolution::Blank => {
+                if fcyl < cylinders as f64 {
+                    blank_track_count += 1;
+                    last_blank_track = Some(idx);
+                }
+                fcyl >= cylinders as f64
+            },
+            TrackSolution::Unsolved => {
+                unsolved_track_count += 1;
+                last_unsolved_track = Some(idx);
+                false
+            },
+            TrackSolution::Solved(_) => {
+                solved_track_count += 1;
+                last_solved_track = Some(idx);
+                false
+            }
         };
-        trk_obj["addr_code"] = match sol.addr_code {
-            FieldCode::None => json::JsonValue::Null,
-            n => json::JsonValue::String(n.to_string())
+        trk_obj["solution"] = match sol {
+            TrackSolution::Blank => json::JsonValue::String("blank".to_string()),
+            TrackSolution::Unsolved => json::JsonValue::String("unsolved".to_string()),
+            TrackSolution::Solved(sol) => solved_track_json(sol)?
         };
-        trk_obj["nibble_code"] = match sol.data_code {
-            FieldCode::None => json::JsonValue::Null,
-            n => json::JsonValue::String(n.to_string())
-        };
-        trk_obj["speed_kbps"] = json::JsonValue::Number(sol.speed_kbps.into());
-        trk_obj["addr_map"] = json::JsonValue::new_array();
-        for addr in sol.addr_map {
-            trk_obj["addr_map"].push(json::JsonValue::String(hex::encode_upper(&addr[0..sol.addr_type.len()])))?;
+        if !ignore {
+            trk_ary.push(trk_obj)?;
         }
-        trk_obj["size_map"] = json::JsonValue::new_array();
-        for size in sol.size_map {
-            trk_obj["size_map"].push(size)?;
-        }
-        trk_obj["addr_type"] = json::JsonValue::String(sol.addr_type);
-        trk_obj["addr_mask"] = json::JsonValue::new_array();
-        for by in sol.addr_mask {
-            trk_obj["addr_mask"].push(by)?;
-        }
-        trk_ary.push(trk_obj)?;
+        idx += 1;
     }
-    if solved_track_count==0 {
+
+    root["summary"] = json::JsonValue::new_object();
+    root["summary"]["cylinders"] = json::JsonValue::Number(cylinders.into());
+    root["summary"]["heads"] = json::JsonValue::Number(heads.into());
+    root["summary"]["blank_tracks"] = json::JsonValue::Number(blank_track_count.into());
+    root["summary"]["solved_tracks"] = json::JsonValue::Number(solved_track_count.into());
+    root["summary"]["unsolved_tracks"] = json::JsonValue::Number(unsolved_track_count.into());
+    root["summary"]["last_blank_track"] = match last_blank_track {
+        Some(t) => json::JsonValue::Number(t.into()),
+        None => json::JsonValue::Null
+    };
+    root["summary"]["last_solved_track"] = match last_solved_track {
+        Some(t) => json::JsonValue::Number(t.into()),
+        None => json::JsonValue::Null
+    };
+    root["summary"]["last_unsolved_track"] = match last_unsolved_track {
+        Some(t) => json::JsonValue::Number(t.into()),
+        None => json::JsonValue::Null
+    };
+    root["summary"]["steps_per_cyl"] = json::JsonValue::Number(width.into());
+
+    if trk_ary.len()==0 {
         root["tracks"] = json::JsonValue::Null;
     } else {
         root["tracks"] = trk_ary;

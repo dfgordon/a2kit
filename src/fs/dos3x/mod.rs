@@ -127,9 +127,11 @@ impl Disk
         log::debug!("VTOC sector was not readable as DO");
         return false;
     }
-    /// Test an image to see if it already contains DOS 3.x.
+    /// Test an image for DOS 3.x.  Changes method to Auto.
+    /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>, maybe_fmt: Option<&DiskFormat>) -> bool {
-        let tlen = img.track_count();
+        img.change_method(img::tracks::Method::Auto);
+        let tlen = img.end_track();
         if (tlen < 35 || tlen > 40) && maybe_fmt.is_none() {
             log::debug!("track count {} is unexpected",tlen);
             return false;

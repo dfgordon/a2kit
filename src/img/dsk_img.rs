@@ -209,11 +209,9 @@ impl img::DiskImage for Img {
             img::DiskKind::D8(l) => (l.flux_code[0],l.speed_kbps[0]),
             _ => (img::FluxCode::None,0)
         };
-        return Ok(img::TrackSolution {
-            cylinder,
-            fraction: [0,1],
-            head,
+        return Ok(img::TrackSolution::Solved(img::SolvedTrack {
             speed_kbps,
+            density: None,
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
@@ -221,7 +219,7 @@ impl img::DiskImage for Img {
             addr_mask: [0,0,255,0,0,0],
             addr_map,
             size_map: vec![self.sec_size;self.sectors]
-        });
+        }));
     }
     fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("IMG images have no track bits");

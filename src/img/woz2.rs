@@ -382,7 +382,7 @@ impl Trks {
     }
     fn create_segment_and_trk(hood: SectorHood,fmt: &img::tracks::ZoneFormat,block_offset: usize,is_flux: bool) -> Result<(Vec<u8>,Trk),DYNERR> {
         fmt.check_flux_code(img::FluxCode::GCR)?;
-        let mut engine = TrackEngine::create(Method::Fast, false);
+        let mut engine = TrackEngine::create(Method::Auto, false);
         let mut cells = engine.format_track(hood, 0xffffff, fmt)?;
         if is_flux {
             cells.change_resolution(2);
@@ -659,7 +659,7 @@ impl Woz2 {
             trks: Trks::new(),
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Fast, false),
+            engine: TrackEngine::create(Method::Auto, false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -679,7 +679,7 @@ impl Woz2 {
             trks: Trks::blank(),
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Fast, false),
+            engine: TrackEngine::create(Method::Auto, false),
             cells: None,
             tmap_pos: usize::MAX,
         }
@@ -705,7 +705,7 @@ impl Woz2 {
             trks,
             meta: None,
             writ: None,
-            engine: TrackEngine::create(Method::Fast, false),
+            engine: TrackEngine::create(Method::Auto, false),
             cells: None,
             tmap_pos: usize::MAX,
         })
@@ -716,8 +716,9 @@ impl Woz2 {
             return Err(DiskStructError::IllegalValue);
         }
         if self.flux.is_none() && self.info.vers >= 3 && (self.info.flux_block!=[0,0] || self.info.largest_flux_track!=[0,0]) {
-            log::error!("INFO chunk contradicts absence of FLUX chunk");
-            return Err(DiskStructError::IllegalValue);
+            log::warn!("INFO chunk contradicts absence of FLUX chunk");
+            log::debug!("flux_block {:?}, largest_flux_track {:?}",self.info.flux_block,self.info.largest_flux_track);
+            //return Err(DiskStructError::IllegalValue);
         }
         if u32::from_le_bytes(self.info.id)!=INFO_ID || u32::from_le_bytes(self.tmap.id)!=TMAP_ID || u32::from_le_bytes(self.trks.id)!=TRKS_ID {
             log::debug!("Required chunk id was not as expected");
@@ -791,6 +792,7 @@ impl Woz2 {
                         false => FluxCells::from_woz_bits(bits_or_bytes, &self.trks.bits[beg..end],0,double_speed)
                     };
                     if let Some(cells) = &self.cells {
+                        log::trace!("sync new track");
                         new_cells.sync_to_other_track(cells);
                     }
                     self.cells = Some(new_cells);
@@ -851,31 +853,30 @@ impl img::DiskImage for Woz2 {
     fn actual_capacity(&mut self) -> Result<usize,DYNERR> {
         let mut ans = 0;
         if self.info.disk_type==1 {
-            // simple strategy, advance by full tracks if we find something,
-            // advance by half tracks if not.
-            let mut motor = 0;
-            while motor < 160 {
+            let motor_stops = img::woz::find_motor_stops(&self.tmap.map, match &self.flux {
+                Some(fmap) => Some(&fmap.map),
+                None => None
+            });
+            for motor in motor_stops {
                 match self.get_track_solution(Track::Motor((motor,0))) {
-                    Ok(sol) => {
-                        ans += sol.size_map.iter().sum::<usize>();
-                        motor += 4;
-                    },
-                    Err(e) => match e.downcast_ref::<img::Error>() {
-                        Some(img::Error::BlankTrack) => motor += 2,
-                        Some(img::Error::UnexpectedZone) => motor += 2,
-                        _ => return Err(e)
-                    }
+                    Ok(img::TrackSolution::Solved(sol)) => ans += sol.size_map.iter().sum::<usize>(),
+                    Ok(img::TrackSolution::Blank) => {},
+                    Ok(img::TrackSolution::Unsolved) => return Err(Box::new(img::Error::UnknownFormat)),
+                    Err(e) => return Err(e)
                 }
             }
         } else if self.info.disk_type==2 {
-            let max_track = match self.info.disk_sides {
+            let end_track = match self.info.disk_sides {
                 1 => 80,
                 2 => 160,
                 _ => 0
             };
-            for track in 0..max_track {
-                if let Ok(sol) = self.get_track_solution(Track::Num(track)) {
-                    ans += sol.size_map.iter().sum::<usize>();
+            for track in 0..end_track {
+                match self.get_track_solution(Track::Num(track)) {
+                    Ok(img::TrackSolution::Solved(sol)) => ans += sol.size_map.iter().sum::<usize>(),
+                    Ok(img::TrackSolution::Blank) => {},
+                    Ok(img::TrackSolution::Unsolved) => return Err(Box::new(img::Error::UnknownFormat)),
+                    Err(e) => return Err(e)
                 }
             }
         }
@@ -990,10 +991,18 @@ impl img::DiskImage for Woz2 {
             _ => img::DiskKind::Unknown
         };
         for baseline_track in [0,3] {
-            log::info!("baseline scan of track {}",baseline_track);
-            if let Ok(_) = ans.get_track_solution(Track::Num(baseline_track)) {
-                log::info!("setting disk kind to {}",ans.kind);
-                return Ok(ans);
+            for baseline_method in [Method::Fast,Method::Emulate] {
+                log::info!("baseline scan of track {}, method {}",baseline_track,baseline_method);
+                ans.change_method(baseline_method);
+                match ans.get_track_solution(Track::Num(baseline_track)) {
+                    Ok(img::TrackSolution::Solved(_)) => {
+                        log::info!("baseline solution is {}",ans.kind);
+                        return Ok(ans);
+                    },
+                    Ok(img::TrackSolution::Unsolved) => log::debug!("could not solve"),
+                    Ok(img::TrackSolution::Blank) => log::debug!("blank track"),
+                    Err(e) => log::warn!("{}",e)
+                }
             }
         }
         log::warn!("no baseline, continuing with {}",ans.kind);
@@ -1041,10 +1050,11 @@ impl img::DiskImage for Woz2 {
         Ok(())
     }
     fn get_track_solution(&mut self,trk: Track) -> Result<img::TrackSolution,DYNERR> {
-        let [motor,head,width] = self.goto_track(trk)?;
+        let [motor,head,_] = self.goto_track(trk)?;
         if self.cells.is_none() {
-            return Err(Box::new(img::Error::BlankTrack));
+            return Ok(img::TrackSolution::Blank);
         }
+        let density = self.cells.as_ref().unwrap().density();
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::debug!("try current format");
@@ -1055,76 +1065,81 @@ impl img::DiskImage for Woz2 {
                     img::FieldCode::WOZ((6,2)) => ("CSHFK",[255,255,255,255,255,0]),
                     _ => ("???",[0;6])
                 };
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,addr_type,addr_mask));
+                return Ok(zfmt.track_solution(addr_map,size_map,addr_type,addr_mask,density));
             }
         }
         // If the given format fails try some standard ones
         if self.info.disk_type==1 {
-            log::debug!("try DOS 3.2 format");
+            log::debug!("try standard 13-sector");
             self.kind = img::names::A2_DOS32_KIND;
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
                 if addr_map.len()==13 {
-                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                    return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],density));
                 }
             }
-            log::debug!("try DOS 3.3 format");
+            log::debug!("try standard 16-sector");
             self.kind = img::names::A2_DOS33_KIND;
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
                 if addr_map.len()==16 {
-                    return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                    return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],density));
                 }
             }
-            return Err(Box::new(img::Error::UnknownFormat));
+            return Ok(img::TrackSolution::Unsolved);
         } else if self.info.disk_type==2 {
             self.kind = match self.info.disk_sides {
                 1 => img::names::A2_400_KIND,
                 2 => img::names::A2_800_KIND,
-                _ => return Err(Box::new(img::Error::UnknownImageType))
+                _ => return Err(Box::new(img::Error::UnknownFormat))
             };
+            log::debug!("try standard {}",self.kind);
             self.fmt = img::woz::kind_to_format(&self.kind);
             let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
+            log::trace!("zone format succeeded");
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(self.cells.as_mut().unwrap(),zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"CSHFK",[255,255,255,255,255,0]));
+                log::trace!("sector map succeeded");
+                return Ok(zfmt.track_solution(addr_map,size_map,"CSHFK",[255,255,255,255,255,0],density));
             }
-            return Err(Box::new(img::Error::UnknownFormat));
+            log::trace!("sector map failed");
+            return Ok(img::TrackSolution::Unsolved);
         }
+        log::warn!("WOZ had unexpected disk type {}",self.info.disk_type);
         return Err(Box::new(img::Error::UnknownFormat));
     }
     fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
         let pkg = img::package_string(&self.kind());
         let mut track_sols = Vec::new();
         if self.info.disk_type==1 {
-            // simple strategy, advance by full tracks if we find something,
-            // advance by half tracks if not.
-            let mut motor = 0;
-            while motor < 160 {
+            let motor_stops = img::woz::find_motor_stops(&self.tmap.map, match &self.flux {
+                Some(fmap) => Some(&fmap.map),
+                None => None
+            });
+            for motor in motor_stops {
                 match self.get_track_solution(Track::Motor((motor,0))) {
-                    Ok(sol) => {
-                        track_sols.push(sol);
-                        motor += 4;
-                    },
-                    _ => {
-                        motor += 2;
-                    }
+                    Ok(sol) => track_sols.push((motor as f64 / 4.0, 0 as usize, sol)),
+                    Err(e) => log::warn!("{}",e)
                 }
             }
+            img::geometry_json(pkg,track_sols,35,1,4,indent)
         } else if self.info.disk_type==2 {
-            let max_track = match self.info.disk_sides {
+            let end_track = match self.info.disk_sides {
                 1 => 80,
                 2 => 160,
                 _ => return Err(Box::new(img::Error::UnknownImageType))
             };
-            for track in 0..max_track {
-                if let Ok(sol) = self.get_track_solution(Track::Num(track)) {
-                    track_sols.push(sol);
+            for track in 0..end_track {
+                match self.get_track_solution(Track::Num(track)) {
+                    Ok(sol) => track_sols.push(((track/self.info.disk_sides as usize) as f64, track%self.info.disk_sides as usize, sol)),
+                    Err(e) => log::warn!("{}",e)
                 }
             }
+            img::geometry_json(pkg,track_sols,80,self.info.disk_sides as usize,1,indent)
+        } else {
+            Err(Box::new(img::Error::UnknownDiskKind))
         }
-        img::geometry_json(pkg,track_sols,indent)
     }
     fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
         match &self.fmt {

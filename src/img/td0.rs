@@ -970,6 +970,9 @@ impl img::DiskImage for Td0 {
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {
         let trk = self.get_track(trk)?;
         let trk_obj = &self.tracks[trk];
+        if trk_obj.sectors.len() == 0 {
+            return Ok(img::TrackSolution::Unsolved);
+        }
         let flux_code = match trk_obj.header.head_flags > 127 || self.header.data_rate > 127 {
             true => img::FluxCode::FM,
             false => img::FluxCode::MFM
@@ -982,16 +985,14 @@ impl img::DiskImage for Td0 {
         for sec in &trk_obj.sectors {
             size_map.push(SECTOR_SIZE_BASE << sec.header.sector_shift);
         }
-        Ok(img::TrackSolution {
-            cylinder: trk_obj.header.cylinder as usize,
-            fraction: [0,1],
-            head: (trk_obj.header.head_flags & HEAD_MASK) as usize,
+        Ok(img::TrackSolution::Solved(img::SolvedTrack {
             speed_kbps: match self.header.data_rate & RATE_MASK {
                 0 => 250,
                 1 => 300,
                 2 => 500,
                 _ => 0
             },
+            density: None,
             flux_code,
             addr_code: img::FieldCode::None,
             data_code: img::FieldCode::None,
@@ -999,7 +1000,7 @@ impl img::DiskImage for Td0 {
             addr_mask: [255,255,255,255,0,0],
             addr_map,
             size_map
-        })
+        }))
     }
     fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         log::error!("TD0 images have no track bits");

@@ -20,8 +20,8 @@ mod woz_state_machine;
 #[derive(Clone)]
 struct SaveState {
     ptr: usize,
-    seq: usize,
-    latch: u8
+    time: u64,
+    lss: (usize,u64,u8)
 }
 
 /// This is the main interface for interacting with any GCR track data.
@@ -55,11 +55,12 @@ impl TrackEngine {
         self.method = method;
     }
     fn save_state(&self, cells: &FluxCells) -> SaveState {
-        SaveState { ptr: cells.ptr, seq: self.woz_state.get_seq(), latch: self.woz_state.get_latch() }
+        SaveState { ptr: cells.ptr, time: cells.time, lss: self.woz_state.get_critical_state() }
     }
     fn restore_state(&mut self, cells: &mut FluxCells, state: &SaveState) {
         cells.ptr = state.ptr;
-        self.woz_state.restore(state.seq,state.latch);
+        cells.time = state.time;
+        self.woz_state.restore_critical_state(state.lss);
     }
     /// Read specified number of 8-bit codes as they are loaded into the data latch.
     /// The number of ticks that passed by is returned.  There are varying levels of fidelity
@@ -147,7 +148,7 @@ impl TrackEngine {
             }
         }
     }
-    /// Direct loading from bit-cells into bytes, multiple transitions in a bit-cell resolve as high.
+    /// Direct loading from flux-cells into bytes, multiple transitions in a bit-cell resolve as high.
     fn read(&mut self,cells: &mut FluxCells,data: &mut [u8],num_bits: usize) {
         for i in 0..num_bits {
             let pulse = cells.read_bit();
@@ -157,7 +158,7 @@ impl TrackEngine {
             data[dst_idx] |= (pulse as u8) << dst_rel_bit;
         }
     }
-    /// Direct transfer of bits to a slice of bytes.  Bit order is MSB to LSB.
+    /// Direct transfer of bits to the flux-cells.
     fn write(&mut self,cells: &mut FluxCells,data: &[u8],num_bits: usize) {
         for i in 0..num_bits {
             let src_idx = i >> 3;
@@ -350,7 +351,7 @@ impl TrackEngine {
     /// We do not go looking for the data prolog at this stage, because it may not exist.
     /// E.g., DOS 3.2 `INIT` will not write any data fields outside of the boot tracks.
     fn find_sector(&mut self,cells: &mut FluxCells,hood: &SectorHood,sec: &Sector,fmt: &ZoneFormat) -> Result<Vec<u8>,DYNERR> {
-        log::trace!("seeking sector {}",sec);
+        log::trace!("seeking sector {}, method {}",sec,&self.method);
         // Copy search patterns
         let (adr_pro,adr_pro_mask) = fmt.get_marker(0);
         let (adr_epi,adr_epi_mask) = fmt.get_marker(1);
@@ -532,7 +533,7 @@ impl TrackEngine {
     /// but will also allow for a few unexpected header nibbles that are not counted in the result.
     fn get_sector_capacity(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<usize,DYNERR> {
         // skip a few nibbles to make sure we get into a sync gap, specifics not important
-        self.skip_nibbles(cells,3,&fmt.data_nibs());
+        //self.skip_nibbles(cells,3,&fmt.data_nibs());
         // Find data prolog without looking ahead too far.  No data field is an error, *except* for 5&3 data.
         // For DOS 3.2, no data field is treated as a sector of zeroes, so in this case return Ok(256).
         // N.b. protected disks can have things (e.g. 6&2 boot sector) embedded in an "empty" 5&3 data field.
@@ -544,13 +545,16 @@ impl TrackEngine {
                     log::trace!("pristine 5&3 sector (no data field)");
                     Ok(256)
                 },
-                _ => Err(Box::new(Error::BitPatternNotFound))
+                _ => {
+                    log::trace!("data prolog {} was not found",hex::encode(prolog));
+                    Err(Box::new(Error::BitPatternNotFound))
+                }
             };
         }
         // scanning 2048 nibbles allows for 1024 byte 4&4 sectors, somewhat more for others
         for nib_count in 0..2048 {
             self.skip_nibbles(cells,1,&fmt.data_nibs());
-            let save_pos = cells.ptr;
+            let state = self.save_state(cells);
             if let Some(_) = self.find_byte_pattern(cells, epilog, emask, Some(epilog.len()), &fmt.data_nibs) {
                 log::trace!("found data epilog at nibble {}",nib_count+1);
                 return match (fmt.data_nibs(),nib_count+1) {
@@ -562,7 +566,7 @@ impl TrackEngine {
                     _ => Err(Box::new(Error::NibbleType))
                 }
             }
-            cells.ptr = save_pos;
+            self.restore_state(cells,&state);
         }
         Err(Box::new(Error::BitPatternNotFound))
     }
@@ -579,10 +583,11 @@ impl TrackEngine {
         let header = fmt.get_data_header(hood, sec)?;
         let quantum = fmt.capacity(sec);
         self.find_sector(cells,hood,sec,fmt)?;
-        // match (fmt.data_nibs(),self.nib_filter) {
-        //     (FieldCode::WOZ(_),false) => cells.rev(cells.bit_cell),
-        //     _ => {}
-        // }
+        // in some cases writing a zero before proceeding is needed to prevent bad splices
+        match (fmt.data_nibs(),self.nib_filter) {
+            (FieldCode::WOZ(_),false) => self.write(cells,&vec![0],1),
+            _ => {}
+        }
         self.encode_sector(cells,&header,&crate::img::quantize_block(dat,quantum),fmt)
     }
     /// dump nibble stream starting on an address prolog continuing through one revolution
@@ -607,19 +612,27 @@ impl TrackEngine {
     }
     /// return vectors of sector addresses and sizes in geometric order for user consumption
     pub fn get_sector_map(&mut self,cells: &mut FluxCells,fmt: &ZoneFormat) -> Result<(Vec<[u8;6]>,Vec<usize>),DYNERR> {
-        let mut ptr_list: Vec<usize> = Vec::new();
+        let mut first_found: Option<usize> = None;
+        let tolerance = 2 << cells.bshift;
         cells.ptr = 0;
         let mut addr_map: Vec<[u8;6]> = Vec::new();
         let mut size_map: Vec<usize> = Vec::new();
         let (patt,mask) = fmt.get_marker(0);
-        for _try in 0..32 {
+        log::trace!("seek {}, mask {}, method {}",hex::encode(patt),hex::encode(mask),&self.method);
+        for i in 0..32 {
+            log::trace!("seeking angle {}",i);
             if self.find_byte_pattern(cells,patt,mask,None,&fmt.addr_nibs()).is_some() {
                 let mut addr = self.decode_addr(cells,fmt)?;
-                if ptr_list.contains(&cells.ptr) {
-                    // if we have seen this one before we are done
-                    return Ok((addr_map,size_map))
+                log::trace!("found {}",hex::encode(&addr));
+                match first_found {
+                    None => first_found = Some(cells.ptr),
+                    Some(ptr) => {
+                        if cells.ptr + tolerance > ptr && cells.ptr < ptr + tolerance {
+                            // we have seen this before, so we are done
+                            return Ok((addr_map,size_map))
+                        }
+                    }
                 }
-                ptr_list.push(cells.ptr);
                 while addr.len() < 6 {
                     addr.push(0);
                 }

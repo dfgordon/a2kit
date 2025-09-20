@@ -243,13 +243,13 @@ impl img::DiskImage for Nib {
         Ok(())
     }
     fn get_track_solution(&mut self,trk: Track) -> Result<img::TrackSolution,DYNERR> {
-        let [motor,head,width] = self.goto_track(trk)?;
+        let [motor,head,_] = self.goto_track(trk)?;
         // First try the given format if it exists
         if let Some(fmt) = &self.fmt {
             log::trace!("try current format");
             let zfmt = fmt.get_zone_fmt(motor,head)?;
             if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
         // If the given format fails try some standard ones
@@ -259,7 +259,7 @@ impl img::DiskImage for Nib {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
             if addr_map.len()==13 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
         log::trace!("try DOS 3.3 format");
@@ -268,21 +268,20 @@ impl img::DiskImage for Nib {
         let zfmt = img::tracks::get_zone_fmt(motor,head,&self.fmt)?;
         if let Ok((addr_map,size_map)) = self.engine.get_sector_map(&mut self.cells,zfmt) {
             if addr_map.len()==16 {
-                return Ok(zfmt.track_solution(motor,head,width,addr_map,size_map,"VTSK",[255,255,255,255,0,0]));
+                return Ok(zfmt.track_solution(addr_map,size_map,"VTSK",[255,255,255,255,0,0],None));
             }
         }
-        return Err(Box::new(img::Error::UnknownFormat));
+        return Ok(img::TrackSolution::Unsolved);
     }
     fn export_geometry(&mut self,indent: Option<u16>) -> Result<String,DYNERR> {
         let pkg = img::package_string(&self.kind());
         let mut track_sols = Vec::new();
         for track in 0..self.tracks {
-            match self.get_track_solution(Track::Num(track)) {
-                Ok(sol) => track_sols.push(sol),
-                _ => {}
-            };
+            let sol = self.get_track_solution(Track::Num(track))?;
+            let [c,h] = self.get_rz(Track::Num(track))?;
+            track_sols.push((c as f64,h,sol));
         }
-        img::geometry_json(pkg,track_sols,indent)
+        img::geometry_json(pkg,track_sols,35,1,1,indent)
     }
     fn export_format(&self,indent: Option<u16>) -> Result<String,DYNERR> {
         match &self.fmt {

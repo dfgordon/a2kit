@@ -88,10 +88,19 @@ impl Disk {
             curr_path: Vec::new()
         })
     }
-    /// Test an image for the ProDOS file system.
+    /// Test an image for the ProDOS file system. May try multiple track methods.
+    /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+        let mut maybe_buf: Result<Vec<u8>,DYNERR> = Err(Box::new(Error::IOError));
+        for test_method in [img::tracks::Method::Auto,img::tracks::Method::Emulate] {
+            img.change_method(test_method);
+            maybe_buf = img.read_block(Block::PO(2));
+            if maybe_buf.is_ok() {
+                break;
+            }
+        }
         // test the volume directory header to see if this is ProDOS
-        if let Ok(buf) = img.read_block(Block::PO(2)) {
+        match maybe_buf { Ok(buf) => {
             let first_char_patt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.";
             let char_patt = [first_char_patt,"0123456789"].concat();
             let vol_key: KeyBlock<VolDirHeader> = match KeyBlock::from_bytes(&buf) {
@@ -123,9 +132,10 @@ impl Disk {
                 }
             }
             return true;
-        }
-        debug!("ProDOS volume directory was not readable");
-        return false;
+        } Err(e) => {
+            debug!("ProDOS volume directory was not readable: {}",e);
+            return false;
+        }}
     }
     /// Open buffer if not already present.  Will usually be called indirectly.
     fn open_bitmap_buffer(&mut self) -> STDRESULT {

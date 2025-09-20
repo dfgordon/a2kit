@@ -172,7 +172,7 @@ impl Context {
             None => (true,true,false)
         }
     }
-    /// borrow the processor oepration handbook
+    /// borrow the processor operation handbook
     pub fn op_handbook(&self) -> &OperationHandbook {
         &self.op_book
     }

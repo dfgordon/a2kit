@@ -100,7 +100,7 @@ impl ZoneFormat {
             data_expr: expr_vec(&["sec","dat"]),
             markers: [
                 SectorMarker {key: vec![0xd5,0xaa,0x96], mask: vec![0xff,0xff,0xff]},
-                SectorMarker {key: vec![0xde,0xaa], mask: vec![0xff,0xff]},
+                SectorMarker {key: vec![0xde,0xaa], mask: vec![0xff,0xfe]}, // allow for error in the last bit
                 SectorMarker {key: vec![0xd5,0xaa,0xad], mask: vec![0xff,0xff,0xff]},
                 SectorMarker {key: vec![0xde,0xaa], mask: vec![0xff,0xff]},
             ],

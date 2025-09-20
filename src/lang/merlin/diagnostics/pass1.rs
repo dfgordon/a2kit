@@ -388,3 +388,26 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
 
     return Ok(Navigation::GotoChild);
 }
+
+/// During the first pass all label references in a macro definition are assumed local to the macro.
+/// This changes them to globals as necessary.
+/// This must be called before starting the second pass.
+pub fn update_macro_refs(symbols: &mut Symbols) {
+    for mac in symbols.macros.values_mut() {
+        let mut changed = std::collections::HashSet::new();
+        for (ref_name,child) in &mac.children {
+            if let Some(glob) = symbols.globals.get_mut(ref_name) {
+                for (l,v) in &child.fwd_refs {
+                    glob.fwd_refs.insert(l.clone(),v.clone());
+                }
+                for l in &child.refs {
+                    glob.refs.push(l.clone());
+                }
+                changed.insert(ref_name.clone());
+            }
+        }
+        for key in &changed {
+            mac.children.remove(key);
+        }
+    }
+}

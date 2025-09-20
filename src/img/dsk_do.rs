@@ -202,18 +202,16 @@ impl img::DiskImage for DO {
         return Err(Box::new(img::Error::ImageTypeMismatch));
     }
     fn get_track_solution(&mut self,trk: super::Track) -> Result<img::TrackSolution,DYNERR> {        
-        let [c,h] = self.get_rz(trk)?;
+        let [c,_] = self.get_rz(trk)?;
         let mut addr_map: Vec<[u8;6]> = Vec::new();
         for i in 0..16 {
             let mut addr = [254,c.try_into()?,i,0,0,0];
             addr[3] = addr[0] ^ addr[1] ^ addr[2];
             addr_map.push(addr);
         }
-        return Ok(img::TrackSolution {
-            cylinder: c,
-            fraction: [0,4],
-            head: h,
+        return Ok(img::TrackSolution::Solved(img::SolvedTrack {
             speed_kbps: 250,
+            density: None,
             flux_code: img::FluxCode::GCR,
             addr_code: img::FieldCode::WOZ((4,4)),
             data_code: img::FieldCode::WOZ((6,2)),
@@ -221,7 +219,7 @@ impl img::DiskImage for DO {
             addr_mask: [0,0,255,0,0,0],
             addr_map,
             size_map: vec![256;16]
-        });
+        }));
     }
     fn get_track_nibbles(&mut self,_trk: super::Track) -> Result<Vec<u8>,DYNERR> {
         error!("DO images have no track bits");
