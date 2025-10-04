@@ -23,6 +23,14 @@ use crate::img;
 use crate::{DYNERR,STDRESULT};
 
 pub const FS_NAME: &str = "prodos";
+const IMAGE_TYPES: [img::DiskImageType;6] = [
+    img::DiskImageType::DO,
+    img::DiskImageType::PO,
+    img::DiskImageType::NIB,
+    img::DiskImageType::WOZ1,
+    img::DiskImageType::WOZ2,
+    img::DiskImageType::DOT2MG
+];
 
 /// The primary interface for disk operations.
 pub struct Disk {
@@ -91,6 +99,10 @@ impl Disk {
     /// Test an image for the ProDOS file system. May try multiple track methods.
     /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying ProDOS");
         let mut maybe_buf: Result<Vec<u8>,DYNERR> = Err(Box::new(Error::IOError));
         for test_method in [img::tracks::Method::Auto,img::tracks::Method::Emulate] {
             img.change_method(test_method);

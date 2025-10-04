@@ -42,6 +42,15 @@ use crate::{STDRESULT,DYNERR};
 const RCH: &str = "unreachable was reached";
 
 pub const FS_NAME: &str = "cpm";
+const IMAGE_TYPES: [img::DiskImageType;7] = [
+    img::DiskImageType::DO,
+    img::DiskImageType::NIB,
+    img::DiskImageType::WOZ1,
+    img::DiskImageType::WOZ2,
+    img::DiskImageType::DOT2MG,
+    img::DiskImageType::IMD,
+    img::DiskImageType::TD0,
+];
 
 /// Given a CP/M extended filename string, get the access and fs_type fields
 /// to be used in a file image.  These are tied together because of the way
@@ -162,6 +171,10 @@ impl Disk
     /// Usually called before user parameters are applied.
     /// Will not accept images with directory structures corresponding to CP/M versions higher than `cpm_vers`.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>,dpb: &DiskParameterBlock,cpm_vers: [u8;3]) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying CP/M");
         img.change_method(img::tracks::Method::Auto);
         // test the volume directory header
         if let Some(directory) = get_directory(img,dpb) {

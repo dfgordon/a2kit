@@ -6,8 +6,8 @@
 //! 
 //! The native file image used by `a2kit` is the `FileImage` trait object.
 //! It handles sparse and sequential files on an equal footing.
-//! All data must be packed as a `FileImage` before being written to a disk image.
-//! All data read from a disk image will be initially in the form of a `FileImage`.
+//! All file data must be packed as a `FileImage` before being written to a disk image.
+//! All file data read from a disk image will be initially in the form of a `FileImage`.
 //! `FileImage` data can be unpacked into a form suitable for ordinary consumers.
 //! If the data is not unpacked, the user will receive the `FileImage` as a JSON string.
 //! 

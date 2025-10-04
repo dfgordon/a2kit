@@ -26,6 +26,12 @@ use crate::bios::{bpb,fat};
 use crate::{DYNERR,STDRESULT};
 
 pub const FS_NAME: &str = "fat";
+const IMAGE_TYPES: [img::DiskImageType;4] = [
+    img::DiskImageType::IMG,
+    img::DiskImageType::IMD,
+    img::DiskImageType::TD0,
+    img::DiskImageType::DOT86F
+];
 
 pub fn new_fimg(chunk_len: usize,set_time: bool,path: &str) -> Result<super::FileImage,DYNERR> {
     if !pack::is_path_valid(path) {
@@ -121,6 +127,10 @@ impl Disk {
     }
     /// Test an image for the FAT file system.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying FAT");
         // test the boot sector to see if this is FAT
         if let Ok(boot) = img.read_sector(Track::Num(0),Sector::Num(1)) {
             return bpb::BootSector::verify(&boot);
@@ -130,6 +140,10 @@ impl Disk {
     }
     /// Test an image for DOS 1.x (no signature, no BPB)
     pub fn test_img_dos1x(img: &mut Box<dyn img::DiskImage>) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying DOS 1.x");
         // We are going to look in the first FAT.
         // We look in the boot sector only for logging purposes.
         // By this time layout or size has already been used to create the `DiskImage`.

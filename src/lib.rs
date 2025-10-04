@@ -39,7 +39,7 @@
 //! A simple example follows:
 //! ```rs
 //! // DiskFS is always mutable because the underlying image can be stateful.
-//! let mut disk = a2kit::create_fs_from_file("disk.woz")?;
+//! let mut disk = a2kit::create_fs_from_file("disk.woz",None)?;
 //! // Get a text file from the disk image as a String.
 //! let text = disk.read_text("README")?;
 //! ```
@@ -155,19 +155,24 @@ fn try_img(mut img: Box<dyn DiskImage>,maybe_fmt: Option<&DiskFormat>) -> Result
         info!("identified MS-DOS 1.x file system");
         return Ok(Some(Box::new(fs::fat::Disk::from_img_dos1x(img)?)));
     }
-    // For CP/M we have to try all these DPB heuristically
-    let dpb_list = vec![
-        bios::dpb::A2_525,
-        bios::dpb::CPM1,
-        bios::dpb::SSSD_525,
-        bios::dpb::SSDD_525_OFF1,
-        bios::dpb::SSDD_525_OFF3,
-        bios::dpb::SSDD_3,
-        bios::dpb::DSDD_525_OFF1,
-        bios::dpb::TRS80_M2,
-        bios::dpb::NABU,
-
-    ];
+    // For CP/M we have to try various DPB
+    let dpb_list = match img.what_am_i() {
+        img::DiskImageType::DO | img::DiskImageType::NIB | img::DiskImageType::DOT2MG | img::DiskImageType::WOZ1 => vec![
+            bios::dpb::A2_525],
+        img::DiskImageType::WOZ2 => vec![
+            // 800K CP/M could go here someday
+            bios::dpb::A2_525],
+        img::DiskImageType::IMD | img::DiskImageType::TD0 => vec![
+            bios::dpb::CPM1,
+            bios::dpb::SSSD_525,
+            bios::dpb::SSDD_525_OFF1,
+            bios::dpb::SSDD_525_OFF3,
+            bios::dpb::SSDD_3,
+            bios::dpb::DSDD_525_OFF1,
+            bios::dpb::TRS80_M2,
+            bios::dpb::NABU],
+        _ => vec![]
+    };
     for dpb in &dpb_list {
         if fs::cpm::Disk::test_img(&mut img,dpb,[3,1,0]) {
             info!("identified CP/M file system on {}",dpb);
@@ -275,7 +280,7 @@ pub fn create_fs_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>
 
 /// Given a bytestream return a disk image without any file system.
 /// Optional `maybe_ext` restricts the image types that will be tried based on file extension.
-/// N.b. the ordering for DSK types cannot always be determined without the file system.
+/// FS heuristics might be invoked if the image type is ambiguous.
 pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str>) -> Result<Box<dyn DiskImage>,DYNERR> {
     let ext = match maybe_ext {
         Some(x) => x.to_string().to_lowercase(),
@@ -346,7 +351,15 @@ pub fn create_img_from_bytestream(disk_img_data: &Vec<u8>,maybe_ext: Option<&str
     if img::dsk_po::file_extensions().contains(&ext) || ext=="" {
         if let Ok(img) = img::dsk_po::PO::from_bytes(disk_img_data) {
             info!("Possible PO image");
-            return Ok(Box::new(img));
+            if ext=="po" {
+                return Ok(Box::new(img));
+            }
+            if let Ok(Some(_)) = try_img(Box::new(img),None) {
+                if let Ok(copy) = img::dsk_po::PO::from_bytes(disk_img_data) {
+                    return Ok(Box::new(copy));
+                }
+            }
+            debug!("reject PO based on FS heuristics")
         }
     }
     if img::dsk_img::file_extensions().contains(&ext) || ext=="" {

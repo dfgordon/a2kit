@@ -96,7 +96,7 @@ impl ZoneFormat {
                 _ => panic!("sides should be 1 or 2")
             },
             addr_fmt_expr: expr_vec(&["cyl%64","sec","head*32+cyl//64",&format,&chk]),
-            addr_seek_expr: expr_vec(&["cyl%64","sec","head*32+cyl//64",&format,"(a0^a1^a2^a3)&63"]),
+            addr_seek_expr: expr_vec(&["cyl%64","sec","head*32+cyl//64","a3","(a0^a1^a2^a3)&63"]),
             data_expr: expr_vec(&["sec","dat"]),
             markers: [
                 SectorMarker {key: vec![0xd5,0xaa,0x96], mask: vec![0xff,0xff,0xff]},

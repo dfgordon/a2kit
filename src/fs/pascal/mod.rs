@@ -21,6 +21,13 @@ use crate::img;
 use crate::{STDRESULT,DYNERR};
 
 pub const FS_NAME: &str = "a2 pascal";
+const IMAGE_TYPES: [img::DiskImageType;5] = [
+    img::DiskImageType::DO,
+    img::DiskImageType::NIB,
+    img::DiskImageType::WOZ1,
+    img::DiskImageType::WOZ2,
+    img::DiskImageType::DOT2MG
+];
 
 /// Load directory structure from a borrowed disk image.
 /// This is used to test images, as well as being called during FS operations.
@@ -99,6 +106,10 @@ impl Disk
     /// Test an image for the Pascal file system.  Changes method to Auto.
     /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying Pascal");
         img.change_method(img::tracks::Method::Auto);
         // test the volume directory header
          match get_directory(img) {

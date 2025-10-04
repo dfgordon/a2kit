@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] - 2025-10-04
+
+### Fixes
+
+* fix handling of 400K Apple disks
+* remove interleave restriction on 3.5 inch Apple disks
+* eliminate unnecessary elements from disk identification matrix
+
 ## [4.0.0] - 2025-09-20
 
 ### Fixes
@@ -63,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - arguments to many functions use abstract `Track` and `Sector` in place of CHS indices
 * changes to `DiskFS` trait
     - permissions are controlled by `set_attrib`, while `lock`, `unlock`, `protect`, and `unprotect` are eliminated
-* changed interfaces: `escaped_ascii_to_bytes`, `Packing::get_load_address`, `Woz1::create`, `Woz2::create`
+* changed interfaces: `create_fs_*`, `escaped_ascii_to_bytes`, `Packing::get_load_address`, `Woz1::create`, `Woz2::create`
 * changed structures: `merlin::settings::Flag`, `img::TrackSolution`
 * changed enumerations: various error enumerations
 * public became private: `lang::linenum`

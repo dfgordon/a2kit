@@ -255,9 +255,9 @@ pub fn get_tmap_index(trk: Track,kind: &DiskKind) -> Result<usize,DYNERR> {
 		},
 		DiskKind::D35(layout) if layout.sides[0]==1 => {
 			match trk {
-				Track::Num(t) => t,
-				Track::CH((c,_)) => c,
-				Track::Motor((m,_)) => m
+				Track::Num(t) => t*2,
+				Track::CH((c,_)) => c*2,
+				Track::Motor((m,_)) => m*2
 			}
 		},
 		DiskKind::D35(layout) if layout.sides[0]==2 => {
@@ -276,7 +276,7 @@ pub fn get_tmap_index(trk: Track,kind: &DiskKind) -> Result<usize,DYNERR> {
 pub fn trk_from_tmap_idx(tmap_idx: usize,kind: &DiskKind) -> Track {
 	match *kind {
 		DiskKind::D525(_) => Track::Motor((tmap_idx,0)),
-		DiskKind::D35(layout) if layout.sides[0]==1 => Track::Motor((tmap_idx,0)),
+		DiskKind::D35(layout) if layout.sides[0]==1 => Track::Motor((tmap_idx/2,0)),
 		DiskKind::D35(layout) if layout.sides[0]==2 => Track::Motor((tmap_idx/2,tmap_idx%2)),
 		_ => panic!("unsupported disk kind")
 	}
@@ -288,7 +288,7 @@ pub fn get_sector_hood(vol: u8,tmap_idx: usize,kind: &DiskKind,zone: usize) -> S
 	match *kind {
 		DiskKind::D525(_) => SectorHood::a2_525(vol,(tmap_idx as u8+1)/4),
 		DiskKind::D35(layout) => SectorHood::a2_35(
-			(tmap_idx / layout.sides[zone]) as u8,
+			(tmap_idx / 2) as u8,
 			(tmap_idx % layout.sides[zone]) as u8
 		),
 		_ => panic!("unsupported disk kind")
@@ -341,7 +341,7 @@ pub fn find_motor_stops(tmap: &[u8],maybe_fmap: Option<&[u8]>) -> Vec<usize> {
 /// the track's address fields, even if the TMAP/FLUX chunks are something wild.
 /// This can be thought of as inverting the map.
 /// `slot` is the index into the TRKS array (the value of the TMAP/FLUX entry to search for).
-/// Returns `Some((motor_pos, sec_key, is_flux))`, or `None` if there are no entries for `slot`.
+/// Returns `Some((motor_pos, hood, is_flux))`, or `None` if there are no entries for `slot`.
 /// Can panic if arguments are invalid.
 pub fn get_trks_slot_id(vol: u8,slot: usize,tmap: &[u8],maybe_fmap: Option<&[u8]>,kind: &super::DiskKind) -> Option<(u8,SectorHood,bool)> {
 	let mut candidates = Vec::new();
@@ -367,7 +367,7 @@ pub fn get_trks_slot_id(vol: u8,slot: usize,tmap: &[u8],maybe_fmap: Option<&[u8]
 		_  => 1, // otherwise prefer center of head
 	};
 	let motor = match *kind {
-		super::DiskKind::D35(layout) => candidates[which]/layout.sides[0] as u8,
+		super::DiskKind::D35(_) => candidates[which]/2 as u8,
 		_ => candidates[which]
 	};
 	Some((motor,get_sector_hood(vol,candidates[which] as usize,kind,0),is_flux[which]))

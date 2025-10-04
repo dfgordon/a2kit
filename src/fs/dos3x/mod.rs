@@ -27,6 +27,14 @@ use crate::DiskFormat;
 use crate::{STDRESULT,DYNERR};
 
 pub const FS_NAME: &str = "a2 dos";
+const IMAGE_TYPES: [img::DiskImageType;6] = [
+    img::DiskImageType::D13,
+    img::DiskImageType::DO,
+    img::DiskImageType::NIB,
+    img::DiskImageType::WOZ1,
+    img::DiskImageType::WOZ2,
+    img::DiskImageType::DOT2MG
+];
 
 pub fn new_fimg(chunk_len: usize,name: &str) -> Result<super::FileImage,DYNERR> {
     if !pack::is_name_valid(name) {
@@ -130,6 +138,10 @@ impl Disk
     /// Test an image for DOS 3.x.  Changes method to Auto.
     /// Usually called before user parameters are applied.
     pub fn test_img(img: &mut Box<dyn img::DiskImage>, maybe_fmt: Option<&DiskFormat>) -> bool {
+        if !IMAGE_TYPES.contains(&img.what_am_i()) {
+            return false;
+        }
+        log::info!("trying DOS 3.x");
         img.change_method(img::tracks::Method::Auto);
         let tlen = img.end_track();
         if (tlen < 35 || tlen > 40) && maybe_fmt.is_none() {

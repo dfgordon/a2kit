@@ -331,7 +331,7 @@ impl TMap {
                         return Err(Box::new(img::Error::GeometryMismatch))
                     }
                     let map = if flux_set.contains(&[m,h]) { &mut fmap } else { &mut bmap };
-                    map[m] = slot;
+                    map[m*2] = slot;
                     slot += 1;
                 }
             },
