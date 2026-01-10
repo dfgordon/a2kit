@@ -265,24 +265,25 @@ pub fn visit_gather(curs: &TreeCursor, ctx: &mut Context, ws: &Workspace, symbol
             let f = register(&txt, loc, &node, symbols, Some(ctx.running_docstring.clone()),ctx, vec![]);
             if f & merlin::symbol_flags::EXT > 0 {
                 match ws.entries.get(&txt) {
-                    Some(ent) => {
+                    Some(wsym) => {
                         if let Some(ext) = symbols.globals.get_mut(&txt) {
-                            if ent.defs.len() > 0 {
-                                ext.defs = ent.defs.clone();
-                                ext.defining_code = ent.defining_code.clone();
-                                ext.docstring = ent.docstring.clone();
-                            } else if ent.decs.len() > 0 {
+                            if wsym.defs.len() > 0 {
+                                ext.defs = wsym.defs.clone();
+                                ext.defining_code = wsym.defining_code.clone();
+                                ext.docstring = wsym.docstring.clone();
+                            } else if wsym.decs.len() > 0 {
                                 ext.defining_code = None;
                                 ext.docstring = format!("entry exists in operand form");
                             } else {
-                                ext.defining_code = None;
-                                ext.docstring = format!("entry exists but there was an internal error");
+                                if let Some(severity) = ctx.missing_entries() {
+                                    push(rng,"entry was not found in workspace",severity)
+                                }
                             }
                         }
                     },
                     None => {
                         if let Some(severity) = ctx.missing_entries() {
-                            push(rng,"entry was not found in workspace",severity)
+                            push(rng,"symbol was not found in workspace",severity)
                         }
                     }
                 };

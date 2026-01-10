@@ -11,6 +11,7 @@ pub mod stat;
 pub mod modify;
 pub mod langx;
 pub mod completions;
+pub mod ezcopy;
 
 use std::str::FromStr;
 use std::io::Read;

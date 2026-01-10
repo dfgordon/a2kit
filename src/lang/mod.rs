@@ -430,6 +430,29 @@ pub trait Navigate {
 }
 
 
+/// Test for the given language, returns true if no syntax errors are found.
+/// Works for any language, provided it is line-oriented.
+pub fn is_lang(lang: tree_sitter::Language,code: &str) -> bool {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&lang).expect("language not found");
+    let mut iter = code.lines();
+    while let Some(line) = iter.next()
+    {
+        match parser.parse(String::from(line) + "\n",None) {
+            Some(tree) => {
+                let curs = tree.walk();
+                if curs.node().has_error() {
+                    return false;
+                }
+            },
+            None => {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Simple verify, returns an error if syntax check fails, but does not run full diagnostics.
 /// This is used by the CLI to interrupt the pipeline when a bad language file is encountered.
 /// Works for any language, provided it is line-oriented.

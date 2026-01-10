@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use crate::lang;
 use crate::lang::{Navigate,Navigation};
-use log::{trace,error};
 use crate::{STDRESULT,DYNERR};
 
 /// Handles transformations between source encodings used by Merlin and ordinary text editors.
@@ -21,7 +20,8 @@ pub struct Tokenizer
 	widths: [usize;3],
 	style: super::formatter::ColumnStyle,
 	line_sep: String,
-	symbols: Arc<super::Symbols>
+	symbols: Arc<super::Symbols>,
+	logging: bool
 }
 
 impl lang::Navigate for Tokenizer
@@ -41,7 +41,7 @@ impl lang::Navigate for Tokenizer
 		// Root level comment needs no separator, Merlin will indent it automatically.
 		if ["comment","heading"].contains(&curs.node().kind()) && parent.kind()=="source_file" {
 			let txt = lang::node_text(&curs.node(), self.parser.line());
-			trace!("visit: {}",txt);
+			log::trace!("visit: {}",txt);
 			self.tokenized_line.append(&mut txt.replace("\t"," ").as_bytes().to_vec());
 			return Ok(Navigation::GotoSibling);
 		}
@@ -77,7 +77,7 @@ impl lang::Navigate for Tokenizer
 				if curs.node().kind()=="comment" {
 					txt = txt.replace("\t"," ");
 				}
-				trace!("visit: {}",txt);
+				log::trace!("visit: {}",txt);
 				self.tokenized_line.append(&mut txt.as_bytes().to_vec());
 				return Ok(Navigation::GotoSibling);	
 			}
@@ -100,9 +100,14 @@ impl Tokenizer
 			style: super::formatter::ColumnStyle::Variable,
 			widths: [9,6,11],
 			line_sep: "\n".to_string(),
-			symbols: Arc::new(super::Symbols::new())
+			symbols: Arc::new(super::Symbols::new()),
+			logging: true
          }
     }
+	/// if tokenizer is used for identification it may be desirable to disable error log
+	pub fn set_err_log(&mut self,enable: bool) {
+		self.logging = enable;
+	}
 	pub fn set_config(&mut self,settings: &super::settings::Settings) {
 		let c1: usize = settings.columns.c1.try_into().or::<usize>(Ok(9)).unwrap();
 		let c2: usize = settings.columns.c2.try_into().or::<usize>(Ok(6)).unwrap();
@@ -123,7 +128,9 @@ impl Tokenizer
 		let tree = self.parser.parse(line, &self.symbols)?;
 		self.walk(&tree)?;
 		if self.tokenized_line.len()>126 {
-			error!("Merlin line too long");
+			if self.logging {
+				log::error!("Merlin line too long");
+			}
 			return Err(Box::new(lang::Error::Syntax));
 		}
 		for curr in &mut self.tokenized_line {
@@ -177,7 +184,9 @@ impl Tokenizer
 				line += &char::from_u32(img[addr] as u32).unwrap().to_string();
 				addr += 1;
 			} else if img[addr]<128 {
-				error!("unexpected positive ASCII encountered");
+				if self.logging {
+					log::error!("unexpected positive ASCII encountered");
+				}
 				return Err(Box::new(lang::Error::Syntax));
 			} else {
 				line += &char::from_u32(img[addr] as u32 - 128).unwrap().to_string();

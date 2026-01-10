@@ -4,7 +4,8 @@ use num_traits::FromPrimitive;
 use a2kit_macro::DiskStruct;
 use super::types::*;
 use super::{Packer,Error};
-use super::super::{Packing,FileImage,UnpackedData};
+use super::super::{Packing,Records,FileImage,UnpackedData};
+use super::super::fimg::r#as::AppleSingleFile;
 use crate::{STDRESULT,DYNERR};
 
 pub fn pack_date(time: Option<chrono::NaiveDateTime>) -> [u8;2] {
@@ -119,6 +120,28 @@ impl Packing for Packer {
     fn get_load_address(&self,_fimg: &FileImage) -> usize {
         0
     }
+    fn pack(&self,fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+        if AppleSingleFile::test(dat) {
+            log::error!("cannot auto pack AppleSingle");
+            Err(Box::new(Error::BadFormat))
+        } else if dat.is_ascii() {
+            if Records::test(dat) {
+                log::error!("cannot auto pack records");
+                Err(Box::new(Error::BadFormat))
+            } else if FileImage::test(dat) {
+                log::info!("auto packing FileImage as FileImage");
+                *fimg = FileImage::from_json(str::from_utf8(dat)?)?;
+                Ok(())
+            } else {
+                log::info!("auto packing text as FileImage");
+                self.pack_txt(fimg,str::from_utf8(dat)?)
+            }
+        } else {
+            log::info!("auto packing binary as FileImage");
+            self.pack_bin(fimg,dat,load_addr,None)
+        }
+    }
+    
     fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
         Self::verify(fimg)?;
         let typ = fimg.fs_type[0];

@@ -43,6 +43,16 @@ impl FileImage {
         }
         Ok((v[0].clone()?,v[1].clone()?,v[2].clone()?))
     }
+    /// see if the slice is a file image
+    pub fn test(dat: &[u8]) -> bool {
+        match str::from_utf8(dat) {
+            Ok(s) => match json::parse(s) {
+                Ok(parsed) => parsed.has_key("fimg_version") && parsed.has_key("file_system") && parsed.has_key("chunks"),
+                _ => false
+            },
+            _ => false
+        }
+    }
     pub fn ordered_indices(&self) -> Vec<usize> {
         let copy = self.chunks.clone();
         let mut idx_list = copy.into_keys().collect::<Vec<usize>>();

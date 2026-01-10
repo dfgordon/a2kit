@@ -59,6 +59,9 @@ impl Packer {
         }
         Ok(())
     }
+    pub fn get_dos3x_type(fimg: &FileImage) -> Option<FileType> {
+        FileType::from_u8(fimg.fs_type[0] & 0x7f)
+    }
 }
 
 impl Packing for Packer {
@@ -92,6 +95,30 @@ impl Packing for Packer {
                 }
             },
             _ => 0
+        }
+    }
+    fn pack(&self,fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+        if AppleSingleFile::test(dat) {
+            log::info!("auto packing AppleSingle as FileImage");
+            self.pack_apple_single(fimg, dat, load_addr)
+        } else if dat.is_ascii() {
+            if Records::test(dat) {
+                log::info!("auto packing records as FileImage");
+                self.pack_rec_str(fimg,str::from_utf8(dat)?)
+            } else if FileImage::test(dat) {
+                log::info!("auto packing FileImage as FileImage");
+                *fimg = FileImage::from_json(str::from_utf8(dat)?)?;
+                Ok(())
+            } else {
+                log::info!("auto packing text as FileImage");
+                self.pack_txt(fimg,str::from_utf8(dat)?)
+            }
+        } else if load_addr.is_some() {
+            log::info!("auto packing binary as FileImage");
+            self.pack_bin(fimg,dat,load_addr,None)
+        } else {
+            log::error!("could not automatically pack");
+            Err(Box::new(crate::fs::Error::FileFormat))
         }
     }
     fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {

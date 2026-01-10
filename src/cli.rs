@@ -150,6 +150,21 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
         .version(crate_version!());
 
     main_cmd = main_cmd.subcommand(
+        Command::new("cp")
+            .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATHS").required(true))
+            .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
+            .arg(pro_arg())
+            .arg(method_arg())
+            .about("smart copy that formats for the target")
+            .after_help("Disk images can appear midway through a path,
+the path then continues inside the image (e.g. /path/to/mydisk.woz/startup).
+Glob patterns outside a disk image are only expanded if the shell expands them,
+whereas glob patterns inside a disk image are expanded by a2kit.
+Delimiters like quotes are sometimes needed for the latter to work.
+This subcommand is meant as a convenience in non-critical situations.
+If you need to be precise the get/put syntax may be more appropriate.")
+    );
+    main_cmd = main_cmd.subcommand(
         Command::new("get")
             .arg(file_arg("path, key, or address, maybe inside disk image",false,true).long_help(F_LONG_HELP))
             .arg(Arg::new("type").long("type").short('t').help("type of the item")

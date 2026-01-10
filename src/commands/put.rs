@@ -32,13 +32,13 @@ fn pack_primitive(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>, ty
 
 pub fn pack(cmd: &clap::ArgMatches) -> STDRESULT {
     if atty::is(atty::Stream::Stdin) {
-        log::error!("cannot use `put` with console input, please pipe something in");
+        log::error!("cannot use `pack` with console input, please pipe something in");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let mut dat = Vec::new();
     std::io::stdin().read_to_end(&mut dat).expect("failed to read input stream");
     if dat.len()==0 {
-        log::error!("put did not receive any data from previous node");
+        log::error!("pack did not receive any data from previous node");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let path = cmd.get_one::<String>("file").unwrap();

@@ -6,7 +6,7 @@ use chrono::{Timelike,Datelike};
 use std::str::FromStr;
 use a2kit_macro::DiskStruct;
 use super::Packer;
-use super::super::{FileImage,Packing,UnpackedData};
+use super::super::{FileImage,Records,Packing,UnpackedData};
 use super::super::fimg::r#as::AppleSingleFile;
 use binrw::{BinRead,BinWrite};
 use super::types::{SequentialText,Error};
@@ -349,6 +349,28 @@ impl Packing for Packer {
         0
     }
 
+    fn pack(&self,fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+        if AppleSingleFile::test(dat) {
+            log::info!("auto packing AppleSingle as FileImage");
+            self.pack_apple_single(fimg, dat, load_addr)
+        } else if dat.is_ascii() {
+            if Records::test(dat) {
+                log::error!("cannot auto pack records");
+                Err(Box::new(Error::General))
+            } else if FileImage::test(dat) {
+                log::info!("auto packing FileImage as FileImage");
+                *fimg = FileImage::from_json(str::from_utf8(dat)?)?;
+                Ok(())
+            } else {
+                log::info!("auto packing text as FileImage");
+                self.pack_txt(fimg,str::from_utf8(dat)?)
+            }
+        } else {
+            log::info!("auto packing binary as FileImage");
+            self.pack_bin(fimg,dat,load_addr,None)
+        }
+    }
+    
     fn unpack(&self,fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
         Self::verify(fimg)?;
         let typ = String::from_utf8(fimg.fs_type.clone())?;

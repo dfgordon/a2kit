@@ -261,7 +261,8 @@ pub struct Workspace {
 	pub use_map: HashMap<String, HashSet<String>>,
 	/// set of uri that are included by another file
 	pub includes: HashSet<String>,
-	/// all entry symbols in the workspace
+	/// as of v4.1 this includes ENT, EXT, and EXD instances, and the decs, defs, refs lists
+    /// are populated differently.
     pub entries: HashMap<String,Symbol>,
     /// fraction of linker operations in a document
     pub linker_frac: HashMap<String,f64>,
@@ -343,7 +344,7 @@ impl Symbol {
         ans.add_node(loc, node, source);
         ans
     }
-    /// Add a node to the symbol.
+    /// Add a node to the symbol.  Do not use for workspace symbols.
     /// The node can be `label_def`, `label_ref`, `macro_def`, `macro_ref`, or `var_mac`.
     /// The latter can occur without a wrapper in some pseudo-ops such as `ASC`.
     /// This will not create any overlaps between `refs`, `defs`, and `decs`.
@@ -353,7 +354,7 @@ impl Symbol {
             self.flags |= symbol_flags::ARG | symbol_flags::VAR;
             return;
         }
-        let mut is_dec = false;
+        let mut pushed_loc = false;
         if let Some(parent) = node.parent() {
             if let Some(grandparent) = parent.parent() {
                 if grandparent.kind() == "arg_jsr" {
@@ -363,47 +364,86 @@ impl Symbol {
             if parent.kind() == "arg_ent" {
                 self.flags |= symbol_flags::ENT;
                 self.decs.push(loc.clone());
-                is_dec = true;
+                pushed_loc = true;
             }
             if parent.kind() == "arg_ext" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
-                is_dec = true;
+                pushed_loc = true;
             }
             if parent.kind() == "arg_exd" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
-                is_dec = true;
+                pushed_loc = true;
             }
         }
         if let Some(next) = node.next_named_sibling() {
             if next.kind() == "psop_ent" {
                 self.flags |= symbol_flags::ENT;
-                // in this form we really do have a definition
+                self.defs.push(loc.clone());
+                pushed_loc = true;
             }
             if next.kind() == "psop_ext" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
-                is_dec = true;
+                pushed_loc = true;
             }
             if next.kind() == "psop_exd" {
                 self.flags |= symbol_flags::EXT;
                 self.decs.push(loc.clone());
-                is_dec = true;
+                pushed_loc = true;
             }
         }
-        match node.kind()  {
-            "label_def" if !is_dec => self.defs.push(loc),
-            "macro_def" => { self.defs.push(loc); self.flags |= symbol_flags::MAC },
-            "label_ref" if !is_dec => self.refs.push(loc),
-            "macro_ref" => { self.refs.push(loc); self.flags |= symbol_flags::MAC},
-            _ => {}
-        };
+        if !pushed_loc {
+            match node.kind()  {
+                "label_def" => self.defs.push(loc),
+                "macro_def" => { self.defs.push(loc); self.flags |= symbol_flags::MAC },
+                "label_ref" => self.refs.push(loc),
+                "macro_ref" => { self.refs.push(loc); self.flags |= symbol_flags::MAC},
+                _ => {}
+            };
+        }
         if let Some(child) = node.named_child(0) {
             if child.kind() == "local_label" {
                 self.flags |= symbol_flags::LOC;
             } else if child.kind() == "var_label" {
                 self.flags |= symbol_flags::VAR;
+            }
+        }
+    }
+    /// Add a node to the symbol with workspace rules.
+    /// This differs from add_node because it only expects ENT, EXT, or EXD labels,
+    /// and adds every ENT instance to the decs/defs list, and every EXT/EXD instance to the refs list.
+    /// In the workspace, both EXT and ENT flags can be set for the same symbol.
+    /// By contrast, add_node takes the module's point of view, where these are all decs or defs,
+    /// and the flags are expected to be mutually exclusive.
+    pub fn add_node_ws(&mut self, loc: lsp::Location, node: &tree_sitter::Node, _source: &str) {
+        if let Some(parent) = node.parent() {
+            if parent.kind() == "arg_ent" {
+                self.flags |= symbol_flags::ENT;
+                self.decs.push(loc.clone());
+            }
+            if parent.kind() == "arg_ext" {
+                self.flags |= symbol_flags::EXT;
+                self.refs.push(loc.clone());
+            }
+            if parent.kind() == "arg_exd" {
+                self.flags |= symbol_flags::EXT;
+                self.refs.push(loc.clone());
+            }
+        }
+        if let Some(next) = node.next_named_sibling() {
+            if next.kind() == "psop_ent" {
+                self.flags |= symbol_flags::ENT;
+                self.defs.push(loc.clone());
+            }
+            if next.kind() == "psop_ext" {
+                self.flags |= symbol_flags::EXT;
+                self.refs.push(loc.clone());
+            }
+            if next.kind() == "psop_exd" {
+                self.flags |= symbol_flags::EXT;
+                self.refs.push(loc.clone());
             }
         }
     }

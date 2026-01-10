@@ -13,6 +13,7 @@ use crate::lang::server::Checkpoint;
 pub struct CheckpointManager {
     doc: Document,
     symbols: Arc<Symbols>,
+    ws_symbols: Arc<HashMap<String,Symbol>>,
     folding_ranges: Vec<lsp::FoldingRange>
 }
 
@@ -153,7 +154,14 @@ impl Checkpoint for CheckpointManager {
     }
     fn get_refs(&self,sel_loc: &lsp::Location) -> Vec<lsp::Location> {
         if let Some(sym) = find_clicked(&self.symbols, sel_loc) {
-            return sym.refs.clone();
+            let mut ans = Vec::new();
+            if sym.flags & super::symbol_flags::ENT > 0 {
+                if let Some(wsym) = self.ws_symbols.get(&sym.name) {
+                    ans.append(&mut wsym.refs.clone());
+                }
+            }
+            ans.append(&mut sym.refs.clone());
+            return ans;
         }
         Vec::new()
     }
@@ -170,6 +178,7 @@ impl CheckpointManager {
         Self {
             doc: Document::from_string("".to_string(),0),
             symbols: Arc::new(Symbols::new()),
+            ws_symbols: Arc::new(HashMap::new()),
             folding_ranges: Vec::new()
         }
     }
@@ -181,10 +190,16 @@ impl CheckpointManager {
     pub fn update_symbols(&mut self,sym: Symbols) {
         self.symbols = Arc::new(sym);
     }
+    pub fn update_ws_symbols(&mut self,wsym: HashMap<String,Symbol>) {
+        self.ws_symbols = Arc::new(wsym);
+    }
     pub fn update_folding_ranges(&mut self,folding_ranges: Vec<lsp::FoldingRange>) {
         self.folding_ranges = folding_ranges;
     }
     pub fn shared_symbols(&self) -> Arc<Symbols> {
         Arc::clone(&self.symbols)
+    }
+    pub fn shared_ws_symbols(&self) -> Arc<HashMap<String,Symbol>> {
+        Arc::clone(&self.ws_symbols)
     }
 }

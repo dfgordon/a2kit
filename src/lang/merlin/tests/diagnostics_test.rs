@@ -121,6 +121,11 @@ mod macros {
     #[test]
     fn arguments() {
         super::test_diagnostics("test-mac-args.S", None, None, &[
+            "assembly disabled by ELSE",
+            "argument missing: `]3`",
+            "argument not used",
+            "conditionally missing argument: `]2`",
+            "argument not used",
             "uninterpreted literal"
         ]);
     }

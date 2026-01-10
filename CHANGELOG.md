@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-01-10
+
+### Fixes
+
+* fix a few misleading error messages
+* fix an issue where some unlikely Applesoft syntax errors could be passed over
+* Applesoft minifier handles removing REM statements at the end of a program
+* eliminate a panic that could happen during Merlin macro expansion
+
+### New Behaviors
+
+* the `-t auto` option works in more cases
+
+### New Features
+
+* "smart copy" subcommand `cp`
+* Merlin language support is improved
+    - hovering on an ENT label will list the modules that use it
+    - `go to references` on an ENT finds corresponding EXT labels in other modules
+    - error checking of macro arguments allows for conditionals
+
 ## [4.0.1] - 2025-10-04
 
 ### Fixes

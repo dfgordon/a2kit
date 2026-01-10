@@ -150,7 +150,7 @@ pub enum Sector {
     /// standard index used by a file system, subject to various transformations
     Num(usize),
     /// (index,address), the address is the explicit sector address to seek without transformation,
-    /// the index may be used to determined other sector properties in the usual way 
+    /// the index may be used to determine other sector properties in the usual way 
     Addr((usize,Vec<u8>))
 }
 

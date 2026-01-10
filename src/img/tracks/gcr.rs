@@ -5,8 +5,10 @@
 //! Special handling can be triggered by elements of the `ZoneFormat` struct.
 //! 
 //! The `FluxCells` that are passed in for Apple disks must use tick normalizations as follows:
+//! 
 //! * Apple 5.25 inch - 125000 ps
 //! * Apple 3.5 inch - 62500 ps
+//! 
 //! This differs from WOZ image normalization which is always 125000 ps.
 //! Callers external to the library should not have to worry about this.
 

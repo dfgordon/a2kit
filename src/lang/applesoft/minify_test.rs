@@ -230,6 +230,12 @@ mod minify_rem {
 		super::test_minify(test_code, expected, 1);
 	}
 	#[test]
+	fn rem_line_trails() {
+		let test_code = "10 input x: rem input\n20 print x: goto 30\n30 rem program over\n40rem copyright whenever";
+		let expected = "10inputx:printx:goto40\n40END";
+		super::test_minify(test_code,expected,3);
+	}
+	#[test]
 	fn rem_no_ref() {
 		let test_code = "10 rem print a number\n20 print x";
 		let expected = "20printx";

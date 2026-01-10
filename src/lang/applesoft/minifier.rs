@@ -55,7 +55,8 @@ pub struct Minifier
 	forbids_combining_next: HashSet<usize>,
 	linenum_refs: HashSet<usize>,
 	external_refs: HashSet<usize>,
-	forbids_combining_any: bool
+	forbids_combining_any: bool,
+	required_end_label: Option<usize>
 }
 
 impl Navigate for Minifier
@@ -93,7 +94,8 @@ impl Minifier
 			forbids_combining_any: false,
 			forbids_combining_next: HashSet::new(),
 			linenum_refs: HashSet::new(),
-			external_refs: HashSet::new()
+			external_refs: HashSet::new(),
+			required_end_label: None
 		}
     }
 	/// figure out if the short name needs to be guarded against forming a hidden token
@@ -121,12 +123,22 @@ impl Minifier
 		let mut curr_idx = 0;
 		let mut curr_val = self.all_lines[curr_idx];
 		for deleted in &self.deleted_lines {
+			log::debug!("find replacement for deleted line {}",*deleted);
+			// find a new destination by looking for the first undeleted line that follows it
 			while *deleted >= curr_val || self.deleted_lines.contains(&curr_val) {
 				curr_idx += 1;
 				if curr_idx >= self.all_lines.len() {
-					return Err(Box::new(crate::lang::Error::LineNumber));
+					// If this happens we are deleting the last line in the program; if there is a reference
+					// to this line then we have to replace it with an END statement; encode this with MAX.
+					curr_val = usize::MAX;
+					break;
 				}
 				curr_val = self.all_lines[curr_idx];
+			}
+			if curr_val != usize::MAX {
+				log::debug!("replace with {}",curr_val);
+			} else {
+				log::debug!("replace with END");
 			}
 			self.line_map.insert(*deleted,curr_val);
 			// line references will be updated later as they are replaced
@@ -329,9 +341,21 @@ impl Minifier
 					if let Some(num) = lang::node_integer::<usize>(&curs.node(), &self.line) {
 						if let Some(new_num) = self.line_map.get(&num) {
 							self.linenum_refs.remove(&num); // assume if it was changed it was changed everywhere
-							self.linenum_refs.insert(*new_num);
 							self.minified_line += &self.line[self.write_curs..curs.node().byte_range().start];
-							self.minified_line += &new_num.to_string();
+							if *new_num == usize::MAX {
+								// the reference points to the end of the program,
+								// and we will have to add a line with END
+								if let Some(last) = self.all_lines.last() {
+									self.required_end_label = Some(*last);
+									self.linenum_refs.insert(*last);
+									self.minified_line += &last.to_string();
+								} else {
+									panic!("unexpectedly empty program");
+								}
+							} else {
+								self.linenum_refs.insert(*new_num);
+								self.minified_line += &new_num.to_string();
+							}
 							self.write_curs = curs.node().byte_range().end;
 							return Ok(Navigation::GotoSibling);
 						}
@@ -500,7 +524,10 @@ impl Minifier
 		}
 		//self.minify_stage1(program)
 		let stage1 = self.minify_stage1(program)?;
-		let stage2 = self.minify_stage2(&stage1)?;
+		let mut stage2 = self.minify_stage2(&stage1)?;
+		if let Some(num) = self.required_end_label {
+			stage2 += &format!("{}END",num);
+		}
 		if self.flags & FLAG_COMBINE_LINES > 0 && !self.forbids_combining_any {
 			self.minify_stage3(&stage2)
 		} else {

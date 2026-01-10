@@ -13,6 +13,21 @@ impl Records {
             map: HashMap::new()
         }
     }
+    /// see if the slice is a JSON string with fimg_type = rec
+    pub fn test(dat: &[u8]) -> bool {
+        match str::from_utf8(dat) {
+            Ok(s) => match json::parse(s) {
+                Ok(parsed) => {
+                    match parsed["fimg_type"].as_str() {
+                        Some(val) => val == "rec",
+                        None => false
+                    }
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
     /// add a string as record number `num`, fields should be separated by LF or CRLF.
     pub fn add_record(&mut self,num: usize,fields: &str) {
         self.map.insert(num,fields.to_string());

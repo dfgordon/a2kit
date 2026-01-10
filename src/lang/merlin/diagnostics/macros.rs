@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use lsp_types as lsp;
 use crate::lang::{Navigate,Navigation};
 use crate::lang::server::basic_diag;
@@ -9,43 +9,66 @@ use crate::DYNERR;
 
 struct Substitutor {
     line: String,
-    delta: usize,
+    delta: isize,
     build: String,
     search: Vec<String>,
     replace: Vec<String>,
     types: Vec<String>,
-    matched_args: HashSet<usize>
+    /// map from argument number (1-8) conditional depth
+    matched_args: HashMap<usize,usize>,
+    conditional_depth: usize
 }
 
 impl Substitutor {
-    fn new(line: &str,search: Vec<String>,replace: Vec<String>,types: Vec<String>) -> Self {
+    fn new(search: Vec<String>,replace: Vec<String>,types: Vec<String>) -> Self {
         Self {
-            line: line.to_owned(),
+            line: String::new(),
             delta: 0,
             build: String::new(),
             search,
             replace,
             types,
-            matched_args: HashSet::new()
+            matched_args: HashMap::new(),
+            conditional_depth: 0
         }
     }
-    fn result(&self) -> (String,HashSet<usize>) {
+    fn reset(&mut self,line: &str) {
+        self.line = line.to_owned();
+        self.delta = 0;
+        self.build = String::new();
+        self.matched_args = HashMap::new();
+    }
+    fn result(&self) -> (String,HashMap<usize,usize>) {
         (self.build.clone(),self.matched_args.clone())
     }
 }
 
+// This makes substitutions and keeps track of arguments that have been matched.
+// It also sets matched_args, which contains the set of arguments for which a replacement was made,
+// and the depth of the conditional (maybe 0) where it happened.
 impl Navigate for Substitutor {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
         let txt = node_text(&curs.node(),&self.line);
-        let curr_len = curs.node().start_position().column + self.delta;
-        if curr_len > self.build.len() {
-            self.build += &" ".repeat(curr_len - self.build.len());
+        let curr_len = curs.node().start_position().column as isize + self.delta;
+        // this detects whether we moved past some spaces in getting to this node, if so add them to the build
+        if self.delta > 0 && curr_len > self.build.len() as isize {
+            self.build += &" ".repeat(curr_len as usize - self.build.len());
+        }
+        // we do not evaluate conditionals here, we merely gather information so we can decline
+        // to offer the missing argument diagnostic when we know it might be wrong
+        if ["psop_if","psop_do"].contains(&curs.node().kind()) {
+            self.conditional_depth += 1;
+        }
+        if curs.node().kind() == "psop_fin" {
+            if self.conditional_depth > 0 {
+                self.conditional_depth -= 1;
+            }
         }
         for i in 0..self.search.len() {
             if curs.node().kind() == self.types[i] &&  txt == self.search[i] {
-                self.matched_args.insert(i);
+                self.matched_args.insert(i,self.conditional_depth);
                 self.build += &self.replace[i];
-                self.delta += self.replace[i].len() - self.search[i].len();
+                self.delta += self.replace[i].len() as isize - self.search[i].len() as isize;
                 return Ok(Navigation::GotoSibling);
             }
         }
@@ -63,29 +86,16 @@ impl Navigate for Substitutor {
     }
 }
 
-/// Make substitutions in a line.
-/// The line will not be adjusted.  Line terminator is added if necessary.
-/// Returns (updated line, set that was actually replaced)
-fn substitute(parser: &mut tree_sitter::Parser, line: &str, search: &Vec<String>, replace: &Vec<String>, types: &Vec<String>)
--> Result<(String,HashSet<usize>),DYNERR> {
-    let mut subs = Substitutor::new(line,search.clone(),replace.clone(),types.clone());
-    if let Some(tree) = parser.parse(&line,None) {
-        subs.walk(&tree)?;
-    }
-    let (build,matched_args) = subs.result();
-    Ok((build,matched_args))
-}
-
 /// Substitute macro variables with arguments
 /// * txt: text of the macro, parsing hints should already be present
 /// * nodes: list of macro argument nodes
 /// * call_source: text of the line where the macro is called
 /// returns (expanded macro, set of variables that were actually used)
-fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str, vers: &MerlinVersion) -> Result<(String,HashSet<usize>),DYNERR> {
+fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str, vers: &MerlinVersion) -> Result<(String,HashMap<usize,usize>),DYNERR> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_merlin6502::LANGUAGE.into())?;
     let mut ans = String::new();
-    let mut matches = HashSet::new();
+    let mut matches = HashMap::new();
     let mut search = Vec::new();
     let mut replace = Vec::new();
     let mut types = Vec::new();
@@ -107,13 +117,18 @@ fn substitute_vars(txt: &str, nodes: &Vec<tree_sitter::Node>, call_source: &str,
         replace.push(format!("]{}",i + 1));
         types.push("var_mac".to_string());
     }
+    let mut subs = Substitutor::new(search,replace,types);
     for line in txt.lines() {
         let terminated = line.to_string() + "\n";
-        let (ln,partial) = substitute(&mut parser, &terminated, &search, &replace, &types)?;
+        subs.reset(&terminated);
+        if let Some(tree) = parser.parse(&terminated,None) {
+            subs.walk(&tree)?;
+        }
+        let (ln,partial) = subs.result();
         ans += &ln;
         ans += "\n";
-        for mtch in partial {
-            matches.insert(mtch);
+        for (arg_num,depth) in partial {
+            matches.insert(arg_num,depth);
         }
     }
     Ok((ans, matches))
@@ -260,12 +275,16 @@ pub fn check_macro_args(node: &tree_sitter::Node, symbols: &mut Symbols, ctx: &m
         }
         if let Ok((_,arg_matches)) = substitute_vars(sym.defining_code.as_ref().unwrap(), &nodes, ctx.line(), &symbols.assembler) {
             for i in arg_count+1..9 {
-                if arg_matches.contains(&i) {
-                    diag.push(basic_diag(rng, &format!("argument missing: `]{}`",i),lsp::DiagnosticSeverity::ERROR));
-                }
+                match arg_matches.get(&i) {
+                    Some(depth) if *depth == 0 => diag.push(basic_diag(rng, 
+                        &format!("argument missing: `]{}`",i),lsp::DiagnosticSeverity::ERROR)),
+                    Some(_) => diag.push(basic_diag(rng,
+                        &format!("conditionally missing argument: `]{}`",i),lsp::DiagnosticSeverity::HINT)),
+                    None => {}
+                };
             }
             for i in 0..nodes.len() {
-                if !arg_matches.contains(&(i+1)) {
+                if !arg_matches.contains_key(&(i+1)) {
                     let rng = lsp_range(nodes[i].range(), ctx.row(), ctx.col());
                     diag.push(basic_diag(rng, "argument not used",lsp::DiagnosticSeverity::WARNING));
                 }

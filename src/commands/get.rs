@@ -43,13 +43,13 @@ fn unpack_primitive(fimg: &FileImage,typ: ItemType,rec_len: Option<usize>,trunc:
 
 pub fn unpack(cmd: &clap::ArgMatches) -> STDRESULT {
     if atty::is(atty::Stream::Stdin) {
-        log::error!("cannot use `put` with console input, please pipe something in");
+        log::error!("cannot use `unpack` with console input, please pipe something in");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let mut dat = Vec::new();
     std::io::stdin().read_to_end(&mut dat).expect("failed to read input stream");
     if dat.len()==0 {
-        log::error!("put did not receive any data from previous node");
+        log::error!("unpack did not receive any data from previous node");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     let trunc = cmd.get_flag("trunc");

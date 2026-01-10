@@ -156,6 +156,11 @@ fn main() -> Result<(),Box<dyn std::error::Error>>
     if let Some(cmd) = matches.subcommand_matches("unpack") {
         return commands::get::unpack(cmd);
     }
+
+    // Copy files with compact syntax
+    if let Some(cmd) = matches.subcommand_matches("cp") {
+        return commands::ezcopy::ezcopy(cmd);
+    }
     
     log::error!("No subcommand was found, try `a2kit --help`");
     return Err(Box::new(CommandError::InvalidCommand));

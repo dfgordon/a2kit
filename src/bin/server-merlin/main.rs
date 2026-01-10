@@ -376,8 +376,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                     if let Some(chkpt) = tools.doc_chkpts.get_mut(&result.uri.to_string()) {
                         update_client_toolbar(&connection, &result.symbols).expect("toolbar update failed");
                         chkpt.update_symbols(result.symbols);
+                        chkpt.update_ws_symbols(tools.workspace.entries.clone());
                         chkpt.update_folding_ranges(result.folding);
                         tools.hover_provider.use_shared_symbols(chkpt.shared_symbols());
+                        tools.hover_provider.use_shared_ws_symbols(chkpt.shared_ws_symbols());
                         tools.completion_provider.use_shared_symbols(chkpt.shared_symbols());
                         tools.tokenizer.use_shared_symbols(chkpt.shared_symbols());
                         tools.formatter.use_shared_symbols(chkpt.shared_symbols());

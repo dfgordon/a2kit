@@ -466,7 +466,7 @@ impl Analyzer {
 	}
 	fn process_variable_ref(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR>	{
         if curs.node().has_error() {
-            return Ok(Navigation::GotoSibling);
+            return Ok(Navigation::GotoChild);
         }
 		let is_recall = match curs.node().prev_named_sibling() {
             Some(sib) => sib.kind()=="tok_recall",

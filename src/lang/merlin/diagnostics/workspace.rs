@@ -33,24 +33,27 @@ impl Workspace {
     }
     pub fn get_ws_symbols(&self) -> Vec<lsp::WorkspaceSymbol> {
         let mut ans = Vec::new();
+        let mut instances: Vec<(lsp::Location,String)> = Vec::new();
         for (name,sym) in &self.entries {
-            let mut locs = Vec::new();
+            for loc in &sym.decs {
+                instances.push((loc.clone(),name.clone()));
+            }
             for loc in &sym.defs {
-                locs.push(loc.clone());
+                instances.push((loc.clone(),name.clone()));
             }
             for loc in &sym.refs {
-                locs.push(loc.clone());
+                instances.push((loc.clone(),name.clone()));
             }
-            for loc in locs {
-                ans.push(lsp::WorkspaceSymbol {
-                    name: name.to_owned(),
-                    kind: lsp::SymbolKind::CONSTANT,
-                    tags: None,
-                    container_name: None,
-                    location: lsp::OneOf::Left(loc),
-                    data: None
-                });
-            }
+        }
+        for (loc,name) in instances {
+            ans.push(lsp::WorkspaceSymbol {
+                name: name.to_owned(),
+                kind: lsp::SymbolKind::CONSTANT,
+                tags: None,
+                container_name: None,
+                location: lsp::OneOf::Left(loc),
+                data: None
+            });
         }
         ans
     }
@@ -174,8 +177,8 @@ impl WorkspaceScanner {
             dir_count: 0,
             ws: Workspace::new(),
             running_docstring: String::new(),
-            scan_patt: regex::Regex::new(r"^\S*\s+(ENT|PUT|USE|REL|ent|put|use|rel)(\s+|$)").expect(RCH),
-            link_patt: regex::Regex::new(r"^\S*\s+(LNK|LKV|ASM|lnk|lkv|asm)\s+").expect(RCH)
+            scan_patt: regex::Regex::new(r"(?i)^\S*\s+(ent|ext|exd|put|use|rel)(\s+|$)").expect(RCH),
+            link_patt: regex::Regex::new(r"(?i)^\S*\s+(lnk|lkv|asm)\s+").expect(RCH)
         }
     }
     /// Workspace scanner has its own copies that are not always up to date.
@@ -373,32 +376,34 @@ impl Navigate for WorkspaceScanner {
             return Ok(Navigation::Exit);
         }
 
-        // Handle entries.
+        // Handle workspace labels including ENT, EXT, EXD
 
-        if curr.kind() == "label_def" && next.is_some() && next.unwrap().kind() == "psop_ent" {
+        if curr.kind() == "label_def" && next.is_some() && ["psop_ent","psop_ext","psop_exd"].contains(&next.unwrap().kind()) {
             let name = node_text(&curr,&self.line);
             if !self.ws.entries.contains_key(&name) {
                 self.ws.entries.insert(name.clone(),Symbol::new(&name));
             }
             let sym = self.ws.entries.get_mut(&name).unwrap();
-            sym.add_node(loc, &curr, &self.line);
-            sym.defining_code = Some(self.line.clone());
-            sym.docstring = self.running_docstring.clone();
-            self.running_docstring = String::new();
+            sym.add_node_ws(loc, &curr, &self.line);
+            if next.unwrap().kind() == "psop_ent" {
+                sym.defining_code = Some(self.line.clone());
+                sym.docstring = self.running_docstring.clone();
+                self.running_docstring = String::new();
+            }
             return Ok(Navigation::Exit);
         }
-        if curr.kind() == "psop_ent" {
-            let mut sib = match next {
-                Some(n) => n.named_child(0),
-                None => None
-            };
-            while sib.is_some() && sib.unwrap().kind() == "label_ref" {
+        if ["psop_ent","psop_ext","psop_exd"].contains(&curr.kind()) {
+            return Ok(Navigation::GotoSibling);
+        }
+        if ["arg_ent","arg_ext","arg_exd"].contains(&curr.kind()) {
+            let mut sib = curr.named_child(0);
+            while sib.is_some() && ["label_ref","label_def"].contains(&sib.unwrap().kind()) {
                 let name = node_text(&sib.unwrap(),&self.line);
                 if !self.ws.entries.contains_key(&name) {
                     self.ws.entries.insert(name.clone(),Symbol::new(&name));
                 }
                 let sym = self.ws.entries.get_mut(&name).unwrap();
-                sym.add_node(loc.clone(), &sib.unwrap(), &self.line);
+                sym.add_node_ws(loc.clone(), &sib.unwrap(), &self.line);
                 sib = sib.unwrap().next_named_sibling();
             }
             return Ok(Navigation::Exit);
