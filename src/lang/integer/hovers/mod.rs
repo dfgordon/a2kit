@@ -98,14 +98,16 @@ impl Navigate for HoverProvider {
                 }
             }
 
-            if ["statement_goto", "statement_gosub", "statement_then_line"].contains(&curs.node().kind()) {
-                if let Some(next) = curs.node().next_named_sibling() {
-                    if let Some(num) = node_integer(&next,&self.line) {
-                        if let Some(docstring) = self.symbols.docstring(num) {
-                            if self.markup.value.len() > 0 {
-                                self.markup.value += "\n\n---\n\n";
+            if curs.node().kind() == "integer" {
+                if let Some(prev) = curs.node().prev_named_sibling() {
+                    if ["statement_goto", "statement_gosub", "statement_then_line"].contains(&prev.kind()) {
+                        if let Some(num) = node_integer(&curs.node(),&self.line) {
+                            if let Some(docstring) = self.symbols.docstring(num) {
+                                if self.markup.value.len() > 0 {
+                                    self.markup.value += "\n\n---\n\n";
+                                }
+                                self.markup.value += &docstring.to_string();
                             }
-                            self.markup.value += &docstring.to_string();
                         }
                     }
                 }

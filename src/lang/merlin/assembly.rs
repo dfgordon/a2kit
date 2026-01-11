@@ -260,7 +260,6 @@ pub fn eval_conditional(start_node: &tree_sitter::Node, source: &str, pc: Option
                 if let Some(grandchild) = child.child(0) {
                     if grandchild.kind() == "var_mac" || (grandchild.kind() == "var_cnt" && symbols.assembler != MerlinVersion::Merlin8) {
                         // induce a deferred evalution
-                        // TODO: the parser has to be changed to produce var_cnt
                         return Err(Box::new(Error::ExpressionEvaluation));
                     }
                 }

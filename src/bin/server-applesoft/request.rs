@@ -7,7 +7,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use a2kit::lang::server::{send_edit_req,Checkpoint,Tokens};
-use a2kit::lang::disk_server;
+use a2kit::lang::{disk_server,normalize_client_uri_str};
 use a2kit::lang::applesoft;
 use super::logger;
 use super::rpc_error::PARSE_ERROR;
@@ -83,6 +83,22 @@ pub fn handle_request(
         lsp::request::ExecuteCommand::METHOD => {
             if let Ok(params) = serde_json::from_value::<lsp::ExecuteCommandParams>(req.params) {
                 match params.command.as_str() {
+                    "applesoft.activeEditorChanged" => {
+                        if params.arguments.len()==1 {
+                            let uri_res = serde_json::from_value::<String>(params.arguments[0].clone());
+                            if let Ok(uri) = uri_res {
+                                let normalized_uri = normalize_client_uri_str(&uri).expect("could not parse URI");
+                                if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
+                                    let handle = crate::launch_analysis_thread(
+                                        Arc::clone(&tools.analyzer),
+                                        chk.get_doc()
+                                    );
+                                    tools.thread_handles.push_back(handle);
+                                }
+                                resp = lsp_server::Response::new_ok(req.id,serde_json::Value::Null);
+                            }
+                        }
+                    },
                     "applesoft.semantic.tokens" => {
                         if params.arguments.len()==1 {
                             if let Ok(program) = serde_json::from_value::<String>(params.arguments[0].clone()) {

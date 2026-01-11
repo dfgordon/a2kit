@@ -76,14 +76,17 @@ Set RUST_LOG environment variable to control logging level.
 
 Examples:
 ---------
+smart copy:            `a2kit cp myimg.woz/program ./program.bas`
 create DOS image:      `a2kit mkdsk -o dos33 -v 254 -t woz2 -d myimg.woz`
 create ProDOS image:   `a2kit mkdsk -o prodos -v disk.new -t woz2 -d myimg.woz`
-Language line entry:   `a2kit verify -t atxt`
-Language file check:   `a2kit get -f myprog.bas | a2kit verify -t atxt`
-Tokenize to file:      `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt > prog.atok
-Tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \\
+language line entry:   `a2kit verify -t atxt`
+language file check:   `a2kit get -f myprog.bas | a2kit verify -t atxt`
+detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok
+tokenize to file:      `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt > prog.atok
+tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \\
                            | a2kit put -f prog -t atok -d myimg.dsk`
-Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokenize -t atok";
+    ...or smart copy:  `a2kit cp -a 2049 prog.bas myimg.dsk";
+
     let img_types = [
         "d13", "do", "po", "woz1", "woz2", "imd", "img", "2mg", "nib", "td0",
     ];
@@ -151,8 +154,14 @@ Detokenize from image: `a2kit get -f prog -t atok -d myimg.dsk | a2kit detokeniz
 
     main_cmd = main_cmd.subcommand(
         Command::new("cp")
-            .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATHS").required(true))
-            .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false))
+            .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATHS").required(true)
+                .long_help("Paths inside the disk image always use the forward slash.
+It is OK to have a mixture such as `c:\\path\\to\\disk.img/path/to/file`.
+Recursive glob patterns like `disk.img/**` will expand correctly,
+but the files will all go to the same target directory."))
+            .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false)
+                .long_help("Specify the load address that is stored with some Apple file types.
+This is only needed for host-to-image copies involving Apple file systems"))
             .arg(pro_arg())
             .arg(method_arg())
             .about("smart copy that formats for the target")
