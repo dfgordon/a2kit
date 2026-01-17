@@ -1,6 +1,5 @@
-use assert_cmd::prelude::*; // Add methods on commands
 use predicates::prelude::*; // Used for writing assertions
-use std::process::Command; // Run programs
+use assert_cmd::cargo; // Run programs
 use std::path::PathBuf;
 use tempfile;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
@@ -51,11 +50,49 @@ AD 41 41 31 32 33 C4 31 30 00 AC 08 96 00 AF 28
 52 41 43 41 44 41 42 52 41 29 00 00 00"#;
 
 #[test]
+fn no_match() -> STDRESULT {
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    let dir = tempfile::tempdir()?;
+    let dimg_glob = PathBuf::from("tests").join("prodos-bigfiles.woz/neverwas");
+    cmd.arg("cp").arg(dimg_glob).arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no matches"));
+
+    Ok(())
+}
+
+#[test]
+fn rename_invalid_name() -> STDRESULT {
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("prodos.do");
+    let host_path = dir.path().join("bad-name");
+    let renamed_path = dir.path().join("prodos.do/bad.name");
+    std::fs::write(&host_path,vec![1,2,3]).expect("write failed");
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("mkdsk")
+        .arg("-v").arg("new.disk").arg("-t").arg("do").arg("-o").arg("prodos")
+        .arg("-d").arg(dimg_path.clone())
+        .assert()
+        .success();
+
+    // using the plain disk image as destination should fail
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("cp").arg(&host_path).arg(dimg_path.clone()).assert().failure();
+
+    // using the destination with the new filename specified should succeed
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("cp").arg(&host_path).arg(renamed_path.clone()).assert().success();
+
+    Ok(())
+}
+
+#[test]
 fn host_to_do() -> STDRESULT {
     
     // make a disk image in the temp directory
 
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("dos33.do");
     let host_path = PathBuf::from("tests").join("applesoft").join("test.bas");
@@ -67,7 +104,7 @@ fn host_to_do() -> STDRESULT {
 
     // smart copy an Applesoft source to the image
 
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("cp").arg(host_path).arg(dimg_path.clone()).assert().success();
 
     // check catalog
@@ -75,8 +112,8 @@ fn host_to_do() -> STDRESULT {
     let expected = 
 r#"DISK VOLUME 254
 
- A 002 TEST.BAS"#;
-    cmd = Command::cargo_bin("a2kit")?;
+ A 002 TEST"#;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("catalog")
         .arg("-d").arg(dimg_path.clone())
         .assert()
@@ -85,11 +122,11 @@ r#"DISK VOLUME 254
 
     // check tokens
 
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("get")
         .arg("-d").arg(dimg_path)
         .arg("-t").arg("atok")
-        .arg("-f").arg("test.bas")
+        .arg("-f").arg("test")
         .assert()
         .success()
         .stdout(predicate::eq(hex::decode(EXPECTED_TOKS
@@ -102,7 +139,7 @@ r#"DISK VOLUME 254
 
 #[test]
 fn basic_to_host() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_glob = PathBuf::from("tests").join("prodos-bigfiles.woz/hello");
     cmd.arg("cp").arg(dimg_glob).arg(dir.path())
@@ -115,7 +152,7 @@ fn basic_to_host() -> STDRESULT {
 
 #[test]
 fn glob_recs_to_host() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_glob = PathBuf::from("tests").join("prodos-bigfiles.woz/tree*");
     cmd.arg("cp").arg(dimg_glob).arg(dir.path())
@@ -135,12 +172,12 @@ fn glob_recs_to_host() -> STDRESULT {
 
 #[test]
 fn cpm_host_to_image() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("osb.imd");
     std::fs::write(dir.path().join("GO.SUB"),"PIP B:PROG1.BAS=A:PROG1.BAS\nB:\nREN PROG2.BAS=PROG1.BAS\n")?;
     std::fs::write(dir.path().join("DATA"),&[0xff,0x01,0xe0,0xd5])?;
 
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("mkdsk")
         .arg("-t").arg("imd").arg("-o").arg("cpm2")
         .arg("-k").arg("5.25in-osb-sssd")
@@ -148,7 +185,7 @@ fn cpm_host_to_image() -> STDRESULT {
         .assert()
         .success();
 
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("cp")
         .arg(dir.path().join("GO.SUB"))
         .arg(dir.path().join("DATA"))
@@ -157,14 +194,14 @@ fn cpm_host_to_image() -> STDRESULT {
 
     let expected = 
 r#"A: GO       SUB : DATA"#;
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("catalog")
         .arg("-d").arg(dimg_path.clone())
         .assert()
         .success()
         .stdout(predicate::str::contains(expected));
 
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("get")
         .arg("-d").arg(dimg_path.clone())
         .arg("-t").arg("bin")
@@ -173,7 +210,7 @@ r#"A: GO       SUB : DATA"#;
         .success()
         .stdout(predicate::eq(vec![0xff,0x01,0xe0,0xd5]));
 
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     cmd.arg("get")
         .arg("-d").arg(dimg_path.clone())
         .arg("-t").arg("bin")
@@ -181,6 +218,53 @@ r#"A: GO       SUB : DATA"#;
         .assert()
         .success()
         .stdout(predicate::str::starts_with("PIP B:PROG1.BAS=A:PROG1.BAS\r\nB:\r\nREN PROG2.BAS=PROG1.BAS\r\n"));
+
+        Ok(())
+}
+
+#[test]
+fn fat_to_image_subdir() -> STDRESULT {
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("fat.td0");
+    let dimg_sub_path = dir.path().join("fat.td0/sub");
+    std::fs::write(dir.path().join("GO.BAT"),"COPY B:PROG1.BAS A:PROG1.BAS\nB:\nRENAME PROG1.BAS PROG2.BAS\n")?;
+    std::fs::write(dir.path().join("DATA"),&[0xff,0x01,0xe0,0xd5])?;
+
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("mkdsk")
+        .arg("-t").arg("td0").arg("-o").arg("fat")
+        .arg("-k").arg("5.25in-ibm-dsdd9")
+        .arg("-d").arg(dimg_path.clone())
+        .assert()
+        .success();
+
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("mkdir")
+        .arg("-f").arg("sub")
+        .arg("-d").arg(dimg_path.clone())
+        .assert()
+        .success();
+
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("cp")
+        .arg(dir.path().join("GO.BAT"))
+        .arg(dir.path().join("DATA"))
+        .arg(dimg_sub_path.clone())
+        .assert().success();
+
+    let expected = 
+r#"DIR      1  
+DIR      1  
+BAT      1  GO
+         1  DATA"#;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("catalog")
+        .arg("-d").arg(dimg_path.clone())
+        .arg("-f").arg("sub")
+        .arg("--generic")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(expected));
 
         Ok(())
 }

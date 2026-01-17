@@ -239,8 +239,7 @@ impl Packing for Packer {
                 Err(Box::new(Error::BadFormat))
             } else if FileImage::test(dat) {
                 log::info!("auto packing FileImage as FileImage");
-                *fimg = FileImage::from_json(str::from_utf8(dat)?)?;
-                Ok(())
+                Ok(fimg.mostly_copy(FileImage::from_json(str::from_utf8(dat)?)?,true,true,true))
             } else {
                 log::info!("auto packing text as FileImage");
                 self.pack_txt(fimg,str::from_utf8(dat)?)

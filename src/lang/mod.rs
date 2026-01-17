@@ -430,27 +430,48 @@ pub trait Navigate {
 }
 
 
-/// Test for the given language, returns true if no syntax errors are found.
+/// Test for the given language, returns false if there is any syntax error,
+/// does not always return true otherwise (additional criteria may be used).
+/// Warnings may be emitted if the results are ambiguous.
 /// Works for any language, provided it is line-oriented.
 pub fn is_lang(lang: tree_sitter::Language,code: &str) -> bool {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&lang).expect("language not found");
     let mut iter = code.lines();
+    let mut line_count = 0;
+    let mut good_lines = 0;
+    let mut great_lines = 0;
     while let Some(line) = iter.next()
     {
-        match parser.parse(String::from(line) + "\n",None) {
-            Some(tree) => {
-                let curs = tree.walk();
-                if curs.node().has_error() {
-                    return false;
+        line_count += 1;
+        if let Some(tree) = parser.parse(String::from(line) + "\n",None) {
+            let curs = tree.walk();
+            if !curs.node().has_error() {
+                good_lines += 1;
+                match lang.name() {
+                    Some("merlin6502") => {
+                        match curs.node().child(0) {
+                            Some(child) => match child.kind() {
+                                "operation" => great_lines += 1,
+                                "pseudo_operation" => great_lines += 1,
+                                _ => {}
+                            },
+                            None => {}
+                        }
+                    },
+                    _ => great_lines += 1
                 }
-            },
-            None => {
-                return false;
             }
         }
     }
-    true
+    if line_count == 0 {
+        log::warn!("encountered empty file");
+        return false;
+    }
+    if (great_lines==0 || good_lines != line_count) && good_lines * 3 > line_count {
+        log::warn!("{} {} parsed as {} but merit test failed",good_lines,match good_lines==1 { true => "line", false => "lines" },lang.name().unwrap_or("unknown"));
+    }
+    good_lines == line_count && great_lines > 0
 }
 
 /// Simple verify, returns an error if syntax check fails, but does not run full diagnostics.

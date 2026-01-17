@@ -3,10 +3,8 @@
 //! which could cause some licensing problems.  Use
 //! `cargo test -- --nocapture` locally to see the warnings for missing images.
 
-use assert_cmd::prelude::*; // Add methods on commands
+use assert_cmd::cargo;
 use predicates::prelude::*; // Used for writing assertions
-use std::process::{Command,Stdio}; // Run programs
-use std::io::Write;
 use std::path::{Path,PathBuf};
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
@@ -30,7 +28,7 @@ fn catalog_wolfenstein() -> STDRESULT {
         Some([x,y]) => [x,y],
         None => return Ok(())
     };
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"
 DISK VOLUME 1
@@ -69,7 +67,7 @@ fn get_wolf_hello() -> STDRESULT {
     };
     let expected = "5  PRINT \"\u{0004}NOMON C,I,O\"\n10  PRINT \"\u{0004}BRUN @INIT\": END \n";
 
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let output = cmd.arg("get")
         .arg("-d")
         .arg(img_path)
@@ -83,20 +81,15 @@ fn get_wolf_hello() -> STDRESULT {
         .success()
         .get_output().clone();
 
-    let mut cmd = Command::cargo_bin("a2kit")?;
-    let mut child = cmd.arg("detokenize")
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    let output = cmd.arg("detokenize")
         .arg("-t").arg("atok")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn child process");
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        std::thread::spawn(move || {
-            stdin.write_all(&output.stdout).expect("Failed to write to stdin");
-        });
-        
-        let output = child.wait_with_output().expect("Failed to read stdout");
-        assert_eq!(String::from_utf8_lossy(&output.stdout),expected);
+        .write_stdin(output.stdout)
+        .assert()
+        .success()
+        .get_output().clone();
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout),expected);
         
     Ok(())
 }
@@ -107,7 +100,7 @@ fn catalog_ultima4() -> STDRESULT {
         Some([x,y]) => [x,y],
         None => return Ok(())
     };
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"
 DISK VOLUME 254
@@ -168,7 +161,7 @@ fn get_ultima4_sel_dasm() -> STDRESULT {
         "         JMP   _039C"
     ];
 
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let output = cmd.arg("get")
         .arg("-d")
         .arg(img_path)
@@ -182,25 +175,20 @@ fn get_ultima4_sel_dasm() -> STDRESULT {
         .success()
         .get_output().clone();
 
-    let mut cmd = Command::cargo_bin("a2kit")?;
-    let mut child = cmd.arg("dasm")
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    let output = cmd.arg("dasm")
         .arg("-p").arg("6502")
         .arg("-o").arg("800")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn child process");
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        std::thread::spawn(move || {
-            stdin.write_all(&output.stdout).expect("Failed to write to stdin");
-        });
-        
-        let output = child.wait_with_output().expect("Failed to read stdout");
-        let all_lines = String::from_utf8_lossy(&output.stdout);
-        let mut lines = all_lines.lines();
-        for i in 0..2 {
-            assert_eq!(lines.next().unwrap(),expected[i]);
-        }
+        .write_stdin(output.stdout)
+        .assert()
+        .success()
+        .get_output().clone();
+
+    let all_lines = String::from_utf8_lossy(&output.stdout);
+    let mut lines = all_lines.lines();
+    for i in 0..2 {
+        assert_eq!(lines.next().unwrap(),expected[i]);
+    }
         
     Ok(())
 }
@@ -211,7 +199,7 @@ fn catalog_ultima5() -> STDRESULT {
         Some([x,y]) => [x,y],
         None => return Ok(())
     };
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"
 /ULTIMA5

@@ -35,6 +35,33 @@ impl FileImage {
     pub fn fimg_version() -> String {
         "2.1.0".to_string()
     }
+    /// Replace this file image with the argument except for certain fields.
+    /// If the `keep_path` selection is empty it is overridden by a non-empty alternative.
+    /// The path that is used (whichever one) can also be stripped of any `.json` that may be included, such
+    /// as can happen when copying from host to image.
+    pub fn mostly_copy(&mut self,fimg: Self,keep_path: bool,keep_time: bool,strip_dot_json: bool) {
+        let existing_path = self.full_path.clone();
+        let existing_created = self.created.clone();
+        let existing_accessed = self.accessed.clone();
+        let existing_modified = self.modified.clone();
+        *self = fimg;
+        if (keep_path && existing_path.len() > 0) || (!keep_path && self.full_path.len() == 0) {
+            self.full_path = existing_path;
+        }
+        if keep_time && existing_created.len() > 0 {
+            self.created = existing_created;
+        }
+        if keep_time && existing_accessed.len() > 0 {
+            self.accessed = existing_accessed;
+        }
+        if keep_time && existing_modified.len() > 0 {
+            self.modified = existing_modified;
+        }
+        let l = self.full_path.len();
+        if strip_dot_json && l > 5 && self.full_path.to_lowercase().ends_with(".json") {
+            self.full_path.truncate(l-5);
+        }
+    } 
     /// the string slices must be in the form X.Y.Z or else return error
     pub fn version_tuple(vers: &str) -> Result<(usize,usize,usize),DYNERR> {
         let v: Vec<Result<usize,std::num::ParseIntError>> = vers.split(".").map(|s| usize::from_str(s)).collect();

@@ -1,12 +1,11 @@
-use assert_cmd::prelude::*; // Add methods on commands
+use assert_cmd::cargo; // Add methods on commands
 use predicates::prelude::*; // Used for writing assertions
-use std::process::Command; // Run programs
 use tempfile;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
 #[test]
 fn mk_dos33_do() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("dos33.do");
     cmd.arg("mkdsk")
@@ -19,7 +18,7 @@ fn mk_dos33_do() -> STDRESULT {
 
 #[test]
 fn mk_dos33_bad_ext() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("dos33badext.po");
     cmd.arg("mkdsk")
@@ -33,7 +32,7 @@ fn mk_dos33_bad_ext() -> STDRESULT {
 
 #[test]
 fn mk_prodos_woz1() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("prodoswoz1.woz");
     cmd.arg("mkdsk")
@@ -46,7 +45,7 @@ fn mk_prodos_woz1() -> STDRESULT {
 
 #[test]
 fn mk_prodos_woz2() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("prodoswoz2.woz");
     cmd.arg("mkdsk")
@@ -59,7 +58,7 @@ fn mk_prodos_woz2() -> STDRESULT {
 
 #[test]
 fn mk_dos33_2mg_nib() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("dos2mgnib.2mg");
     cmd.arg("mkdsk")
@@ -72,7 +71,7 @@ fn mk_dos33_2mg_nib() -> STDRESULT {
 
 #[test]
 fn mk_dos33_2mg_bad_wrap() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("dos2mgnib.2mg");
     cmd.arg("mkdsk")
@@ -86,7 +85,7 @@ fn mk_dos33_2mg_bad_wrap() -> STDRESULT {
 
 #[test]
 fn mk_prodos_bad_vol() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("prodosbadvol.po");
     cmd.arg("mkdsk")
@@ -100,7 +99,7 @@ fn mk_prodos_bad_vol() -> STDRESULT {
 
 #[test]
 fn mk_cpm_osb() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("osb.imd");
     cmd.arg("mkdsk")
@@ -114,7 +113,7 @@ fn mk_cpm_osb() -> STDRESULT {
 
 #[test]
 fn mk_pascal() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let dir = tempfile::tempdir()?;
     let dimg_path = dir.path().join("pasc.dsk");
     cmd.arg("mkdsk")
@@ -129,7 +128,7 @@ fn mk_pascal() -> STDRESULT {
 #[test]
 fn mk_fat_imd() -> STDRESULT {
     let dir = tempfile::tempdir()?;
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let mut dimg_path = dir.path().join("fat8.imd");
     cmd.arg("mkdsk")
         .arg("-t").arg("imd").arg("-o").arg("fat")
@@ -137,7 +136,7 @@ fn mk_fat_imd() -> STDRESULT {
         .arg("-d").arg(dimg_path)
         .assert()
         .success();
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     dimg_path = dir.path().join("fat9.imd");
     cmd.arg("mkdsk")
         .arg("-t").arg("imd").arg("-o").arg("fat")
@@ -151,7 +150,7 @@ fn mk_fat_imd() -> STDRESULT {
 #[test]
 fn mk_fat_td0() -> STDRESULT {
     let dir = tempfile::tempdir()?;
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let mut dimg_path = dir.path().join("fat720.td0");
     cmd.arg("mkdsk")
         .arg("-t").arg("td0").arg("-o").arg("fat")
@@ -160,7 +159,7 @@ fn mk_fat_td0() -> STDRESULT {
         .arg("-v").arg("volume 1")
         .assert()
         .success();
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     dimg_path = dir.path().join("fat1440.td0");
     cmd.arg("mkdsk")
         .arg("-t").arg("td0").arg("-o").arg("fat")
@@ -174,7 +173,7 @@ fn mk_fat_td0() -> STDRESULT {
 #[test]
 fn mk_fat_img() -> STDRESULT {
     let dir = tempfile::tempdir()?;
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let mut dimg_path = dir.path().join("fat8.img");
     cmd.arg("mkdsk")
         .arg("-t").arg("img").arg("-o").arg("fat")
@@ -183,7 +182,7 @@ fn mk_fat_img() -> STDRESULT {
         .arg("-v").arg("volume 1")
         .assert()
         .success();
-    cmd = Command::cargo_bin("a2kit")?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
     dimg_path = dir.path().join("fat9.img");
     cmd.arg("mkdsk")
         .arg("-t").arg("img").arg("-o").arg("fat")

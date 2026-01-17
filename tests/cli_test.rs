@@ -1,42 +1,35 @@
-use assert_cmd::prelude::*; // Add methods on commands
+use assert_cmd::cargo; // Add methods on commands
 use predicates::prelude::*; // Used for writing assertions
-use std::process::{Command,Stdio}; // Run programs
 use std::path::Path;
-use std::fs::File;
-use std::io::Write;
 type STDRESULT = Result<(),Box<dyn std::error::Error>>;
 
 #[test]
 fn parse_simple_file() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
-    if let Ok(fd) = File::open(Path::new("tests").join("applesoft").join("test.bas")) {
-        cmd.arg("verify")
-            .arg("-t").arg("atxt")
-            .stdin(Stdio::from(fd))
-            .assert()
-            .success()
-            .stderr(predicate::str::contains("Passing"));
-    }
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("verify")
+        .arg("-t").arg("atxt")
+        .pipe_stdin(Path::new("tests").join("applesoft").join("test.bas"))?
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Passing"));
     Ok(())
 }
 
 #[test]
 fn invalid_file_type() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
-    if let Ok(fd) = File::open(Path::new("tests").join("applesoft").join("test.bas")) {
-        cmd.arg("verify")
-            .arg("-t").arg("atxt1")
-            .stdin(Stdio::from(fd))
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains("atxt1"));
-    }
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("verify")
+        .arg("-t").arg("atxt1")
+        .pipe_stdin(Path::new("tests").join("applesoft").join("test.bas"))?
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("atxt1"));
     Ok(())
 }
 
 #[test]
 fn catalog_cpm() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"
 A: POLARIS  BAK : POLARIS  TXT
@@ -52,7 +45,7 @@ A: POLARIS  BAK : POLARIS  TXT
 
 #[test]
 fn catalog_cpm_wildcard_full() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"Directory for Drive A: User 0
 
@@ -74,7 +67,7 @@ Total 1k Blocks =      1   Occupied/Tot Entries For Drive A:    2/  48"#;
 
 #[test]
 fn catalog_dos32() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"DISK VOLUME 254
 
@@ -92,7 +85,7 @@ r#"DISK VOLUME 254
 
 #[test]
 fn catalog_dos33() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected = 
 r#"DISK VOLUME 254
 
@@ -110,7 +103,7 @@ r#"DISK VOLUME 254
 
 #[test]
 fn catalog_prodos() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected =
 r#".NEW.DISK
 
@@ -132,7 +125,7 @@ BLOCKS FREE: 225\s+BLOCKS USED: 55\s+TOTAL BLOCKS: 280"#;
 
 #[test]
 fn catalog_pascal() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected =
 r#"BLANK:
 HELLO.TEXT\s+4.*TEXT
@@ -150,7 +143,7 @@ TEST3.TEXT\s+4.*TEXT
 
 #[test]
 fn catalog_msdos() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected =
 r#" Volume in drive A is NEW DISK 1
  Directory of A:\\
@@ -170,7 +163,7 @@ DIR3\s+<DIR>.*
 
 #[test]
 fn catalog_msdos_wildcard() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let expected =
 r#" Volume in drive A is NEW DISK 1
  Directory of A:\\DIR1\\SUB\*\.\*
@@ -189,24 +182,19 @@ SUBDIR1\s+<DIR>.*
 // N.b. extensive tokenization tests are in the language modules
 #[test]
 fn tokenize_stdin() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let test_prog =
 r#"10 home
 20 print a$
 "#;
     let toks: Vec<u8> = vec![7,8,10,0,0x97,0,15,8,0x14,0,0xba,0x41,0x24,0,0,0];
-    let mut child = cmd.arg("tokenize")
+    let output = cmd.arg("tokenize")
         .arg("-t").arg("atxt").arg("-a").arg("2049")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn child process");
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        std::thread::spawn(move || {
-            stdin.write_all(test_prog.as_bytes()).expect("Failed to write to stdin");
-        });
+        .write_stdin(test_prog)
+        .assert()
+        .success()
+        .get_output().clone();
         
-        let output = child.wait_with_output().expect("Failed to read stdout");
         assert_eq!(output.stdout,toks);
         
     Ok(())
@@ -214,24 +202,19 @@ r#"10 home
 
 #[test]
 fn detokenize_stdin() -> STDRESULT {
-    let mut cmd = Command::cargo_bin("a2kit")?;
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
     let test_prog =
 r#"10  HOME 
 20  PRINT A$
 "#;
     let toks: Vec<u8> = vec![7,8,10,0,0x97,0,15,8,0x14,0,0xba,0x41,0x24,0,0,0];
-    let mut child = cmd.arg("detokenize")
+    let output = cmd.arg("detokenize")
         .arg("-t").arg("atok")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn child process");
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        std::thread::spawn(move || {
-            stdin.write_all(&toks).expect("Failed to write to stdin");
-        });
-        
-        let output = child.wait_with_output().expect("Failed to read stdout");
+        .write_stdin(toks)
+        .assert()
+        .success()
+        .get_output().clone();
+
         assert_eq!(String::from_utf8_lossy(&output.stdout),test_prog);
         
     Ok(())
