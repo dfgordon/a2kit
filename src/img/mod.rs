@@ -70,7 +70,6 @@ pub mod tracks;
 
 use std::str::FromStr;
 use std::fmt;
-use log::{info,error};
 use crate::bios::Block;
 use crate::{STDRESULT,DYNERR};
 use tracks::DiskFormat;
@@ -727,7 +726,7 @@ pub fn is_dos_size(dsk: &Vec<u8>,allowed_track_counts: &Vec<usize>,sectors: usiz
             return Ok(());
         }
     }
-    info!("image size was {}",bytes);
+    log::info!("image size was {}",bytes);
     return Err(Box::new(Error::ImageSizeMismatch));
 }
 

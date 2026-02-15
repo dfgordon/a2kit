@@ -178,9 +178,12 @@ mod declarations {
         super::test_diagnostics("test-decs-fwd-var.S", None, Some(DiagnosticSeverity::WARNING), &[
             "macro substitution variable cannot label a line",
             "label is never referenced",
+            "if this is intentional, change it to _SCOPE",
             "label is never referenced",
+            "if this is intentional, change it to :_loc1",
             "variable is forward referenced",
             "label is never referenced",
+            "if this is intentional, change it to ]_1",
         ]);
     }
     #[test]

@@ -141,10 +141,16 @@ pub fn crc32(crc_seed: u32, buf: &Vec<u8>) -> u32
 
 /// Get the next WOZ metadata chunk.  Return tuple (ptr,id,Option(chunk)).
 /// Here `ptr` is the index to the subsequent chunk, which can be passed back in.
-/// If `ptr`=0 no more chunks. Option(chunk)=None means unknown id or incongruous size.
 /// The returned chunk buffer includes the id and size in the first 8 bytes.
+/// The returned pattern can be matched as follows.
+/// (0,id,Some) => good chunk and there are no more chunks.
+/// (ptr,id,Some) => good chunk and there is another chunk.
+/// (0,id,None) => unknown chunk and there are no more chunks.
+/// (ptr,id,None) => unknown chunk and there is another chunk.
+/// The caller should ignore unknown chunks and keep going until no more chunks.
 /// The `DiskStruct` trait can be used to unpack the chunk at higher levels.
 pub fn get_next_chunk(ptr: usize,buf: &[u8]) -> (usize,u32,Option<Vec<u8>>) {
+	// this can only evaluate true on the first call
 	if ptr+8 > buf.len() {
 		return (0,0,None);
 	}

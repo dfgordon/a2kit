@@ -76,7 +76,7 @@ Set RUST_LOG environment variable to control logging level.
 
 Examples:
 ---------
-smart copy:            `a2kit cp myimg.woz/program ./program.bas`
+smart copy:            `a2kit cp myimg.woz/program program.bas`
 create DOS image:      `a2kit mkdsk -o dos33 -v 254 -t woz2 -d myimg.woz`
 create ProDOS image:   `a2kit mkdsk -o prodos -v disk.new -t woz2 -d myimg.woz`
 language line entry:   `a2kit verify -t atxt`
@@ -154,7 +154,7 @@ tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
 
     main_cmd = main_cmd.subcommand(
         Command::new("cp")
-            .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATHS").required(true)
+            .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATH").required(true)
                 .long_help("Paths inside the disk image always use the forward slash.
 It is OK to have a mixture such as `c:\\path\\to\\disk.img/path/to/file`.
 Recursive glob patterns like `disk.img/**` will expand correctly,
@@ -170,8 +170,8 @@ the path then continues inside the image (e.g. /path/to/mydisk.woz/startup).
 Glob patterns outside a disk image are only expanded if the shell expands them,
 whereas glob patterns inside a disk image are expanded by a2kit.
 Delimiters like quotes are sometimes needed for the latter to work.
-This subcommand is meant as a convenience in non-critical situations.
-If you need to be precise the get/put syntax may be more appropriate.")
+This subcommand favors convenience over control.
+For greater control use `get` and `put`.")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("get")

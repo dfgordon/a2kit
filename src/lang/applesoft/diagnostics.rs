@@ -625,9 +625,9 @@ impl Analyzer {
                 }
                 if parent.named_child_count() > 2 && self.config.flag.extended_call.is_some() {
                     let mut arg_rng = parent.named_child(2).unwrap().range();
-                    arg_rng.end_byte = rng.end_byte;
-                    arg_rng.end_point = rng.end_point;
-                    self.push(parent.range(), "extended CALL syntax",self.config.flag.extended_call.unwrap());
+                    arg_rng.end_byte = parent.range().end_byte;
+                    arg_rng.end_point = parent.range().end_point;
+                    self.push(arg_rng, "extended CALL syntax",self.config.flag.extended_call.unwrap());
                 }
             }
         }

@@ -9,12 +9,12 @@ use crate::DYNERR;
 
 struct Substitutor {
     line: String,
-    delta: isize,
+    prev_end: usize,
     build: String,
     search: Vec<String>,
     replace: Vec<String>,
     types: Vec<String>,
-    /// map from argument number (1-8) conditional depth
+    /// map from argument numbers that were replaced (1-8) to the conditional depth where it occurred
     matched_args: HashMap<usize,usize>,
     conditional_depth: usize
 }
@@ -23,7 +23,7 @@ impl Substitutor {
     fn new(search: Vec<String>,replace: Vec<String>,types: Vec<String>) -> Self {
         Self {
             line: String::new(),
-            delta: 0,
+            prev_end: 0,
             build: String::new(),
             search,
             replace,
@@ -34,7 +34,7 @@ impl Substitutor {
     }
     fn reset(&mut self,line: &str) {
         self.line = line.to_owned();
-        self.delta = 0;
+        self.prev_end = 0;
         self.build = String::new();
         self.matched_args = HashMap::new();
     }
@@ -49,11 +49,15 @@ impl Substitutor {
 impl Navigate for Substitutor {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {
         let txt = node_text(&curs.node(),&self.line);
-        let curr_len = curs.node().start_position().column as isize + self.delta;
-        // this detects whether we moved past some spaces in getting to this node, if so add them to the build
-        if self.delta > 0 && curr_len > self.build.len() as isize {
-            self.build += &" ".repeat(curr_len as usize - self.build.len());
-        }
+        // add node and any leading spaces that are hidden or ignored by the parser
+        let mut add_spaces_and_node = |beg: &tree_sitter::Node, end: &tree_sitter::Node, repl: &str| {
+            let curr_start = beg.start_position().column;
+            if curr_start > self.prev_end {
+                self.build += &" ".repeat(curr_start - self.prev_end);
+            }
+            self.build += repl;
+            self.prev_end = end.end_position().column;
+        };
         // we do not evaluate conditionals here, we merely gather information so we can decline
         // to offer the missing argument diagnostic when we know it might be wrong
         if ["psop_if","psop_do"].contains(&curs.node().kind()) {
@@ -65,24 +69,22 @@ impl Navigate for Substitutor {
             }
         }
         for i in 0..self.search.len() {
-            if curs.node().kind() == self.types[i] &&  txt == self.search[i] {
+            if curs.node().kind() == self.types[i] && txt == self.search[i] {
                 self.matched_args.insert(i,self.conditional_depth);
-                self.build += &self.replace[i];
-                self.delta += self.replace[i].len() as isize - self.search[i].len() as isize;
+                add_spaces_and_node(&curs.node(),&curs.node(),&self.replace[i]);
                 return Ok(Navigation::GotoSibling);
             }
         }
-        // append terminal nodes
+        // append unmodified nodes
         if curs.node().named_child_count() == 0 {
-            self.build += &txt;
-            return Ok(Navigation::GotoSibling);
+            add_spaces_and_node(&curs.node(),&curs.node(),&txt);
+            Ok(Navigation::GotoSibling)
         } else {
-            if let Some(child) = curs.node().child(0) {
-                let diff = child.start_position().column - curs.node().start_position().column;
-                self.build += &txt.split_at(diff).0;
-            }
+            let child = curs.node().child(0).unwrap();
+            let diff = child.start_position().column - curs.node().start_position().column;
+            add_spaces_and_node(&curs.node(),&child,&txt.split_at(diff).0);
+            Ok(Navigation::GotoChild)
         }
-        Ok(Navigation::GotoChild)
     }
 }
 

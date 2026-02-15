@@ -504,11 +504,11 @@ impl img::DiskImage for Woz1 {
         // leaving kind as unknown can lead to panics
         ans.kind = img::names::A2_DOS33_KIND;
         ans.sanity_check()?;
-        for baseline_track in [0,3] {
+        for baseline_motor_stop in [0,12,2] {
             for baseline_method in [Method::Fast,Method::Emulate] {
-                log::info!("baseline scan of track {}, method {}",baseline_track,baseline_method);
+                log::info!("baseline scan of track {}, method {}",baseline_motor_stop as f32/4.0,baseline_method);
                 ans.change_method(baseline_method);
-                match ans.get_track_solution(Track::Num(baseline_track)) {
+                match ans.get_track_solution(Track::Motor((baseline_motor_stop,0))) {
                     Ok(img::TrackSolution::Solved(_)) => {
                         log::info!("baseline solution is {}",ans.kind);
                         return Ok(ans);
@@ -520,6 +520,7 @@ impl img::DiskImage for Woz1 {
             }
         }
         log::warn!("no baseline, continuing with {}",ans.kind);
+        ans.fmt = img::woz::kind_to_format(&ans.kind);
         return Ok(ans);
     }
     fn to_bytes(&mut self) -> Vec<u8> {
