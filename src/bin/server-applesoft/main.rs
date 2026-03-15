@@ -3,7 +3,7 @@
 //! Cargo will compile this to a standalone executable.
 //! 
 //! The a2kit library crate provides most of the analysis.
-//! The server activity is all in this file.
+//! The server activity is all in this module.
 
 use lsp_types as lsp;
 use lsp::{notification::Notification, request::Request};
@@ -14,9 +14,10 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::sync::{Arc,Mutex};
 use a2kit::lang::server::TOKEN_TYPES; // used if we register tokens on server side
-use a2kit::lang::server::Analysis;
+use a2kit::lang::server::{Analysis,Checkpoint};
 use a2kit::lang::applesoft;
 use a2kit::lang::applesoft::diagnostics::Analyzer;
+use a2kit::lang::applesoft::checkpoint::CheckpointManager;
 use a2kit::lang::disk_server::DiskServer;
 
 mod notification;
@@ -33,6 +34,12 @@ mod rpc_error {
     // pub const INTERNAL_ERROR: i32 = -32603;
 }
 
+enum WorkspaceScanMethod {
+    None,
+    UseCheckpoints,
+    FullUpdate,
+}
+
 #[derive(thiserror::Error,Debug)]
 enum ServerError {
     #[error("Parsing")]
@@ -43,7 +50,8 @@ struct AnalysisResult {
     uri: lsp::Uri,
     version: Option<i32>,
     diagnostics: Vec<lsp::Diagnostic>,
-    symbols: applesoft::Symbols
+    symbols: applesoft::Symbols,
+    workspace: applesoft::Workspace
 }
 
 /// Send log messages to the client.
@@ -97,16 +105,40 @@ fn parse_configuration(resp: lsp_server::Response) -> Result<applesoft::settings
     Err(Box::new(ServerError::Parsing))
 }
 
-fn launch_analysis_thread(analyzer: Arc<Mutex<Analyzer>>, doc: a2kit::lang::Document) -> std::thread::JoinHandle<Option<AnalysisResult>> {
+fn launch_analysis_thread(analyzer: Arc<Mutex<Analyzer>>, doc: a2kit::lang::Document, ws_scan: WorkspaceScanMethod, chks: &HashMap<String,CheckpointManager>) -> std::thread::JoinHandle<Option<AnalysisResult>> {
+    let checkpoints = match ws_scan {
+        WorkspaceScanMethod::FullUpdate => {
+            let mut ans = Vec::new();
+            for chk in chks.values() {
+                ans.push(chk.get_doc());
+            }
+            ans
+        },
+        _ => Vec::new()
+    };
     std::thread::spawn( move || {
         match analyzer.lock() {
             Ok(mut analyzer) => {
+                match ws_scan {
+                    WorkspaceScanMethod::None => {},
+                    WorkspaceScanMethod::UseCheckpoints => {
+                        match analyzer.rescan_workspace(false) {
+                            _ => {}
+                        }
+                    },
+                    WorkspaceScanMethod::FullUpdate => {
+                        match analyzer.rescan_workspace_and_update(checkpoints) {
+                            _ => {}
+                        }
+                    }
+                };
                 match analyzer.analyze(&doc) {
                     Ok(()) => Some(AnalysisResult {
                         uri: doc.uri.clone(),
                         version: doc.version,
                         diagnostics: analyzer.get_diags(&doc),
-                        symbols: analyzer.get_symbols()
+                        symbols: analyzer.get_symbols(),
+                        workspace: analyzer.get_workspace().clone()
                     }),
                     Err(_) => None
                 }
@@ -135,6 +167,7 @@ pub fn push_diagnostics(connection: &lsp_server::Connection,uri: lsp::Uri, versi
 
 struct Tools {
     config: applesoft::settings::Settings,
+    workspace: applesoft::Workspace,
     thread_handles: VecDeque<std::thread::JoinHandle<Option<AnalysisResult>>>,
     doc_chkpts: HashMap<String,applesoft::checkpoint::CheckpointManager>,
     analyzer: Arc<Mutex<applesoft::diagnostics::Analyzer>>,
@@ -150,6 +183,7 @@ impl Tools {
     pub fn new() -> Self {
         Self {
             config: applesoft::settings::Settings::new(),
+            workspace: applesoft::Workspace::new(),
             thread_handles: VecDeque::new(),
             doc_chkpts: HashMap::new(),
             analyzer: Arc::new(Mutex::new(Analyzer::new())),
@@ -194,6 +228,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 ..lsp::CompletionOptions::default()
             }),
             document_symbol_provider: Some(lsp::OneOf::Left(true)),
+            workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
             rename_provider: Some(lsp::OneOf::Left(true)),
             semantic_tokens_provider: match suppress_tokens {
                 true => None,
@@ -263,6 +298,18 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         Err(_) => logger(&connection,"could not request starting configuration")
     }
 
+    // Initial workspace scan
+    if let Some(folders) = params.workspace_folders {
+        let source_dirs = folders.iter().map(|f| f.uri.clone()).collect::<Vec<lsp::Uri>>();
+        //tools.hover_provider.set_workspace_folder(source_dirs.clone());
+        if let Ok(mut mutex) = tools.analyzer.lock() {
+            match mutex.init_workspace(source_dirs, Vec::new()) {
+                Ok(()) => {},
+                Err(e) => logger(&connection,&format!("initial workspace scan failed: {}",e))
+            }
+        }
+    }
+
     // Main loop
     loop {
 
@@ -271,8 +318,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             if oldest.is_finished() {
                 let done = tools.thread_handles.pop_front().unwrap();
                 if let Ok(Some(result)) = done.join() {
+                    tools.workspace = result.workspace;
                     if let Some(chkpt) = tools.doc_chkpts.get_mut(&result.uri.to_string()) {
                         chkpt.update_symbols(result.symbols);
+                        chkpt.update_ws_symbols(tools.workspace.borrow_ws_symbols().clone());
                         tools.hover_provider.use_shared_symbols(chkpt.shared_symbols());
                         tools.completion_provider.use_shared_symbols(chkpt.shared_symbols());
                     }

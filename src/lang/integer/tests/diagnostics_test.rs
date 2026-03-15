@@ -1,13 +1,19 @@
 //! test of Integer diagnostics module
 
 use regex::Regex;
-use super::diagnostics;
+use std::str::FromStr;
+use super::super::diagnostics;
 
 #[cfg(test)]
-fn test_diagnostics(prog_name: &str, expected_messages: &[&str]) {
+fn test_diagnostics(prog_name: &str, expected_messages: &[&str], ws_path: &str) {
     use crate::lang::server::Analysis;
     let path = std::env::current_dir().expect("no cwd").join("tests").join("integerbasic").join(prog_name);
     let mut analyzer = diagnostics::Analyzer::new();
+    if ws_path.len() > 0 {
+        let abs_path = std::path::absolute(std::path::PathBuf::from_str(ws_path).expect("bad path")).expect("absolute failed");
+        let uri = crate::lang::uri_from_path(&abs_path).expect("could not form URI");
+        analyzer.init_workspace(vec![uri],vec![]).expect("could not init workspace");
+    }
     let doc = crate::lang::Document::from_file_path(&path).expect("failed to create doc");
     analyzer.analyze(&doc).expect("could not analyze");
     let diag_set = analyzer.get_diags(&doc);
@@ -23,7 +29,7 @@ fn test_diagnostics(prog_name: &str, expected_messages: &[&str]) {
 fn long_line() {
     test_diagnostics("breakout.ibas", &[
         "Line may be too long"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -38,7 +44,7 @@ fn collisions() {
         "string is never DIM'd",
         "illegal variable name",
         "something is missing"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -50,7 +56,7 @@ fn functions() {
         r"\(ERROR",
         r"\(ERROR",
         r"\(ERROR"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -63,7 +69,7 @@ fn lines() {
         r"Line does not exist",
         r"Line does not exist",
         r"Line does not exist"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -74,7 +80,7 @@ fn ranges() {
         "Out of range",
         "Out of range",
         "Out of range"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -85,7 +91,7 @@ fn unassigned() {
         "variable is never assigned",
         "variable is never assigned",
         "variable is never assigned"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -102,5 +108,14 @@ fn undeclared() {
         "array is never DIM'd",
         "variable is never assigned",
         "unsubscripted integer array"
-    ]);
+    ],"");
+}
+
+#[test]
+fn chain() {
+    test_diagnostics("test.chain2.ibas", &[
+        "variable is never assigned",
+        "variable is never assigned",
+        "DOS CHAIN detected: test.chain3"
+    ],".")
 }

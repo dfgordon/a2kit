@@ -71,6 +71,12 @@ pub fn handle_request(
         lsp::request::HoverRequest::METHOD => Checkpoint::hover_response(chkpts, &mut tools.hover_provider, req.clone(), &mut resp),
         lsp::request::Completion::METHOD => Checkpoint::completion_response(chkpts, &mut tools.completion_provider, req.clone(), &mut resp),
         lsp::request::SemanticTokensFullRequest::METHOD => Checkpoint::sem_tok_response(chkpts, &mut tools.highlighter, req.clone(), &mut resp),
+        lsp::request::WorkspaceSymbolRequest::METHOD => {
+            if let Ok(_params) = serde_json::from_value::<lsp::WorkspaceSymbolParams>(req.params) {
+                let ws_syms = tools.workspace.get_ws_symbols_for_client();
+                resp = lsp_server::Response::new_ok(req.id,ws_syms);
+            }
+        },
 
         lsp::request::Shutdown::METHOD => {
             logger(&connection,"shutdown request");
@@ -91,7 +97,9 @@ pub fn handle_request(
                                 if let Some(chk) = tools.doc_chkpts.get(&normalized_uri.to_string()) {
                                     let handle = crate::launch_analysis_thread(
                                         Arc::clone(&tools.analyzer),
-                                        chk.get_doc()
+                                        chk.get_doc(),
+                                        crate::WorkspaceScanMethod::UseCheckpoints,
+                                        &tools.doc_chkpts
                                     );
                                     tools.thread_handles.push_back(handle);
                                 }

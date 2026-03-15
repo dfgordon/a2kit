@@ -1,0 +1,4 @@
+10 print x1: print y1(1)
+20 print x2
+30 x3 = 5
+40 print d$;"chain test.chain2"

@@ -1,4 +1,4 @@
-use super::minifier;
+use super::super::minifier;
 
 
 fn test_minify(test_code: &str,expected: &str,level: usize) {

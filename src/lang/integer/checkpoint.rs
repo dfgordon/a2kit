@@ -11,7 +11,8 @@ use crate::lang::server::Checkpoint;
 
 pub struct CheckpointManager {
     doc: Document,
-    symbols: Arc<Symbols>
+    symbols: Arc<Symbols>,
+    ws_symbols: Arc<HashMap<lsp::Uri,Symbols>>,
 }
 
 /// Simple linear search of map values
@@ -130,7 +131,17 @@ impl Checkpoint for CheckpointManager {
     }
     fn get_decs(&self,loc: &lsp::Location) -> Vec<lsp::Location> {
         if let Some(var) = find_clicked(&self.symbols, loc) {
-            return var.decs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+            let mut ans = var.decs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+            let Some(cased) = var.case.iter().next() else { return ans; };
+            let key = cased.to_ascii_uppercase();
+            for (uri,wsyms) in self.ws_symbols.iter() {
+                if let Some(wvar) = wsyms.vars.get(&key) {
+                    for rng in &wvar.decs {
+                        ans.push(lsp::Location::new(uri.clone(),rng.clone()));
+                    }
+                }
+            }
+            return ans;
         }
         vec![]
     }
@@ -139,7 +150,17 @@ impl Checkpoint for CheckpointManager {
             return vec![lsp::Location::new(loc.uri.clone(),line.primary.clone())];
         }
         if let Some(var) = find_clicked(&self.symbols, loc) {
-            return var.defs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+            let mut ans = var.defs.iter().map(|r| lsp::Location::new(loc.uri.clone(),r.clone())).collect();
+            let Some(cased) = var.case.iter().next() else { return ans; };
+            let key = cased.to_ascii_uppercase();
+            for (uri,wsyms) in self.ws_symbols.iter() {
+                if let Some(wvar) = wsyms.vars.get(&key) {
+                    for rng in &wvar.defs {
+                        ans.push(lsp::Location::new(uri.clone(),rng.clone()));
+                    }
+                }
+            }
+            return ans;
         }
         vec![]
     }
@@ -165,7 +186,8 @@ impl CheckpointManager {
     pub fn new() -> Self {
         Self {
             doc: Document::from_string("".to_string(),0),
-            symbols: Arc::new(Symbols::new())
+            symbols: Arc::new(Symbols::new()),
+            ws_symbols: Arc::new(HashMap::new())
         }
     }
     pub fn update_doc(&mut self,uri: lsp::Uri, txt: String, version: Option<i32>) {
@@ -176,7 +198,13 @@ impl CheckpointManager {
     pub fn update_symbols(&mut self,sym: Symbols) {
         self.symbols = Arc::new(sym);
     }
+    pub fn update_ws_symbols(&mut self,wsym: HashMap<lsp::Uri,Symbols>) {
+        self.ws_symbols = Arc::new(wsym);
+    }
     pub fn shared_symbols(&self) -> Arc<Symbols> {
         Arc::clone(&self.symbols)
+    }
+    pub fn shared_ws_symbols(&self) -> Arc<HashMap<lsp::Uri,Symbols>> {
+        Arc::clone(&self.ws_symbols)
     }
 }

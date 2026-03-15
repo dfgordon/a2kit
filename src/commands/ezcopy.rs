@@ -44,26 +44,18 @@ fn extract_ordinary_filename(path: &str) -> Result<String,DYNERR> {
     Ok(fname.to_string())
 }
 
-/// Parse a path the starts with a disk image and ends with a path inside the disk image.
+/// Parse a path that starts with a disk image and ends with a path inside the disk image.
 /// Returns a tuple with (path_to_disk_image, path_inside_disk_image), where the second part can be an empty string.
+/// The leading `/` is removed from the inside path. Use `//` to require a match to a ProDOS volume.
 /// Panics if `fused` does not match `dimg_patt`
 fn parse_fused_path(fused: &str,dimg_patt: &Regex) -> Result<(String,String),DYNERR> {
     let mut locs = dimg_patt.capture_locations();
     dimg_patt.captures_read(&mut locs,fused);
     let (_,end) = locs.get(0).unwrap();
-    let path_to_dimg = fused[0..end].to_owned();
-    if fused.len() > end && &fused[end..end+1] != "/" {
-        log::error!("{} is not formatted correctly",fused);
-        return Err(Box::new(CommandError::InvalidCommand));
+    match fused[end-1..end].as_ref() {
+        "/" => Ok((fused[0..end-1].to_owned(),fused[end..].to_owned())),
+        _ => Ok((fused.to_owned(),String::new()))
     }
-    // We will always throw out the leading `/` from the path inside.
-    // If ProDOS users want to specify the volume name (perhaps as a check) they can use `//`.
-    let path_in_dimg = match fused.len() - end {
-        0 => String::new(),
-        1 => String::new(),
-        _ => fused[end+1..].to_owned()
-    };
-    Ok((path_to_dimg,path_in_dimg))
 }
 
 /// Combine src_path and dst_path using logic that the user likely expects.
@@ -212,13 +204,17 @@ fn gather(src: Vec<String>,dst: &Destination,dst_dir_exists: bool,dimg_patt: &Re
                 let mut src_disk = crate::create_fs_from_file(&path_to,fmt.as_ref())?;
                 src_disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
                 match src_disk.glob(&path_in,false) {
-                    Ok(vlist) => {
-                        if vlist.len() == 0 {
+                    Ok(glob_matches) => {
+                        if glob_matches.len() == 0 {
                             log::error!("no matches to source path {}",path_in);
                             return Err(Box::new(CommandError::FileNotFound));
                         }
-                        for v in vlist {
-                            ans.push(Source {fimg: src_disk.get(&v)?, fused_path: [path_to.as_str(),v.as_str()].concat()});
+                        for raw_match in glob_matches {
+                            let m = match src_disk.stat() {
+                                Ok(stat) if stat.fs_name.as_str() == "cpm" => ["/",&raw_match].concat(),
+                                _ => raw_match.clone()
+                            };
+                            ans.push(Source {fimg: src_disk.get(&raw_match)?, fused_path: [path_to.as_str(),m.as_str()].concat()});
                         }
                     },
                     Err(_) => ans.push(Source {fimg: src_disk.get(&path_in)?, fused_path})
@@ -259,7 +255,7 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
 
     // First stage, setup and gather sources
 
-    let dimg_patt = Regex::new(r"(?i)\.(2mg|d13|dsk|do|dsk|ima|imd|img|nib|po|td0|woz)").expect("failed to parse regex");
+    let dimg_patt = Regex::new(r"(?i)\.(2mg|d13|dsk|do|dsk|ima|imd|img|nib|po|td0|woz)($|/)").expect("failed to parse regex");
     let mut path_list: Vec<String> = cmd.get_many::<String>("paths").expect("no paths").map(|x| x.to_owned()).collect();
     let fused = path_list.pop().unwrap();
     let fmt = super::get_fmt(cmd)?;
@@ -299,12 +295,19 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
     for src in &mut src_list {
         match &mut dst {
             Destination::Dimg(dst_disk, _, raw_dst_path) => {
-                let dst_path = revise_destination_path(&src.fimg.full_path, &raw_dst_path, src_count, dst_dir_exists, true)?;
+                let mut dst_path = revise_destination_path(&src.fimg.full_path, &raw_dst_path, src_count, dst_dir_exists, true)?;
+                if src.fimg.file_system.as_str() == "cpm" {
+                    dst_path = dst_path.replace("_",":");
+                }
                 log::info!("copy {} -> {}",src.fused_path,dst_path);
                 dst_disk.put_at(&dst_path,&mut src.fimg)?;
             },
             Destination::Host(raw_dst_path) => {
-                let dst_path = revise_destination_path(&src.fimg.full_path, raw_dst_path, src_count, dst_dir_exists, false)?;
+                let mut src_path = src.fimg.full_path.clone();
+                if cfg!(windows) || src.fimg.file_system.as_str() == "cpm" {
+                    src_path = src_path.replace(":","_");
+                }
+                let dst_path = revise_destination_path(&src_path, raw_dst_path, src_count, dst_dir_exists, false)?;
                 if PathBuf::from(dst_path.as_str()).is_file() {
                     log::error!("destination {} already exists as a file",dst_path);
                     return Err(Box::new(CommandError::InvalidCommand));

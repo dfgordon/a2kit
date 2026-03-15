@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-03-15
+
+### Fixes
+
+* smart copy fixes
+    - reconcile CP/M and Windows (`:` and `_` swapping)
+    - path parsing is a little smarter
+    - suppress a misleading warning
+* REM following ONERR GOTO no longer hangs the Applesoft server
+* move lines no longer adds new-lines to the end unnecessarily
+* where possible, line labels are gathered even if there is an error on the line
+
+### New Features
+
+* Applesoft and Integer BASIC expression evaluation
+* Workspace scan for Applesoft and Integer BASIC
+    - detects DOS or ProDOS CHAIN commands
+    - identifies CHAIN links between files
+    - analysis accounts for chained variables
+
 ## [4.2.0] - 2026-02-15
 
 ### Fixes

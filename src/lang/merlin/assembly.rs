@@ -170,8 +170,8 @@ fn eval_any_expr(start_node: &tree_sitter::Node, source: &str, pc: Option<usize>
             if node.child_count() != 2 {
                 Err(Box::new(Error::Syntax))
             } else {
-                let raw = eval_any_expr(&node.named_child(0).unwrap(), source, pc, symbols, scope, ifmx)?;
-                if node.named_child(1).unwrap().kind() == "eop_minus" {
+                let raw = eval_any_expr(&node.named_child(1).unwrap(), source, pc, symbols, scope, ifmx)?;
+                if node.named_child(0).unwrap().kind() == "eop_minus" {
                     Ok(-raw)
                 } else {
                     Ok(raw)

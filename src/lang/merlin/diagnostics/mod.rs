@@ -23,40 +23,6 @@ mod pass2;
 mod asm;
 pub mod workspace;
 
-fn node_path(node: &Node, source: &str) -> Vec<String> {
-    let mut txt = super::super::node_text(node,source);
-    if !txt.ends_with(".S") && !txt.ends_with(".s") {
-        txt.push_str(".S");
-    }
-    txt.split("/").map(|x| x.to_string()).collect::<Vec<String>>()
-}
-
-/// Return a value indicating the quality of the match of a ProDOS path to a path in the
-/// local file system.  Any value >0 means the filename itself matched case insensitively.
-/// Higher values mean there were additional matches, such as parent directories.
-fn match_prodos_path(node: &Node, source: &str, doc: &Document) -> usize {
-    let mut quality = 0;
-    if let Some(scheme) = doc.uri.scheme() {
-        if scheme.as_str() == "file" {
-            match crate::lang::pathbuf_from_uri(&doc.uri) { Ok(path) => {
-                let mut doc_segs = path.iter().rev();
-                for node_seg in node_path(node,source).iter().rev() {
-                    if let Some(doc_seg) = doc_segs.next() {
-                        if let Some(s) = doc_seg.to_str() {
-                            if s.to_lowercase() == node_seg.to_lowercase() {
-                                quality += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            } Err(e) => log::trace!("{} while parsing {}",e,doc.uri.as_str()) }
-        }
-    }
-    quality
-}
-
 /// Starting from someplace in an argument tree, go up to find the arg_* node kind.
 /// This is useful if we need to adjust the processing based on the specific operation.
 fn find_arg_node(node: &Node) -> Option<String> {

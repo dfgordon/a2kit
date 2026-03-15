@@ -23,7 +23,7 @@ use tree_sitter;
 use lsp_types as lsp;
 use colored::*;
 use thiserror::Error;
-use std::io;
+use std::{collections::HashSet, io};
 use std::io::Write;
 use num_traits::Num;
 use std::str::FromStr;
@@ -91,6 +91,7 @@ pub fn uri_from_path(path: &std::path::Path) -> Result<lsp::Uri,DYNERR> {
     Ok(lsp::Uri::from_str(uri.as_str())?)
 }
 
+/// N.b. `path_str` should be a full path
 pub fn uri_from_path_str(path_str: &str) -> Result<lsp::Uri,DYNERR> {
     uri_from_path(&std::path::PathBuf::from_str(path_str)?)
 }
@@ -104,6 +105,71 @@ pub fn pathbuf_from_uri(uri: &lsp::Uri) -> Result<std::path::PathBuf,DYNERR> {
         Ok(ans) => Ok(ans),
         Err(_) => Err(Box::new(Error::BadUrl))
     }
+}
+
+/// Return a value indicating the quality of the match of an emulation path to a document in the
+/// host file system.  Any value >0 means the filename itself matched case insensitively.
+/// Higher values mean there were additional matches, such as parent directories.
+fn match_emulation_path(emu_path: &str, sep: &str, doc: &Document) -> usize {
+    let mut quality = 0;
+    let Some(scheme) = doc.uri.scheme() else { return quality; };
+    if scheme.as_str() != "file" { return quality; }
+    let Ok(doc_path) = crate::lang::pathbuf_from_uri(&doc.uri) else {
+        log::trace!("error while parsing {}",doc.uri.as_str());
+        return quality;
+    };
+    let mut doc_segs = doc_path.iter().rev();
+    let emu_segs = emu_path.split(sep).map(|x| x.to_string()).collect::<Vec<String>>();
+    for emu_seg in emu_segs.iter().rev() {
+        if let Some(doc_seg) = doc_segs.next() {
+            if let Some(s) = doc_seg.to_str() {
+                if s.to_lowercase() == emu_seg.to_lowercase() {
+                    quality += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    quality
+}
+
+/// Get the document URI from the given set that is the best match to the given emulation path.
+/// This may return an empty set, or a set with more than one match, where the latter
+/// means there were multiple equally good matches.  It is OK for the document vector to contain
+/// duplicate URI (the returned Vec is formed from a HashSet).
+fn get_emulation_match(docs: &Vec<Document>, emu_path: &str, sep: &str) -> Vec<lsp::Uri> {
+    let mut set = HashSet::new();
+    let mut best_quality = 0;
+    let mut shortest = usize::MAX; // secondary quality measure
+    log::debug!("search for file `{}`",emu_path);
+    for doc in docs {
+        let quality = match_emulation_path(&emu_path, sep, &doc);
+        let l = doc.uri.as_str().len();
+        log::trace!("match {} to {} Q={}",emu_path,doc.uri.as_str(),quality);
+        if quality > best_quality {
+            set = HashSet::new();
+            set.insert(doc.uri.clone());
+            best_quality = quality;
+            shortest = l;
+        } else if quality > 0 && quality == best_quality {
+            if l < shortest {
+                set = HashSet::new();
+                set.insert(doc.uri.clone());
+                shortest = l;
+            } else if l == shortest {
+                set.insert(doc.uri.clone());
+            }
+        }
+    }
+    log::debug!("found {} URI candidates",set.len());
+    let mut ans = Vec::new();
+    for uri in &set {
+        log::trace!("  {}",uri.as_str());
+        ans.push(uri.clone())
+    }
+    ans
+    //ans.iter().map(|x| x.clone()).collect()
 }
 
 /// Text document packed up with URI string and version information.
@@ -209,6 +275,9 @@ pub fn range_union(r1: &lsp::Range,r2: &lsp::Range) -> lsp::Range {
     )
 }
 
+/// Take a range from a tree-sitter parser and convert it to an LSP range.
+/// The `row` argument is used when we are parsing line by line.
+/// The `col` argument is only needed to subtract out parsing hints.
 pub fn lsp_range(rng: tree_sitter::Range,row: isize,col: isize) -> lsp::Range {
     lsp::Range {
         start: lsp::Position { line: (row + rng.start_point.row as isize) as u32, character: (col + rng.start_point.column as isize) as u32 },
@@ -226,6 +295,7 @@ pub fn node_text(node: &tree_sitter::Node,source: &str) -> String {
 
 /// Parse a node that is expected to be an integer literal and put into generic type,
 /// if node cannot be parsed return None.  This will ignore all spaces.
+/// Actually this will work for floating point types as well.
 pub fn node_integer<T: FromStr>(node: &tree_sitter::Node,source: &str) -> Option<T> {
     let txt = node_text(&node,source).replace(" ","");
     match txt.parse::<T>() {
@@ -396,6 +466,7 @@ pub fn update_json_vec_str(maybe_obj: &serde_json::Value, key: &str, curr: &mut 
     }
 }
 
+/// Trait for navigating a syntax tree in any language.
 pub trait Navigate {
     fn visit(&mut self,curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR>;
     fn descend(&mut self,_curs: &tree_sitter::TreeCursor) -> Result<Navigation,DYNERR> {

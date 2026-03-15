@@ -3,7 +3,7 @@
 //! Cargo will compile this to a standalone executable.
 //! 
 //! The a2kit library crate provides most of the analysis.
-//! The server activity is all in this file.
+//! The server activity is all in this module.
 
 use lsp_types as lsp;
 use lsp::{notification::Notification, request::Request};

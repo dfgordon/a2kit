@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::tokenizer::Tokenizer;
+use super::super::tokenizer::Tokenizer;
 #[cfg(test)]
 use hex;
 

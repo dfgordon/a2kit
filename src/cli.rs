@@ -361,6 +361,7 @@ For greater control use `get` and `put`.")
                     .required(true)
                     .value_parser(["atxt", "itxt", "mtxt"]),
             )
+            .arg(file_arg("file to analyze",false,true))
             .arg(Arg::new("sexpr").long("sexpr").short('s').help("write S-expressions to stderr").action(ArgAction::SetTrue))
             .arg(Arg::new("config").long("config").short('c').value_name("JSON").help("modify diagnostic configuration")
                 .required(false)
@@ -370,7 +371,8 @@ For greater control use `get` and `put`.")
                 .value_hint(ValueHint::FilePath)
                 .required(false)
             )
-            .about("read from stdin and perform language analysis"),
+            .about("read from stdin or file and perform language analysis")
+            .after_help("omit file argument if the text is piped (chained variables cannot be detected in this case)")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("minify")
@@ -409,7 +411,7 @@ For greater control use `get` and `put`.")
     );
     main_cmd = main_cmd.subcommand(
         Command::new("catalog")
-            .arg(file_arg("path of directory inside disk image",false,false))
+            .arg(file_arg("path of directory inside disk image or CP/M 3 command tail",false,false))
             .arg(Arg::new("generic").long("generic").help("use generic output format").action(ArgAction::SetTrue))
             .arg(dimg_arg(false))
             .arg(pro_arg())

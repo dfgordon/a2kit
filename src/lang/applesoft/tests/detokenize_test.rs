@@ -1,4 +1,4 @@
-use super::tokenizer::Tokenizer;
+use super::super::tokenizer::Tokenizer;
 use hex;
 
 fn test_detokenizer(hex_tokens: &str, expected: &str) {

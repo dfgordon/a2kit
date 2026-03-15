@@ -23,14 +23,22 @@ pub fn verify(cmd: &clap::ArgMatches) -> STDRESULT {
     if cmd.value_source("config").unwrap()==ValueSource::CommandLine {
         analyzer.update_config(cmd.get_one::<String>("config").unwrap())?;
     }
-    let doc = lang::Document::from_string(analyzer.read_stdin(),0);
+    let doc = match cmd.get_one::<String>("file") {
+        Some(path) => lang::Document::from_file_path(&std::path::absolute(std::path::PathBuf::from_str(path)?)?)?,
+        None => lang::Document::from_string(analyzer.read_stdin(),0)
+    };
     if doc.text.len()==0 {
         log::error!("verify was handed an empty string");
         return Err(Box::new(CommandError::InvalidCommand));
     }
     if let Some(ws_path) = cmd.get_one::<String>("workspace") {
-        match lang::uri_from_path_str(ws_path) {
-            Ok(uri) => analyzer.init_workspace(vec![uri],vec![doc.clone()])?,
+        let abs_path = std::path::absolute(std::path::PathBuf::from_str(ws_path)?)?;
+        let volatile_docs = match doc.uri.scheme() {
+            Some(scheme) if scheme.as_str() == "file" => vec![],
+            _ => vec![doc.clone()] 
+        };
+        match lang::uri_from_path(&abs_path) {
+            Ok(uri) => analyzer.init_workspace(vec![uri],volatile_docs)?,
             Err(_) => return Err(Box::new(lang::Error::PathNotFound))
         }
     }

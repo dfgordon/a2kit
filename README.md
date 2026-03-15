@@ -5,12 +5,13 @@ Command line interface and library for retro disk images, file systems, and lang
 * Designed to be scriptable
 * Language Servers - Applesoft, Integer BASIC, Merlin Assembly
     - deep analysis, tokenization, disassembly, adheres to [LSP](https://microsoft.github.io/language-server-protocol/)
-* File Systems - Apple DOS 3.2, Apple DOS 3.3, ProDOS, CP/M, Pascal, FAT (such as MS-DOS)
+* File Systems - Apple DOS 3.2, Apple DOS 3.3, ProDOS, CP/M, UCSD Pascal, FAT (such as MS-DOS)
     - full read and write access
-    - high or low level manipulations
-    - interface for handling sparse and random access files
+    - preservation of sparse structure
+    - conversion of source files to and from legacy formats
 * Disk Images - 2MG, D13, DO, DSK, IMD, IMG, NIB, PO, TD0, WOZ
     - create, read, and write with all types
+    - handles proprietary soft sector formats
 
 ## Documentation
 

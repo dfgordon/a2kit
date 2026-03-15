@@ -210,7 +210,9 @@ pub trait Renumber {
                 Ok(s) => s,
                 Err(_) => return Err("apply edits failed".to_string())
             };
-            ans.push(TextEdit::new(Range::new(end_pos,end_pos),line_sep.to_string()));
+            for _i in end_pos.line..insert_pos.line {
+                ans.push(TextEdit::new(Range::new(end_pos,end_pos),line_sep.to_string()));
+            }
             ans.push(TextEdit::new(Range::new(insert_pos,insert_pos),updated_sel));
             for l in sel.start.line..=sel.end.line {
                 let old_rng = Range::new(Position::new(l,0),Position::new(l+1,0));

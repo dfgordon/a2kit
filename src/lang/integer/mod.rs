@@ -4,15 +4,10 @@
 //! The Integer BASIC parser is provided by `tree_sitter_integerbasic`.
 //! The server compiles to a separate executable, its entry point is in `src/bin/server-integerbasic/main.rs`.
 
+#[cfg(test)]
+mod tests;
+
 mod token_maps;
-#[cfg(test)]
-mod tokenize_test;
-#[cfg(test)]
-mod detokenize_test;
-#[cfg(test)]
-mod renumber_test;
-#[cfg(test)]
-mod diagnostics_test;
 pub mod tokenizer;
 pub mod diagnostics;
 pub mod checkpoint;
@@ -23,7 +18,7 @@ pub mod completions;
 pub mod semantic_tokens;
 
 use tree_sitter;
-use lsp_types::Range;
+use lsp_types::{self as lsp,Range};
 use std::collections::{HashSet,HashMap};
 use std::fmt::Write;
 use crate::DYNERR;
@@ -72,7 +67,7 @@ pub struct Line {
     gotos: Vec<Range>
 }
 
-/// Information about a specific variable.
+/// Information about a specific variable in one source file.
 /// The name itself is a key that maps to this information.
 /// The key is always put in uppercase.
 /// There are 3 kinds: integers, integer arrays, and strings.
@@ -116,6 +111,7 @@ impl Variable {
     }
 }
 
+/// Main structure containing the symbol information for one source file
 #[derive(Clone)]
 pub struct Symbols {
     pub lines: HashMap<i64,Line>,
@@ -135,6 +131,21 @@ impl Symbols {
             None => None
         }
     }
+}
+
+/// The Integer workspace is a chain structure.
+/// One program could chain to any other program.
+#[derive(Clone)]
+pub struct Workspace {
+    ws_folders: Vec<lsp::Uri>,
+	/// array of documents in this workspace
+    docs: Vec<super::Document>,
+	/// map from chain destination uri to all uri that directly `chain` to it
+	backlink_map: HashMap<lsp::Uri, HashSet<lsp::Uri>>,
+	/// set of uri that are chain destinations
+	chain_destinations: HashSet<lsp::Uri>,
+	/// map from uri to symbols in the associated program 
+    ws_symbols: HashMap<lsp::Uri,Symbols>
 }
 
 /// Escape the bytes in some negative ASCII stringlike context.  The escape value is not inverted.

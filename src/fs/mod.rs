@@ -74,7 +74,7 @@ pub fn null_fraction(candidate: &str) -> f64 {
         }
     }
     if null_count > 0 {
-        log::warn!("string had {} NULL (there may have been a lossy conversion)",null_count);
+        log::debug!("candidate string had {} NULL",null_count);
     }
     null_count as f64 / candidate.len() as f64
 }

@@ -35,9 +35,29 @@ pub fn handle_notification(
                         uri: normalized_uri.clone(),
                         version: Some(params.text_document.version),
                         text: params.text_document.text
-                    }
+                    },
+                    crate::WorkspaceScanMethod::FullUpdate,
+                    &tools.doc_chkpts
                 );
                 tools.thread_handles.push_back(handle);
+            }
+        },
+        lsp::notification::DidSaveTextDocument::METHOD => {
+            if let Ok(params) = serde_json::from_value::<lsp::DidSaveTextDocumentParams>(note.params) {
+                let normalized_uri = normalize_client_uri(params.text_document.uri);
+                if let Some(text) = params.text {
+                    let handle = launch_analysis_thread(
+                        Arc::clone(&tools.analyzer),
+                        a2kit::lang::Document {
+                            uri: normalized_uri.clone(),
+                            version: None,
+                            text
+                        },
+                        crate::WorkspaceScanMethod::FullUpdate,
+                        &tools.doc_chkpts
+                    );
+                    tools.thread_handles.push_back(handle);
+                }
             }
         },
         lsp::notification::DidCloseTextDocument::METHOD => {
@@ -63,7 +83,9 @@ pub fn handle_notification(
                             uri: normalized_uri.clone(),
                             version: Some(params.text_document.version),
                             text: change.text
-                        }
+                        },
+                        crate::WorkspaceScanMethod::UseCheckpoints,
+                        &tools.doc_chkpts
                     );
                     tools.thread_handles.push_back(handle);
                 }

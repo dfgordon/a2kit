@@ -95,34 +95,20 @@ impl Workspace {
         }
 		return include.clone();
 	}
-	/// Get the document URL that is the best match to the ProDOS path at the *next* cursor location.
+	/// Get the document URI that is the best match to the ProDOS path at the *next* cursor location.
     /// This may return an empty vector, or a vector with more than one match, where the latter
     /// means there were multiple equally good matches.
 	pub fn get_include_doc(&self, node: &tree_sitter::Node, source: &str) -> Vec<lsp::Uri> {
-        let mut ans = Vec::new();
-        let mut best_quality = 0;
 		if let Some(file_node) = node.next_named_sibling() {
-            log::debug!("search for include `{}`",node_text(&file_node,source));
-            for doc in &self.docs {
-                let quality = super::match_prodos_path(&file_node, source, &doc);
-                log::trace!("match {} to {} Q={}",node_text(&file_node, source),doc.uri.as_str(),quality);
-                if quality > best_quality {
-                    ans = vec![doc.uri.clone()];
-                    best_quality = quality;
-                } else if quality > 0 && quality == best_quality {
-                    if doc.uri.as_str().len() < ans.last().unwrap().as_str().len() {
-                        ans = vec![doc.uri.clone()];
-                    } else {
-                        ans.push(doc.uri.clone());
-                    }
-                }
+            let mut emu_path = super::super::node_text(&file_node,source);
+            if !emu_path.ends_with(".S") && !emu_path.ends_with(".s") {
+                emu_path.push_str(".S");
             }
+            crate::lang::get_emulation_match(&self.docs, &emu_path, "/")
+        } else {
+            log::debug!("missing file node");
+            vec![]
         }
-        log::debug!("found {} include candidates",ans.len());
-        for uri in &ans {
-            log::trace!("  {}",uri.as_str());
-        }
-		ans
 	}
     pub fn source_type(&self, uri: &lsp::Uri, linker_threshold: f64) -> SourceType {
         let key = uri.to_string();
@@ -296,6 +282,7 @@ impl WorkspaceScanner {
         self.ws.rel_modules = HashSet::new();
         for i in 0..self.ws.docs.len() {
             let doc = self.ws.docs[i].to_owned();
+            log::debug!("Scanning {}...",doc.uri.as_str());
             self.curr_uri = Some(doc.uri.clone());
             self.curr_row = 0;
             let mut linker_count = 0.0;

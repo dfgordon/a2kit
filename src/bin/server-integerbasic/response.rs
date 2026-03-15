@@ -5,6 +5,7 @@ use std::sync::{Mutex,Arc};
 //use a2kit::lang::integer;
 use a2kit::lang::server::Checkpoint;
 use a2kit::lang::integer::diagnostics::Analyzer;
+use a2kit::lang::integer::Workspace;
 use super::logger;
 
 pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Response, tools: &mut super::Tools) {
@@ -12,6 +13,7 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
         "\"integerbasic-pull-config\"" => {
             match super::parse_configuration(resp) {
                 Ok(config) => {
+                    let mut workspace_data = Workspace::new();
                     tools.config = config.clone();
                     tools.hover_provider.set_config(config.clone());
                     tools.completion_provider.set_config(config.clone());
@@ -20,6 +22,10 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
                     // configure main analyzer
                     if let Ok(mut mutex) = tools.analyzer.lock() {
                         mutex.set_config(config.clone());
+                        if let Err(_) = mutex.rescan_workspace(false) {
+                            logger(&connection,"failed to rescan workspace after user changed settings");
+                        }
+                        workspace_data = mutex.get_workspace().clone();
                     }
 
                     // run through open documents and update
@@ -27,10 +33,13 @@ pub fn handle_response(connection: &lsp_server::Connection, resp: lsp_server::Re
                         let doc = chkpt.get_doc();
                         let mut loc_analyzer = Analyzer::new();
                         loc_analyzer.set_config(config.clone());
+                        loc_analyzer.set_workspace(workspace_data.clone());
                         logger(&connection,&format!("updated configuration for {}",key));
                         let handle = super::launch_analysis_thread(
                             Arc::new(Mutex::new(loc_analyzer)),
-                            doc
+                            doc,
+                            crate::WorkspaceScanMethod::None,
+                            &tools.doc_chkpts
                         );
                         tools.thread_handles.push_back(handle);
                     }

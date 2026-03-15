@@ -4,18 +4,11 @@
 //! The Applesoft parser is provided by `tree_sitter_applesoft`.
 //! The server compiles to a separate executable, its entry point is in `src/bin/server-applesoft/main.rs`.
 
+#[cfg(test)]
+mod tests;
+
 mod token_maps;
 mod minify_guards;
-#[cfg(test)]
-mod tokenize_test;
-#[cfg(test)]
-mod detokenize_test;
-#[cfg(test)]
-mod minify_test;
-#[cfg(test)]
-mod renumber_test;
-#[cfg(test)]
-mod diagnostics_test;
 pub mod diagnostics;
 pub mod checkpoint;
 pub mod tokenizer;
@@ -29,6 +22,8 @@ pub mod semantic_tokens;
 use std::fmt::Write;
 use std::collections::{HashMap,HashSet};
 use lsp_types as lsp;
+
+type Collisions = HashMap<String,HashSet<String>>;
 
 /// Information about a specific line label.
 /// The label itself is a key that maps to this information.
@@ -44,7 +39,7 @@ pub struct Line {
     gotos: Vec<lsp::Range>
 }
 
-/// Information about a specific variable or function.
+/// Information about a specific variable or function in one source file.
 /// The name itself is a key that maps to this information.
 /// The key is always put in uppercase, but all case variations
 /// that occur are saved.
@@ -77,7 +72,7 @@ impl Variable {
     }
 }
 
-/// Main structure containing the symbol information
+/// Main structure containing the symbol information for one source file
 #[derive(Clone)]
 pub struct Symbols {
     pub lines: HashMap<i64,Line>,
@@ -101,6 +96,24 @@ impl Symbols {
             None => None
         }
     }
+}
+
+/// The Applesoft workspace is a chain structure.
+/// One program could chain to any other program.
+/// Chaining does not persist function definitions.
+#[derive(Clone)]
+pub struct Workspace {
+    ws_folders: Vec<lsp::Uri>,
+	/// array of documents in this workspace
+    docs: Vec<super::Document>,
+	/// map from chain destination uri to all uri that directly `chain` to it
+	backlink_map: HashMap<lsp::Uri, HashSet<lsp::Uri>>,
+	/// set of uri that are chain destinations
+	chain_destinations: HashSet<lsp::Uri>,
+	/// map from uri to symbols in the associated program 
+    ws_symbols: HashMap<lsp::Uri,Symbols>,
+    /// only variable collisions are needed since functions do not chain
+    ws_collisions: Collisions
 }
 
 pub fn deduce_address(tokens: &[u8]) -> u16 {

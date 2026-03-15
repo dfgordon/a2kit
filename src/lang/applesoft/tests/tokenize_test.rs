@@ -39,12 +39,12 @@
 
 use std::fmt::Write;
 use regex::Regex;
-use super::tokenizer::Tokenizer;
+use super::super::tokenizer::Tokenizer;
 use tree_sitter_applesoft;
 
 fn test_tokenizer(test_code: &str,expected: &str) {
 	// we need to test explicitly for syntax errors, sometimes tokenizer can succeed despite them
-	super::super::verify_str(tree_sitter_applesoft::LANGUAGE.into(),test_code).expect("syntax error while tokenizing");
+	crate::lang::verify_str(tree_sitter_applesoft::LANGUAGE.into(),test_code).expect("syntax error while tokenizing");
 	let mut tokenizer = Tokenizer::new();
 	// get actual into hex string
 	let bytes = tokenizer.tokenize(test_code,2049).expect("tokenizer failed");

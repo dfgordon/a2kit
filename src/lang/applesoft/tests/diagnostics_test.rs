@@ -1,13 +1,19 @@
 //! test of Applesoft diagnostics module
 
 use regex::Regex;
-use super::diagnostics;
+use std::str::FromStr;
+use super::super::diagnostics;
 
 #[cfg(test)]
-fn test_diagnostics(prog_name: &str, expected_messages: &[&str]) {
+fn test_diagnostics(prog_name: &str, expected_messages: &[&str], ws_path: &str) {
     use crate::lang::server::Analysis;
     let path = std::env::current_dir().expect("no cwd").join("tests").join("applesoft").join(prog_name);
     let mut analyzer = diagnostics::Analyzer::new();
+    if ws_path.len() > 0 {
+        let abs_path = std::path::absolute(std::path::PathBuf::from_str(ws_path).expect("bad path")).expect("absolute failed");
+        let uri = crate::lang::uri_from_path(&abs_path).expect("could not form URI");
+        analyzer.init_workspace(vec![uri],vec![]).expect("could not init workspace");
+    }
     let doc = crate::lang::Document::from_file_path(&path).expect("failed to create document");
     analyzer.analyze(&doc).expect("could not analyze");
     let diag_set = analyzer.get_diags(&doc);
@@ -27,7 +33,7 @@ fn undeclared() {
         "array is never DIM'd",
         "array is never DIM'd",
         "array is never DIM'd"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -37,7 +43,7 @@ fn unassigned() {
         "variable is never assigned",
         "variable is never assigned",
         "variable is never assigned"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -46,7 +52,7 @@ fn collisions() {
         r"variable name collision:\s*(PIES,PI|PI,PIES)",
         r"variable name collision:\s*(MYWRD\$,MYCLR\$|MYCLR\$,MYWRD\$)",
         r"variable name collision:\s*(CUBE,CUTE|CUTE,CUBE)"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -65,7 +71,7 @@ fn range_errors() {
         r"Out of range \(-32767,65535\)",
         r"Out of range \(0,255\)",
         r"Out of range \(0,255\)"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -79,7 +85,7 @@ fn line_numbers() {
         "Line does not exist",
         "Line does not exist",
         "Line does not exist"
-    ]);
+    ],"");
 }
 
 #[test]
@@ -87,12 +93,20 @@ fn user_functions() {
     test_diagnostics("test-functions.abas", &[
         "function is redefined",
         "function never defined"
-    ]);
+    ],"");
 }
 
 #[test]
 fn data() {
     test_diagnostics("test-data.abas", &[
         "Odd quote parity in literal on multi-statement line invites trouble"
-    ]);
+    ],"");
+}
+
+#[test]
+fn chain() {
+    test_diagnostics("test.chain2.abas", &[
+        "variable is never assigned",
+        "ProDOS CHAIN detected"
+    ],".");
 }

@@ -1,0 +1,3 @@
+10 x1 = 5
+20 dim y1(3)
+30 print chr$(4);"chain test.chain2"
