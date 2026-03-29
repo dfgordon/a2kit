@@ -170,9 +170,21 @@ impl Analysis for Analyzer {
         self.diagnostics = Vec::new();
         self.symbols = Symbols::new();
         self.fcollisions = HashMap::new();
-        self.vcollisions = self.scanner.get_workspace().ws_collisions.clone();
+        self.vcollisions = HashMap::new();
+        self.curr_backlinks = HashSet::new();
         self.scanner.update_doc(doc);
         self.scanner.get_workspace().get_all_backlinks(&mut self.curr_backlinks, &doc.uri, &doc.uri, 0, 8);
+        for backlink in &self.curr_backlinks {
+            if let Some(collisions) = self.scanner.get_workspace().ws_collisions.get(backlink) {
+                for (k,added) in collisions {
+                    let aggregate = match self.vcollisions.get(k) {
+                        Some(set) => set.union(added).map(|s| s.to_owned()).collect(),
+                        None => added.clone()
+                    };
+                    self.vcollisions.insert(k.to_owned(),aggregate);
+                }
+            }
+        }
 		let mut parser = tree_sitter::Parser::new();
 		parser.set_language(&tree_sitter_applesoft::LANGUAGE.into())?;
         for pass in 1..3 {

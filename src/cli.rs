@@ -161,7 +161,8 @@ Recursive glob patterns like `disk.img/**` will expand correctly,
 but the files will all go to the same target directory."))
             .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false)
                 .long_help("Specify the load address that is stored with some Apple file types.
-This is only needed for host-to-image copies involving Apple file systems"))
+This is only needed for host-to-image copies involving Apple file systems.
+Smart copy does not preserve load address on the host, for that use `get -t any...` or `get -t as...`."))
             .arg(pro_arg())
             .arg(method_arg())
             .about("smart copy that formats for the target")

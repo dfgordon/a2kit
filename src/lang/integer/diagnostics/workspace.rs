@@ -243,6 +243,8 @@ impl WorkspaceScanner {
     /// Assumes buffers are up to date.
     pub fn scan(&mut self) -> STDRESULT {
         self.ws.ws_symbols = HashMap::new();
+        self.ws.backlink_map = HashMap::new();
+        self.ws.chain_destinations = HashSet::new();
         for i in 0..self.ws.docs.len() {
             self.working_symbols = Symbols::new();
             let doc = self.ws.docs[i].to_owned();

@@ -734,10 +734,20 @@ impl super::DiskFS for Disk {
         }
     }
     fn glob(&mut self,pattern: &str,case_sensitive: bool) -> Result<Vec<String>,DYNERR> {
+        let mut globbing = false;
+        for c in pattern.chars() {
+            if ['*','?','[','{'].contains(&c) {
+                globbing = true;
+            }
+        }
+        let xpattern = match !globbing && !pattern.contains(":") {
+            true => ["0:",pattern].concat(),
+            false => pattern.to_string()
+        };
         let mut ans = Vec::new();
         let glob = match case_sensitive {
-            true => globset::Glob::new(pattern)?.compile_matcher(),
-            false => globset::Glob::new(&pattern.to_uppercase())?.compile_matcher()
+            true => globset::Glob::new(&xpattern)?.compile_matcher(),
+            false => globset::Glob::new(&xpattern.to_uppercase())?.compile_matcher()
         };
         let dir = self.get_directory();
         let files = dir.build_files(&self.dpb, self.cpm_vers)?;

@@ -62,6 +62,7 @@ impl Analysis for Analyzer {
     fn analyze(&mut self,doc: &Document) -> Result<(),DYNERR> {
         self.diagnostics = Vec::new();
         self.symbols = super::Symbols::new();
+        self.curr_backlinks = HashSet::new();
         self.scanner.update_doc(doc);
         self.scanner.get_workspace().get_all_backlinks(&mut self.curr_backlinks, &doc.uri, &doc.uri, 0, 8);
 		let mut parser = tree_sitter::Parser::new();

@@ -23,6 +23,7 @@ use std::fmt::Write;
 use std::collections::{HashMap,HashSet};
 use lsp_types as lsp;
 
+/// Map from short names to set of long names that match it
 type Collisions = HashMap<String,HashSet<String>>;
 
 /// Information about a specific line label.
@@ -113,7 +114,7 @@ pub struct Workspace {
 	/// map from uri to symbols in the associated program 
     ws_symbols: HashMap<lsp::Uri,Symbols>,
     /// only variable collisions are needed since functions do not chain
-    ws_collisions: Collisions
+    ws_collisions: HashMap<lsp::Uri,Collisions>
 }
 
 pub fn deduce_address(tokens: &[u8]) -> u16 {

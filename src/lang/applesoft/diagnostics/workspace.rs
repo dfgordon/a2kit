@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::lang;
 use lsp_types as lsp;
 use tree_sitter::TreeCursor;
-use super::super::{Symbols,Workspace};
+use super::super::{Symbols,Collisions,Workspace};
 use crate::lang::{Document,Navigate,Navigation};
 use crate::{DYNERR,STDRESULT};
 
@@ -103,6 +103,7 @@ pub struct WorkspaceScanner {
     dir_count: usize,
     ws: Workspace,
     working_symbols: Symbols,
+    working_collisions: Collisions,
     running_docstring: String
 }
 
@@ -120,6 +121,7 @@ impl WorkspaceScanner {
             dir_count: 0,
             ws: Workspace::new(),
             working_symbols: Symbols::new(),
+            working_collisions: Collisions::new(),
             running_docstring: String::new()
         }
     }
@@ -241,8 +243,11 @@ impl WorkspaceScanner {
     pub fn scan(&mut self) -> STDRESULT {
         self.ws.ws_symbols = HashMap::new();
         self.ws.ws_collisions = HashMap::new();
+        self.ws.backlink_map = HashMap::new();
+        self.ws.chain_destinations = HashSet::new();
         for i in 0..self.ws.docs.len() {
             self.working_symbols = Symbols::new();
+            self.working_collisions = Collisions::new();
             let doc = self.ws.docs[i].to_owned();
             log::debug!("Scanning {}...",doc.uri.as_str());
             self.curr_uri = Some(doc.uri.clone());
@@ -256,6 +261,7 @@ impl WorkspaceScanner {
                 self.curr_row += 1;
             }
             self.ws.ws_symbols.insert(doc.uri.clone(),self.working_symbols.clone());
+            self.ws.ws_collisions.insert(doc.uri.clone(),self.working_collisions.clone());
         }
         log::info!("Found {} chain destinations",self.ws.chain_destinations.len());
         if log::max_level() >= log::Level::Debug {
@@ -278,7 +284,7 @@ impl Navigate for WorkspaceScanner {
     /// Important that this be efficient since every file is scanned.
     fn visit(&mut self, curs: &TreeCursor) -> Result<Navigation,DYNERR> {
         let curr = curs.node();
-        if let Some(nav) = super::pass1::visit_defs_and_decs(&mut self.working_symbols,Some(&mut self.ws.ws_collisions), curs, &self.line, self.curr_row, 0) {
+        if let Some(nav) = super::pass1::visit_defs_and_decs(&mut self.working_symbols,Some(&mut self.working_collisions), curs, &self.line, self.curr_row, 0) {
             return Ok(nav);
         }
         // find the CHAIN patterns
