@@ -162,15 +162,18 @@ but the files will all go to the same target directory."))
             .arg(Arg::new("addr").long("addr").short('a').help("load-address if applicable").value_name("ADDRESS").required(false)
                 .long_help("Specify the load address that is stored with some Apple file types.
 This is only needed for host-to-image copies involving Apple file systems.
-Smart copy does not preserve load address on the host, for that use `get -t any...` or `get -t as...`."))
+See also `--suffix`, or consider get/put with `-t any` or `-t as`."))
+            .arg(Arg::new("suffix").long("suffix").short('s').help("enable special suffix handling").action(ArgAction::SetTrue)
+                .long_help("When copying from Apple disks add CiderPress suffix to binaries
+and filename extensions to text or language files. When copying to Apple disks
+parse and use the CiderPress suffix if available."))
             .arg(pro_arg())
             .arg(method_arg())
             .about("smart copy that formats for the target")
             .after_help("Disk images can appear midway through a path,
 the path then continues inside the image (e.g. /path/to/mydisk.woz/startup).
-Glob patterns outside a disk image are only expanded if the shell expands them,
-whereas glob patterns inside a disk image are expanded by a2kit.
-Delimiters like quotes are sometimes needed for the latter to work.
+Glob patterns like `*` are fully supported, the only caveat is that your shell's
+own expansion might need to be suppressed (say, with quotes) in some cases.
 This subcommand favors convenience over control.
 For greater control use `get` and `put`.")
     );

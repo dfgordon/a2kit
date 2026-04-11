@@ -36,13 +36,16 @@ impl Workspace {
         let mut ans = Vec::new();
         let mut instances: Vec<(lsp::Location,String)> = Vec::new();
         for (uri,syms) in &self.ws_symbols {
-            // for (name,var) in &syms.scalars {
-            //     for rng in &var.defs {
-            //         instances.push((lsp::Location::new(uri.clone(),rng.clone()),name.to_owned()));
-            //     }
-            // }
+            for (name,var) in &syms.scalars {
+                for rng in &var.defs {
+                    instances.push((lsp::Location::new(uri.clone(),rng.clone()),name.to_owned()));
+                }
+            }
             for (name,var) in &syms.arrays {
                 for rng in &var.decs {
+                    instances.push((lsp::Location::new(uri.clone(),rng.clone()),name.to_owned()));
+                }
+                for rng in &var.defs {
                     instances.push((lsp::Location::new(uri.clone(),rng.clone()),name.to_owned()));
                 }
             }

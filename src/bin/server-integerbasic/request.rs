@@ -1,6 +1,7 @@
 //! Provide our response to incoming requests
 
 use lsp_types as lsp;
+use std::str::FromStr;
 use lsp::request::Request;
 use lsp_server::{Connection,RequestId,Response};
 use serde_json;
@@ -89,6 +90,41 @@ pub fn handle_request(
         lsp::request::ExecuteCommand::METHOD => {
             if let Ok(params) = serde_json::from_value::<lsp::ExecuteCommandParams>(req.params) {
                 match params.command.as_str() {
+                    "integerbasic.getBacklinks" => 'backlinks: {
+                        if params.arguments.len() != 3 {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,
+                                format!("argument count {}",params.arguments.len()));
+                            break 'backlinks;
+                        }
+                        let Ok(max_depth) = serde_json::from_value::<usize>(params.arguments[0].clone()) else {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,"bad argument".to_string());
+                            break 'backlinks;
+                        };
+                        let Ok(doc_path) = serde_json::from_value::<String>(params.arguments[1].clone()) else {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,"bad argument".to_string());
+                            break 'backlinks;
+                        };
+                        let Ok(normalized_uri) = normalize_client_uri_str(&doc_path) else {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,
+                                format!("can't parse doc {}",doc_path));
+                            break 'backlinks;
+                        };
+                        let mut set = std::collections::HashSet::new();
+                        tools.workspace.get_all_backlinks(&mut set,&normalized_uri,&normalized_uri,0,max_depth);
+
+                        let Ok(ws_path) = serde_json::from_value::<String>(params.arguments[2].clone()) else {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,"bad argument".to_string());
+                            break 'backlinks;
+                        };
+                        let Ok(ws_folder) = lsp::Uri::from_str(&ws_path) else {
+                            resp = lsp_server::Response::new_err(req.id,PARSE_ERROR,
+                                format!("can't parse ws {}",ws_path));
+                            break 'backlinks;
+                        };
+                        let links = set.iter().map(|uri|
+                            a2kit::lang::server::path_in_workspace(uri,&vec![ws_folder.clone()])).collect::<Vec<String>>();
+                        resp = lsp_server::Response::new_ok(req.id,links);
+                    },
                     "integerbasic.activeEditorChanged" => {
                         if params.arguments.len()==1 {
                             let uri_res = serde_json::from_value::<String>(params.arguments[0].clone());

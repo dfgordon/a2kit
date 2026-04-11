@@ -19,9 +19,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Cargo cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ~/.cargo/registry
@@ -48,14 +48,14 @@ jobs:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install musl GCC wrapper
         run: |
           if [[ $OS =~ ^ubuntu.*$ ]]; then
             sudo apt install musl-tools
           fi
       - name: Cargo cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -85,7 +85,7 @@ jobs:
             mv ./target/$TARGET/release/${i}$EXE ./artifacts/${i}-${TARGET}$EXE
           done
       - name: Archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: result-${{ matrix.TARGET }}
           path: ./artifacts

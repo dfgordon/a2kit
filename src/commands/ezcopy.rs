@@ -10,6 +10,7 @@
 use clap;
 use regex::Regex;
 use std::str::FromStr;
+use num_traits::FromPrimitive;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
@@ -22,6 +23,7 @@ use crate::lang::{applesoft,integer,merlin,is_lang};
 static CPM_COLON: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|\/|\\)([0-9][0-9]?)(:)").unwrap());
 static CPM_UNDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|\/|\\)([0-9][0-9]?)(_)").unwrap());
 static DRIVE_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z]:").unwrap());
+static CIDERPRESS_SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$").unwrap());
 
 struct Source {
     pub fimg: FileImage,
@@ -33,6 +35,13 @@ enum Destination {
     Dimg(Box<dyn DiskFS>,String,String),
     /// path on the host system
     Host(String)
+}
+
+/// Parse a CiderPress suffix to extract (type,aux). May panic if `suffix` format is wrong.
+fn parse_cp_suffix(suffix: &str) -> (u8,usize) {
+    let typ = hex::decode(&suffix[1..3]).expect("bad suffix");
+    let aux = hex::decode(&suffix[3..7]).expect("bad suffix");
+    (typ[0],u16::from_be_bytes([aux[0],aux[1]]) as usize)
 }
 
 /// Using the `old` pattern find the CP/M user prefix in `path`,
@@ -105,6 +114,7 @@ fn finalize_destination_path(src_path: &str, dst_path: &str, src_count: usize, d
 /// Sometimes the destination filename is actually in the source path. This will handle that logic.
 /// If the source path is used, only the filename is taken, the CP/M user prefix is normalized, and
 /// up to one filename extension is removed if it appears in `strip`.
+/// Anything matching a CiderPress suffix is also removed.
 /// If the destination path is used it is taken as is (we will return an error later if it is wrong).
 fn create_fimg_path(src_path: &str, dst_path: &str, src_count: usize, dst_is_dir: bool, strip: Vec<&str>, cpm: bool) -> Result<String,DYNERR> {
     match (src_count, dst_is_dir, dst_path.is_empty()) {
@@ -125,6 +135,9 @@ fn create_fimg_path(src_path: &str, dst_path: &str, src_count: usize, dst_is_dir
                     break;
                 }
             }
+            if ans.len() > 7 && CIDERPRESS_SUFFIX.is_match(&ans) {
+                ans.truncate(l-7)
+            }
             Ok(ans)
         }
     }
@@ -132,7 +145,17 @@ fn create_fimg_path(src_path: &str, dst_path: &str, src_count: usize, dst_is_dir
 
 /// Pack up data into a file image after transforming to the emulated system's format.
 /// The input slice may be fully parsed for identification purposes.
-fn smart_pack(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>) -> STDRESULT {
+fn smart_pack(fimg: &mut FileImage, dat: &[u8], load_addr0: Option<usize>, cp_suffix: Option<String>) -> STDRESULT {
+    let load_addr = match (load_addr0,&cp_suffix) {
+        (Some(addr),_) => Some(addr),
+        (None,Some(s)) => Some(parse_cp_suffix(&s).1),
+        _ => None
+    };
+    let typ = match &cp_suffix {
+        Some(s) => Some(parse_cp_suffix(&s).0),
+        None => None
+    };
+    log::debug!("load={}, type={}",load_addr.unwrap_or(0),typ.unwrap_or(0));
     match str::from_utf8(dat) {
         Ok(program) => {
             if is_lang(tree_sitter_applesoft::LANGUAGE.into(),program) {
@@ -143,33 +166,52 @@ fn smart_pack(fimg: &mut FileImage, dat: &[u8], load_addr: Option<usize>) -> STD
                 };
                 let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(&program,start_addr)?;
-                fimg.pack_tok(&tok,super::ItemType::ApplesoftTokens,None)
+                fimg.pack_tok(&tok,super::ItemType::ApplesoftTokens,None)?;
             } else if is_lang(tree_sitter_integerbasic::LANGUAGE.into(), program) {
                 log::info!("detected Integer BASIC");
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(program.to_string())?;
-                fimg.pack_tok(&tok,super::ItemType::IntegerTokens,None)
+                fimg.pack_tok(&tok,super::ItemType::IntegerTokens,None)?;
             } else if is_lang(tree_sitter_merlin6502::LANGUAGE.into(), program) {
                 log::info!("detected Merlin");
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(program.to_string())?;
-                fimg.pack_raw(&tok)
+                fimg.pack_raw(&tok)?;
             } else {
                 // this will take care of either records, or the case where
                 // the data is already a file image
-                fimg.pack(&dat,load_addr)
+                fimg.pack(&dat,load_addr)?;
             }
         },
         Err(_) => {
-            fimg.pack(&dat,load_addr)
+            fimg.pack(&dat,load_addr)?;
+        }
+    };
+    // if there was a CiderPress suffix and this is an Apple FS override the file type
+    if let Some(t) = typ {
+        match fimg.file_system.as_str() {
+            "prodos" => {
+                fimg.fs_type = vec![t];
+            },
+            "a2 dos" => {
+                match prodos::types::FileType::from_u8(t) {
+                    Some(prodos::types::FileType::Text) => fimg.fs_type = vec![dos3x::types::FileType::Text as u8],
+                    Some(prodos::types::FileType::ApplesoftCode) => fimg.fs_type = vec![dos3x::types::FileType::Applesoft as u8],
+                    Some(prodos::types::FileType::IntegerCode) => fimg.fs_type = vec![dos3x::types::FileType::Integer as u8],
+                    _ => fimg.fs_type = vec![dos3x::types::FileType::Binary as u8]
+                }
+            },
+            _ => {}
         }
     }
+    Ok(())
 }
 
 /// Unpack a file image and possibly transform the data to a string that is readable and invertible on the host system.
 /// In this direction there is a chance file system hints can be used for identification, while in some
 /// cases it is still necessary to parse the whole slice.
-fn smart_unpack(fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
+/// The returned tuple is the `UnpackedData` and the updated destination path (suffix might be added).
+fn smart_unpack(fimg: &FileImage,dst_path: &str,add_suffix: bool) -> Result<(UnpackedData,String),DYNERR> {
     // Coerce DOS types to ProDOS types so we can handle all at once via packing trait.
     // For pascal, FAT, and CP/M we only have the generic unpacking.
     let maybe_file_type = match fimg.file_system.as_str() {
@@ -182,38 +224,48 @@ fn smart_unpack(fimg: &FileImage) -> Result<UnpackedData,DYNERR> {
         },
         _ => None
     };
+    let cp_suffix = match maybe_file_type {
+        Some(_) => ["#".to_string(),hex::encode(&fimg.fs_type),hex::encode(&fimg.aux.iter().rev().map(|x| *x).collect::<Vec<u8>>())].concat(),
+        None => "".to_string()
+    };
+    // closure to add a suffix to destination path
+    let update_dst_path = |s: &str| -> String {
+        match dst_path.to_lowercase().ends_with(s) || !add_suffix {
+            true => dst_path.to_string(),
+            false => [dst_path,s].concat()
+        }
+    };
     match maybe_file_type {
         Some(prodos::types::FileType::ApplesoftCode) => {
             log::info!("detected Applesoft");
             let toks = fimg.unpack_tok()?;
             let tokenizer = applesoft::tokenizer::Tokenizer::new();
-            Ok(UnpackedData::Text(tokenizer.detokenize(&toks)?))
+            return Ok((UnpackedData::Text(tokenizer.detokenize(&toks)?),update_dst_path(".abas")))
         },
         Some(prodos::types::FileType::IntegerCode) => {
             log::info!("detected Integer BASIC");
             let toks = fimg.unpack_tok()?;
             let tokenizer = integer::tokenizer::Tokenizer::new();
-            Ok(UnpackedData::Text(tokenizer.detokenize(&toks)?))
+            return Ok((UnpackedData::Text(tokenizer.detokenize(&toks)?),update_dst_path(".ibas")))
         },
         Some(prodos::types::FileType::Text) => {
             // some processing to see if this is Merlin
             let merlin_code = fimg.unpack_raw(true)?;
             let mut tokenizer = merlin::tokenizer::Tokenizer::new();
             tokenizer.set_err_log(false);
-            match tokenizer.detokenize(&merlin_code) {
-                Ok(src) => {
-                    match is_lang(tree_sitter_merlin6502::LANGUAGE.into(), &src) {
-                        true => {
-                            log::info!("detected Merlin");
-                            Ok(UnpackedData::Text(src))
-                        },
-                        false => fimg.unpack()
-                    }
-                },
-                Err(_) => fimg.unpack()
+            if let Ok(src) = tokenizer.detokenize(&merlin_code) {
+                if is_lang(tree_sitter_merlin6502::LANGUAGE.into(), &src) {
+                    log::info!("detected Merlin");
+                    return Ok((UnpackedData::Text(src),update_dst_path(".S")));
+                }
             }
         },
-        _ => fimg.unpack()
+        _ => {}
+    }
+    match fimg.unpack() {
+        Ok(UnpackedData::Text(t)) => Ok((UnpackedData::Text(t),update_dst_path(".txt"))),
+        Ok(ud) => Ok((ud,update_dst_path(&cp_suffix))),
+        Err(e) => Err(e)
     }
 }
 
@@ -224,6 +276,7 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
         Some(a) => Some(usize::from_str(a)?),
         _ => None
     };
+    let add_suffix = cmd.get_flag("suffix");
     let src_count = src.len();
 
     for fused_path in src {
@@ -277,9 +330,13 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
                             "prodos" | "a2 dos" => vec![".json",".txt",".bas",".abas",".ibas"],
                             _ => vec![".json"]
                         };
+                        let cp_suffix = match (add_suffix,CIDERPRESS_SUFFIX.is_match(&fused_path)) {
+                            (true,true) => Some(fused_path[fused_path.len()-7..].to_string()),
+                            _ => None
+                        };
                         let dst_path = create_fimg_path(&fused_path,raw_dst_path,src_count,dst_is_dir,strip,cpm)?;
                         let mut fimg = dst_disk.new_fimg(None,true,&dst_path)?;
-                        smart_pack(&mut fimg,&dat,load_addr)?;
+                        smart_pack(&mut fimg,&dat,load_addr,cp_suffix)?;
                         ans.push(Source {fimg,fused_path});
                     },
                     (_,Err(e)) => return Err(Box::new(e))
@@ -299,6 +356,7 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
 
     // First stage, setup and gather sources
 
+    let add_suffix = cmd.get_flag("suffix");
     let dimg_patt = Regex::new(r"(?i)\.(2mg|d13|dsk|do|dsk|ima|imd|img|nib|po|td0|woz)($|/)").expect("failed to parse regex");
     let mut path_list: Vec<String> = cmd.get_many::<String>("paths").expect("no paths").map(|x| x.to_owned()).collect();
     let fused = path_list.pop().unwrap();
@@ -361,12 +419,12 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
                     return Err(Box::new(CommandError::InvalidCommand));
                 }
                 log::info!("copy {} -> {}",src.fused_path,dst_path);
-                match smart_unpack(&src.fimg) {
-                    Ok(UnpackedData::Binary(dat)) => std::fs::write(&dst_path,&dat).expect("host file system error"),
-                    Ok(UnpackedData::Text(s)) => std::fs::write(&dst_path,s.as_bytes()).expect("host file system error"),
-                    Ok(UnpackedData::Records(r)) => {
+                match smart_unpack(&src.fimg,&dst_path,add_suffix) {
+                    Ok((UnpackedData::Binary(dat),final_dst)) => std::fs::write(&final_dst,&dat).expect("host file system error"),
+                    Ok((UnpackedData::Text(s),final_dst)) => std::fs::write(&final_dst,s.as_bytes()).expect("host file system error"),
+                    Ok((UnpackedData::Records(r),final_dst)) => {
                         let rec_str = r.to_json(None);
-                        std::fs::write(&dst_path,rec_str.as_bytes()).expect("host file system error")
+                        std::fs::write(&final_dst,rec_str.as_bytes()).expect("host file system error")
                     },
                     _ => {
                         log::info!("not unpacking {}",dst_path);

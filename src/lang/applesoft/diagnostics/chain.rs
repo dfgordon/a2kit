@@ -45,18 +45,17 @@ fn parse_chain_literal(s: &str, skip_chain: bool) -> Option<(String,isize)> {
         }
     }
 
-    // extract program name and maybe starting line
+    // extract program path and maybe starting line
     let mut end = s.len();
     if s.ends_with("\"") {
         end -= 1;
     }
-    let path = s[col..end].trim_start().to_owned();
-    let prog_and_line = path.split("/").last().unwrap();
-    if prog_and_line.starts_with(",") {
+    let path_and_line = s[col..end].trim_start().to_owned();
+    if path_and_line.starts_with(",") {
         return None;
     }
-    if prog_and_line.contains(",") {
-        let mut iter = prog_and_line.split(",");
+    if path_and_line.contains(",") {
+        let mut iter = path_and_line.split(",");
         let prog = iter.next().unwrap();
         let line = iter.next().unwrap().trim_start();
         if line.starts_with("@") {
@@ -66,12 +65,12 @@ fn parse_chain_literal(s: &str, skip_chain: bool) -> Option<(String,isize)> {
         }
         Some((prog.to_owned(),-1))
     } else {
-        Some((prog_and_line.to_owned(),-1))
+        Some((path_and_line.to_owned(),-1))
     }
 }
 
 /// From a tok_print or tok_call node, see if this is a CHAIN pattern.
-/// Return None or Some((name,line)) where name is the program being chained to,
+/// Return None or Some((name,line)) where name is the program (or path) being chained to,
 /// and line is the line number if one was specified, or a negative number if not.
 /// It would require extensive flow analysis to capture every possible CHAIN.
 /// For DOS 3.x, the only pattern accepted is `CALL 520"<PROG>"`.

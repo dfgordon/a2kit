@@ -37,7 +37,7 @@ fn parse_chain_literal(s: &str, skip_chain: bool) -> Option<String> {
         }
     }
 
-    // extract program name
+    // extract program name, slashes are not interpreted at this level
     let mut end = s.len();
     if s.ends_with("\"") {
         end -= 1;

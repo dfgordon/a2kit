@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-04-11
+
+### Fixes
+
+* make use of path segments in chain analysis
+* update github workflow dependencies
+* BASIC workspace symbols are more complete
+
+### New Features
+
+* smart copy `--suffix` option
+* provide CHAIN backlinks to LSP client
+
 ## [4.3.1] - 2026-03-29
 
 ### Fixes
