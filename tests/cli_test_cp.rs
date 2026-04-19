@@ -268,3 +268,86 @@ BAT      1  GO
 
         Ok(())
 }
+
+fn cp_suffix(dir: tempfile::TempDir, dimg_path: PathBuf) -> STDRESULT {
+    
+    // put some binary in the temp directory with suffix
+
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("put")
+        .arg("-f").arg(dir.path().join("test#060300"))
+        .write_stdin(vec![1,2,3,4])
+        .assert().success();
+
+    // put the same data interpreted as text (ascii control codes) without suffix
+
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("put")
+        .arg("-f").arg(dir.path().join("text"))
+        .write_stdin(vec![1,2,3,4])
+        .assert().success();
+
+    // copy the binary and text to the disk image with suffix option
+
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("cp")
+        .arg("--suffix")
+        .arg(dir.path().join("test#060300"))
+        .arg(dir.path().join("text"))
+        .arg(dimg_path.clone())
+        .assert().success();
+
+    // copy it back to another temp directory and check suffix
+
+    let dir2 = tempfile::tempdir()?;
+    cmd = cargo::cargo_bin_cmd!("a2kit");
+    cmd.arg("cp")
+        .arg("--suffix")
+        .arg([dimg_path.clone().to_str().unwrap(),"/TEST"].concat())
+        .arg([dimg_path.clone().to_str().unwrap(),"/TEXT"].concat())
+        .arg(dir2.path())
+        .assert().success();
+
+    assert!(std::fs::exists(dir2.path().join("TEST#060300")).expect("file exists"));
+    assert!(std::fs::exists(dir2.path().join("TEXT.txt")).expect("file exists"));
+
+    Ok(())
+}
+
+#[test]
+fn cp_suffix_dos() -> STDRESULT {
+    
+    // make a disk image in the temp directory
+
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("dos33.do");
+    cmd.arg("mkdsk")
+        .arg("-v").arg("254").arg("-t").arg("do").arg("-o").arg("dos33")
+        .arg("-d").arg(dimg_path.clone())
+        .assert()
+        .success();
+
+    cp_suffix(dir, dimg_path)?;
+
+    Ok(())
+}
+
+#[test]
+fn cp_suffix_prodos() -> STDRESULT {
+    
+    // make a disk image in the temp directory
+
+    let mut cmd = cargo::cargo_bin_cmd!("a2kit");
+    let dir = tempfile::tempdir()?;
+    let dimg_path = dir.path().join("prodos.do");
+    cmd.arg("mkdsk")
+        .arg("-v").arg("NEW.DISK").arg("-t").arg("do").arg("-o").arg("prodos")
+        .arg("-d").arg(dimg_path.clone())
+        .assert()
+        .success();
+
+    cp_suffix(dir, dimg_path)?;
+
+    Ok(())
+}

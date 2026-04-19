@@ -6,6 +6,58 @@ use std::collections::HashMap;
 use super::{FileImage,Records,TextConversion,Error};
 use crate::{STDRESULT,DYNERR};
 
+/// See if `fimg` can be interpreted as records, and if so return the record length.
+/// The converter is only used to decide whether we should expect postive or negative ASCII.
+/// It is always assumed the record separator is a run of ascii null.
+/// This basically relies on finding a run of contiguous records with
+/// clean runs of separators between every record.
+fn deduce_record_length(fimg: &FileImage,converter: &impl TextConversion) -> Option<usize> {
+    let mut l = usize::MAX; // current estimate of record length
+    let mut num = 0; // number of contiguous records found
+    let mut pos = 0; // position in tentative record
+    let mut in_fields = false;
+    let lims = match converter.to_utf8(&[10]) {
+        None => [129,255],
+        Some(s) if s.as_str()=="\u{0000}" => [129,255],
+        _ => [1,127]
+    };
+    for k in fimg.chunks.keys() {
+        let Some(chunk) = fimg.chunks.get(k) else { return None; };
+        for b in chunk {
+            if in_fields && *b == 0 {
+                in_fields = false;
+                pos += 1;
+            } else if in_fields && *b > lims[0] && *b < lims[1] {
+                pos += 1;
+            } else if !in_fields && *b > lims[0] && *b < lims[1]  {
+                in_fields = true;
+                num += 1;
+                if pos > 0 {
+                    if l == usize::MAX {
+                        l = pos;
+                    } else if pos < l && l % pos == 0 {
+                        l = pos;
+                    } else if pos < l && l % pos != 0 {
+                        return None;
+                    } else if pos > l && pos % l != 0 {
+                        return None;
+                    }
+                }
+                pos = 1; // pointer is after character we have found
+            } else if !in_fields && *b == 0 {
+                pos += 1;
+            } else {
+                return None;
+            }
+        }
+    }
+    if num > 3 && l > 2 && l <= 0xffff {
+        Some(l)
+    } else {
+        None
+    }
+}
+
 impl Records {
     pub fn new(record_len: usize) -> Self {
         Self {
@@ -34,9 +86,19 @@ impl Records {
     }
     /// Derive records from file image, this should find any real record, but may also find spurious ones.
     /// This is due to fundamental non-invertibility of the A2 file system's random access storage pattern.
-    /// This routine assumes ASCII null terminates any record.
-    pub fn from_fimg(fimg: &FileImage,record_length: usize,converter: impl TextConversion) -> Result<Records,DYNERR> {
-        if record_length < 2 {
+    /// This routine assumes ASCII null terminates any record.  If `record_length` is 0 an analysis is
+    /// triggered that tries to match a random access text pattern against rules deduced from the `converter` object.
+    /// If the matching succeeds the Records are returned, if not an error is returned.
+    pub fn from_fimg(fimg: &FileImage,mut record_length: usize,converter: impl TextConversion) -> Result<Records,DYNERR> {
+        // TODO: allow for record separators other than ascii null
+        if record_length == 0 {
+            record_length = match deduce_record_length(fimg,&converter) {
+                Some(l) => l,
+                None => return Err(Box::new(Error::FileFormat)) // don't want a log message here
+            };
+        }
+        if record_length < 2 || record_length > 0xffff {
+            log::error!("refusing record length {}",record_length);
             return Err(Box::new(Error::FileFormat));
         }
         let mut ans = Records::new(record_length);

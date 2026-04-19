@@ -105,7 +105,7 @@ pub const TYPE_MAP_DISP: [(u8,&str);39] = [
 /// * FileType to u8,u16,u32: `as u8` etc.
 /// * u8,u16,u32 to FileType: `FileType::from_u8` etc., (use FromPrimitive trait)
 /// * &str to Type: `FileType::from_str`, str can be a number or mnemonic
-#[derive(FromPrimitive)]
+#[derive(FromPrimitive,Clone)]
 pub enum FileType {
     None = 0x00,
     Text = 0x04,

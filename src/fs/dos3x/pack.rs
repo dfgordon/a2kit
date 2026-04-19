@@ -108,6 +108,9 @@ impl Packing for Packer {
             } else if FileImage::test(dat) {
                 log::info!("auto packing FileImage as FileImage");
                 Ok(fimg.mostly_copy(FileImage::from_json(str::from_utf8(dat)?)?,true,true,true))
+            } else if load_addr.is_some() {
+                log::info!("auto packing binary as FileImage");
+                self.pack_bin(fimg,dat,load_addr,None)
             } else {
                 log::info!("auto packing text as FileImage");
                 self.pack_txt(fimg,str::from_utf8(dat)?)
@@ -125,6 +128,9 @@ impl Packing for Packer {
         let typ = fimg.fs_type[0] & 0x7f;
         match FileType::from_u8(typ) {
             Some(FileType::Text) => {
+                if let Ok(recs) = crate::fs::Records::from_fimg(fimg, 0,TextConverter::new(vec![0x8d])) {
+                    return Ok(UnpackedData::Records(recs));
+                }
                 let maybe = self.unpack_txt(fimg)?;
                 if super::super::null_fraction(&maybe) < 0.01 {
                     Ok(UnpackedData::Text(maybe))

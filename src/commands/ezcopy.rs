@@ -31,8 +31,8 @@ struct Source {
 }
 
 enum Destination {
-    /// disk object, path to image, path inside image
-    Dimg(Box<dyn DiskFS>,String,String),
+    /// fs-string, disk object, path to image, path inside image
+    Dimg(String,Box<dyn DiskFS>,String,String),
     /// path on the host system
     Host(String)
 }
@@ -81,12 +81,12 @@ fn parse_fused_path(fused: &str,dimg_patt: &Regex) -> Result<(String,String),DYN
 }
 
 /// Combine src_path and dst_path using logic that the user likely expects.
-/// If there is 1 source and the destination is neither null nor a directory, use the destination as is.
-/// Otherwise the source filename is joined to the destination path.
+/// If there are multiple sources or the destination is a directory or the destination is null,
+/// then the source filename is joined to the destination path.  Otherwise use destination path as is.
 /// The CP/M user prefix will be adjusted based on `dst_is_img`.
-fn finalize_destination_path(src_path: &str, dst_path: &str, src_count: usize, dst_is_dir: bool, dst_is_img: bool, cpm: bool) -> Result<String,DYNERR> {
-    match (src_count,dst_is_dir,dst_path.is_empty()) {
-        (1,false,false) => Ok(dst_path.to_owned()),
+fn finalize_destination_path(src_path: &str, dst_path: &str, multi_src: bool, dst_is_dir: bool, dst_is_img: bool, cpm: bool) -> Result<String,DYNERR> {
+    match (multi_src,dst_is_dir,dst_path.is_empty()) {
+        (false,false,false) => Ok(dst_path.to_owned()),
         _ => {
             let mut fname = src_path.to_string();
             if cpm {
@@ -116,9 +116,9 @@ fn finalize_destination_path(src_path: &str, dst_path: &str, src_count: usize, d
 /// up to one filename extension is removed if it appears in `strip`.
 /// Anything matching a CiderPress suffix is also removed.
 /// If the destination path is used it is taken as is (we will return an error later if it is wrong).
-fn create_fimg_path(src_path: &str, dst_path: &str, src_count: usize, dst_is_dir: bool, strip: Vec<&str>, cpm: bool) -> Result<String,DYNERR> {
-    match (src_count, dst_is_dir, dst_path.is_empty()) {
-        (1,false,false) => Ok(dst_path.to_string()),
+fn create_fimg_path(src_path: &str, dst_path: &str, multi_src: bool, dst_is_dir: bool, strip: Vec<&str>, cpm: bool) -> Result<String,DYNERR> {
+    match (multi_src, dst_is_dir, dst_path.is_empty()) {
+        (false,false,false) => Ok(dst_path.to_string()),
         _ => {
             let mut ans = src_path.to_string();
             if cpm {
@@ -155,10 +155,14 @@ fn smart_pack(fimg: &mut FileImage, dat: &[u8], load_addr0: Option<usize>, cp_su
         Some(s) => Some(parse_cp_suffix(&s).0),
         None => None
     };
+    let is_apple = match fimg.file_system.as_str() {
+        "prodos" | "a2 dos" => true,
+        _ => false
+    };
     log::debug!("load={}, type={}",load_addr.unwrap_or(0),typ.unwrap_or(0));
     match str::from_utf8(dat) {
         Ok(program) => {
-            if is_lang(tree_sitter_applesoft::LANGUAGE.into(),program) {
+            if is_apple && is_lang(tree_sitter_applesoft::LANGUAGE.into(),program) {
                 log::info!("detected Applesoft");
                 let start_addr = match load_addr {
                     Some(addr) => u16::try_from(addr)?,
@@ -167,12 +171,12 @@ fn smart_pack(fimg: &mut FileImage, dat: &[u8], load_addr0: Option<usize>, cp_su
                 let mut tokenizer = applesoft::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(&program,start_addr)?;
                 fimg.pack_tok(&tok,super::ItemType::ApplesoftTokens,None)?;
-            } else if is_lang(tree_sitter_integerbasic::LANGUAGE.into(), program) {
+            } else if is_apple && is_lang(tree_sitter_integerbasic::LANGUAGE.into(), program) {
                 log::info!("detected Integer BASIC");
                 let mut tokenizer = integer::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(program.to_string())?;
                 fimg.pack_tok(&tok,super::ItemType::IntegerTokens,None)?;
-            } else if is_lang(tree_sitter_merlin6502::LANGUAGE.into(), program) {
+            } else if is_apple && is_lang(tree_sitter_merlin6502::LANGUAGE.into(), program) {
                 log::info!("detected Merlin");
                 let mut tokenizer = merlin::tokenizer::Tokenizer::new();
                 let tok = tokenizer.tokenize(program.to_string())?;
@@ -220,13 +224,21 @@ fn smart_unpack(fimg: &FileImage,dst_path: &str,add_suffix: bool) -> Result<(Unp
             Some(dos3x::types::FileType::Applesoft) => Some(prodos::types::FileType::ApplesoftCode),
             Some(dos3x::types::FileType::Integer) => Some(prodos::types::FileType::IntegerCode),
             Some(dos3x::types::FileType::Text) => Some(prodos::types::FileType::Text),
+            Some(dos3x::types::FileType::Binary) => Some(prodos::types::FileType::Binary),
             _ => None
         },
         _ => None
     };
-    let cp_suffix = match maybe_file_type {
-        Some(_) => ["#".to_string(),hex::encode(&fimg.fs_type),hex::encode(&fimg.aux.iter().rev().map(|x| *x).collect::<Vec<u8>>())].concat(),
-        None => "".to_string()
+    let cp_suffix = match fimg.file_system.as_str() {
+        "prodos" => ["#".to_string(),hex::encode(&fimg.fs_type),hex::encode(&fimg.aux.iter().rev().map(|x| *x).collect::<Vec<u8>>())].concat(),
+        "a2 dos" => {
+            let typ = match &maybe_file_type {
+                Some(t) => t.clone() as u8, // prefer the prodos equivalent
+                None => fimg.fs_type[0] // if not use the native one
+            };
+            ["#".to_string(),hex::encode(vec![typ]),hex::encode(u16::to_be_bytes(u16::try_from(fimg.get_load_address())?))].concat()
+        },
+        _ => "".to_string()
     };
     // closure to add a suffix to destination path
     let update_dst_path = |s: &str| -> String {
@@ -264,6 +276,7 @@ fn smart_unpack(fimg: &FileImage,dst_path: &str,add_suffix: bool) -> Result<(Unp
     }
     match fimg.unpack() {
         Ok(UnpackedData::Text(t)) => Ok((UnpackedData::Text(t),update_dst_path(".txt"))),
+        Ok(UnpackedData::Records(r)) => Ok((UnpackedData::Records(r),update_dst_path(".json"))),
         Ok(ud) => Ok((ud,update_dst_path(&cp_suffix))),
         Err(e) => Err(e)
     }
@@ -277,7 +290,44 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
         _ => None
     };
     let add_suffix = cmd.get_flag("suffix");
-    let src_count = src.len();
+
+    // First figure out if there are multiple sources
+    let mut partial_count = 0;
+    for fused_path in &src {
+        match dimg_patt.is_match(fused_path) {
+            // disk image, we will have to glob it ourselves
+            true => {
+                let (path_to,path_in) = parse_fused_path(&fused_path,dimg_patt)?;
+                let mut src_disk = crate::create_fs_from_file(&path_to,fmt.as_ref())?;
+                src_disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
+                match src_disk.glob(&path_in,false) {
+                    Ok(glob_matches) => partial_count += glob_matches.len(),
+                    Err(_) => {}
+                }
+            },
+            // host, glob is not our problem
+            false => partial_count += 1
+        }
+        if partial_count > 1 {
+            // this is all we need to know, don't waste time continuing
+            break;
+        }
+    };
+    let multi_src = partial_count > 1;
+
+    // establish properties of destination
+
+    let (dst_flat, dst_empty_path) = match dst {
+        Destination::Host(dst_path) => {
+            (false, dst_path.is_empty())
+        }
+        Destination::Dimg(fs, _, _, dst_path) => {
+            (["cpm","a2 dos","a2 pascal"].contains(&fs.as_str()), dst_path.is_empty())
+        }
+    };
+    let joining_dst_src = multi_src || dst_is_dir || dst_empty_path;
+
+    // loop over source patterns
 
     for fused_path in src {
 
@@ -288,10 +338,11 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
                 let (path_to,path_in) = parse_fused_path(&fused_path,dimg_patt)?;
                 let mut src_disk = crate::create_fs_from_file(&path_to,fmt.as_ref())?;
                 src_disk.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
-                let flat = match src_disk.stat() {
+                let src_flat = match src_disk.stat() {
                     Ok(stat) if ["cpm","a2 dos","a2 pascal"].contains(&stat.fs_name.as_str()) => true,
                     _ => false
                 };
+                let forbid_delims_in_src = src_flat && !dst_flat && joining_dst_src;
                 match src_disk.glob(&path_in,false) {
                     Ok(glob_matches) => {
                         if glob_matches.len() == 0 {
@@ -299,13 +350,13 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
                             return Err(Box::new(CommandError::FileNotFound));
                         }
                         for raw_match in glob_matches {
-                            if flat && (raw_match.contains("/") || raw_match.contains("\\")) {
+                            if forbid_delims_in_src && (raw_match.contains("/") || raw_match.contains("\\")) {
                                 log::warn!("skipping {} due to path delimiter in filename",raw_match);
-                                break;
+                                continue;
                             }
                             // for flat FS the slash has to be put back in the fused path,
                             // as of this writing Source.fused_path is used only for logging
-                            let m = match flat {
+                            let m = match src_flat {
                                 true => ["/",&raw_match].concat(),
                                 false => raw_match.clone()
                             };
@@ -323,10 +374,9 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
                         log::error!("refusing host-to-host copy");
                         return Err(Box::new(CommandError::InvalidCommand))
                     },
-                    (Destination::Dimg(dst_disk,_,raw_dst_path),Ok(dat)) => {
-                        let dummy = dst_disk.new_fimg(None,true,"dummy")?;
-                        let cpm = dummy.file_system.as_str()=="cpm";
-                        let strip = match dummy.file_system.as_str() {
+                    (Destination::Dimg(fs, dst_disk, _, raw_dst_path),Ok(dat)) => {
+                        let cpm = fs.as_str()=="cpm";
+                        let strip = match fs.as_str() {
                             "prodos" | "a2 dos" => vec![".json",".txt",".bas",".abas",".ibas"],
                             _ => vec![".json"]
                         };
@@ -334,7 +384,7 @@ fn gather(src: Vec<String>,dst: &Destination,dst_is_dir: bool,dimg_patt: &Regex,
                             (true,true) => Some(fused_path[fused_path.len()-7..].to_string()),
                             _ => None
                         };
-                        let dst_path = create_fimg_path(&fused_path,raw_dst_path,src_count,dst_is_dir,strip,cpm)?;
+                        let dst_path = create_fimg_path(&fused_path,raw_dst_path,multi_src,dst_is_dir,strip,cpm)?;
                         let mut fimg = dst_disk.new_fimg(None,true,&dst_path)?;
                         smart_pack(&mut fimg,&dat,load_addr,cp_suffix)?;
                         ans.push(Source {fimg,fused_path});
@@ -366,14 +416,14 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
             let (path_to,path_inside) = parse_fused_path(&fused,&dimg_patt)?;
             let mut dimg = crate::create_fs_from_file(&path_to,fmt.as_ref())?;
             dimg.get_img().change_method(Method::from_str(cmd.get_one::<String>("method").unwrap())?);
-            Destination::Dimg(dimg,path_to,path_inside)
+            Destination::Dimg(dimg.stat()?.fs_name,dimg,path_to,path_inside)
         },
         false => {
             Destination::Host(fused.clone())
         }
     };
     let dst_is_dir = match &mut dst {
-        Destination::Dimg(disk, path_to, path_inside) => {
+        Destination::Dimg(_, disk, path_to, path_inside) => {
             log::info!("image destination {}",path_to);
             match disk.catalog_to_vec(path_inside) {
                 Ok(_) => true,
@@ -393,17 +443,17 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
 
     // Second stage, write to destination
 
-    let src_count = src_list.len();
+    let multi_src = src_list.len() > 1;
     for src in &mut src_list {
         let cpm = src.fimg.file_system.as_str() == "cpm";
         match &mut dst {
-            Destination::Dimg(dst_disk, _, raw_dst_path) => {
-                let dst_path = finalize_destination_path(&src.fimg.full_path, &raw_dst_path, src_count, dst_is_dir, true, cpm)?;
+            Destination::Dimg(_, dst_disk, _, raw_dst_path) => {
+                let dst_path = finalize_destination_path(&src.fimg.full_path, &raw_dst_path, multi_src, dst_is_dir, true, cpm)?;
                 log::info!("copy {} -> {}",src.fused_path,dst_path);
                 dst_disk.put_at(&dst_path,&mut src.fimg)?;
             },
             Destination::Host(raw_dst_path) => {
-                let dst_path = finalize_destination_path(&src.fimg.full_path, raw_dst_path, src_count, dst_is_dir, false, cpm)?;
+                let dst_path = finalize_destination_path(&src.fimg.full_path, raw_dst_path, multi_src, dst_is_dir, false, cpm)?;
                 if cfg!(windows) {
                     let start = match DRIVE_PREFIX.is_match(&dst_path) {
                         true => 2,
@@ -436,7 +486,7 @@ pub fn ezcopy(cmd: &clap::ArgMatches) -> STDRESULT {
         }
     }
     match &mut dst {
-        Destination::Dimg(dst_disk,dimg_path,_) => crate::save_img(dst_disk,&dimg_path),
+        Destination::Dimg(_, dst_disk,dimg_path,_) => crate::save_img(dst_disk,&dimg_path),
         Destination::Host(_) => Ok(())
     }
 }
