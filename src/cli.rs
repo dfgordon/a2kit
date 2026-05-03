@@ -70,6 +70,7 @@ fn method_arg() -> Arg {
 pub fn build_cli() -> Command {
     let long_help = "a2kit is always invoked with exactly one of several subcommands.
 The subcommands are generally designed to function as nodes in a pipeline.
+Named arguments are almost always required, the `cp` subcommand is an exception.
 PowerShell users should use version 7.4 or higher to avoid lots of trouble.
 Set RUST_LOG environment variable to control logging level.
   levels: trace,debug,info,warn,error
@@ -155,7 +156,7 @@ tokenize to image:     `a2kit get -f prog.bas | a2kit tokenize -a 2049 -t atxt \
     main_cmd = main_cmd.subcommand(
         Command::new("cp")
             .arg(Arg::new("paths").num_args(2..=1000).help("sequence of paths, last path is the destination").value_name("PATH").required(true)
-                .long_help("Paths inside the disk image always use the forward slash.
+                .value_hint(ValueHint::FilePath).long_help("Paths inside the disk image always use the forward slash.
 It is OK to have a mixture such as `c:\\path\\to\\disk.img/path/to/file`.
 Recursive glob patterns like `disk.img/**` will expand correctly,
 but the files will all go to the same target directory."))

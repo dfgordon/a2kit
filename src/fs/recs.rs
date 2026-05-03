@@ -21,15 +21,19 @@ fn deduce_record_length(fimg: &FileImage,converter: &impl TextConversion) -> Opt
         Some(s) if s.as_str()=="\u{0000}" => [129,255],
         _ => [1,127]
     };
-    for k in fimg.chunks.keys() {
-        let Some(chunk) = fimg.chunks.get(k) else { return None; };
+    let Some(last_chunk) = fimg.chunks.keys().map(|x| *x).max() else { return None; };
+    for k in 0..=last_chunk {
+        let chunk = match fimg.chunks.get(&k) {
+            Some(c) => c.clone(),
+            None => vec![0;fimg.chunk_len]
+        };
         for b in chunk {
-            if in_fields && *b == 0 {
+            if in_fields && b == 0 {
                 in_fields = false;
                 pos += 1;
-            } else if in_fields && *b > lims[0] && *b < lims[1] {
+            } else if in_fields && b > lims[0] && b < lims[1] {
                 pos += 1;
-            } else if !in_fields && *b > lims[0] && *b < lims[1]  {
+            } else if !in_fields && b > lims[0] && b < lims[1]  {
                 in_fields = true;
                 num += 1;
                 if pos > 0 {
@@ -44,7 +48,7 @@ fn deduce_record_length(fimg: &FileImage,converter: &impl TextConversion) -> Opt
                     }
                 }
                 pos = 1; // pointer is after character we have found
-            } else if !in_fields && *b == 0 {
+            } else if !in_fields && b == 0 {
                 pos += 1;
             } else {
                 return None;
